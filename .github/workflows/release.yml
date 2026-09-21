@@ -12,6 +12,7 @@ on:
     tags:
       - '*'
       - '!*-alpha*'
+      - '!custom-*' # Custom image releases do not publish upstream binary artifacts.
 
 jobs:
   linux:

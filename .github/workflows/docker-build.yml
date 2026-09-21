@@ -5,6 +5,7 @@ on:
     tags:
       - '*'
       - '!nightly*'
+      - '!custom-*' # Custom releases are built and pushed to the owner's registry separately.
   workflow_dispatch:
     inputs:
       tag:
