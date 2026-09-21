@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1120" viewBox="0 0 1280 1120" role="img" aria-labelledby="title desc">
+  <title id="title">new-api 定制开发与持续升级操作流程</title>
+  <desc id="desc">从线上 v1.0.0-rc.37 官方标签建立 custom 分支，开发功能后，在 sync 分支合并官方版本、处理冲突并测试，通过固定 Git 标签构建自己的镜像。备份后部署，验证失败时按数据库兼容性回滚。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#52647c" stroke-width="1.6"/></marker>
+    <marker id="orange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#b86b20" stroke-width="1.6"/></marker>
+    <style>
+      text{font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;fill:#172c46}
+      .title{font-size:32px;font-weight:700}.sub{font-size:17px;fill:#586b81}.label{font-size:15px;font-weight:700;letter-spacing:1px}.head{font-size:21px;font-weight:700}.body{font-size:17px}.small{font-size:15px;fill:#586b81}.num{font-size:15px;font-weight:700;fill:#fff}.line{fill:none;stroke:#52647c;stroke-width:2.3;marker-end:url(#arrow)}.warn{fill:none;stroke:#b86b20;stroke-width:2.3;marker-end:url(#orange)}
+    </style>
+  </defs>
+  <rect width="1280" height="1120" rx="24" fill="#f3f6fa"/>
+  <rect x="0" y="0" width="1280" height="9" fill="#176e78"/>
+  <text x="48" y="65" class="title">new-api：开发自己的功能，持续跟进官方</text>
+  <text x="48" y="100" class="sub">一次建立基线 → 两种日常循环 → 固定版本发布 → 可验证、可恢复</text>
+  <rect x="48" y="127" width="1184" height="74" rx="12" fill="#172c46"/>
+  <text x="72" y="156" style="font-size:18px;fill:#fff;font-weight:700">核心原则：自己的功能提交到 custom；官方更新通过 merge 合入。</text>
+  <text x="72" y="183" style="font-size:16px;fill:#d1dfe9">Git 保留提交历史；冲突由你整合，功能是否兼容由测试确认。不要用新版源码包覆盖开发目录。</text>
+
+  <text x="48" y="239" class="label" fill="#176e78">01 / 建立基线 · 只做一次</text>
+  <rect x="48" y="259" width="352" height="112" rx="14" fill="#fff" stroke="#cbd8e3"/>
+  <circle cx="76" cy="289" r="14" fill="#176e78"/><text x="71" y="295" class="num">1</text>
+  <text x="101" y="296" class="head">确认线上版本对应的源码</text>
+  <text x="72" y="329" class="body">起点：官方 v1.0.0-rc.37 标签</text>
+  <text x="72" y="354" class="small">当前下载的 main 不能直接当作旧版基线</text>
+  <path d="M400 315H440" class="line"/>
+  <rect x="448" y="259" width="352" height="112" rx="14" fill="#fff" stroke="#cbd8e3"/>
+  <circle cx="476" cy="289" r="14" fill="#176e78"/><text x="471" y="295" class="num">2</text>
+  <text x="501" y="296" class="head">准备两个 Git 远端</text>
+  <text x="472" y="329" class="body">origin → 你自己的可写仓库</text>
+  <text x="472" y="354" class="body">upstream → QuantumNous/new-api</text>
+  <path d="M800 315H872" class="line"/>
+  <rect x="880" y="259" width="352" height="112" rx="14" fill="#e3f3ef" stroke="#91c3b5"/>
+  <circle cx="908" cy="289" r="14" fill="#176e78"/><text x="903" y="295" class="num">3</text>
+  <text x="933" y="296" class="head">创建长期定制分支</text>
+  <text x="904" y="329" class="body">custom 从 rc.37 标签出发</text>
+  <text x="904" y="354" class="small">提交和推送，让自己的功能有历史可查</text>
+
+  <text x="48" y="416" class="label">02 / 日常循环 · 按需重复</text>
+  <path d="M1056 371V431H340V455" class="line"/>
+  <path d="M1056 431H932V455" class="line"/>
+  <rect x="48" y="464" width="568" height="209" rx="14" fill="#fff" stroke="#a8bad5"/>
+  <rect x="48" y="464" width="7" height="209" rx="3" fill="#426baa"/>
+  <text x="75" y="500" class="head">A. 开发新功能</text>
+  <text x="75" y="536" class="body">custom → feature/功能名</text>
+  <text x="75" y="568" class="body">实现 → 测试 → commit → 合回 custom</text>
+  <text x="75" y="604" class="small">一次功能一个分支；优先清晰模块，减少大范围改写。</text>
+  <text x="75" y="634" class="small">合并后的源码包含官方基线 + 你的新增功能。</text>
+  <rect x="648" y="464" width="584" height="209" rx="14" fill="#fff" stroke="#c3b5dc"/>
+  <rect x="648" y="464" width="7" height="209" rx="3" fill="#8260a6"/>
+  <text x="676" y="500" class="head">B. 同步官方发布</text>
+  <text x="676" y="536" class="body">fetch upstream → 选标签 → 创建 sync/版本</text>
+  <text x="676" y="568" class="body">merge 官方标签 → 整合冲突 → 测试 → 合回 custom</text>
+  <text x="676" y="604" class="small">无文本冲突也要回归；迁移在隔离数据副本上演练。</text>
+  <text x="676" y="634" class="small">验证失败：留在 sync 修复，尚不进入发布流程。</text>
+  <path d="M332 673V702H232V730" class="line"/>
+  <path d="M940 673V702H332" fill="none" stroke="#52647c" stroke-width="2.3"/>
+
+  <text x="48" y="716" class="label">03 / 每次发布</text>
+  <rect x="48" y="738" width="368" height="115" rx="14" fill="#fff" stroke="#cbd8e3"/>
+  <text x="72" y="776" class="head">4. 固定源码，构建自己的镜像</text>
+  <text x="72" y="808" class="body">Git 标签 → archive → Docker build</text>
+  <text x="72" y="833" class="small">版本号、源码 SHA、镜像 digest 对应记录</text>
+  <path d="M416 795H446" class="line"/>
+  <rect x="454" y="738" width="348" height="115" rx="14" fill="#fff" stroke="#cbd8e3"/>
+  <text x="478" y="776" class="head">5. 测试通过，准备生产备份</text>
+  <text x="478" y="808" class="body">数据库 + 数据卷 + 配置 + 旧镜像</text>
+  <text x="478" y="833" class="small">先演练恢复；有迁移时安排维护窗口</text>
+  <path d="M802 795H840" class="line"/>
+  <rect x="848" y="738" width="384" height="115" rx="14" fill="#e3f3ef" stroke="#91c3b5"/>
+  <text x="872" y="776" class="head">6. 部署并验收</text>
+  <text x="872" y="808" class="body">生产 Compose 只替换应用镜像</text>
+  <text x="872" y="833" class="small">保留挂载与配置；验证接口和自定义功能</text>
+  <path d="M1040 853V881H332V920" class="line"/>
+  <text x="514" y="902" class="small">验收通过</text>
+  <path d="M1040 881V920" class="warn"/>
+  <text x="1055" y="905" style="font-size:15px;fill:#b86b20">验收失败</text>
+  <rect x="48" y="929" width="568" height="96" rx="14" fill="#e3f3ef" stroke="#91c3b5"/>
+  <text x="72" y="965" class="head">完成发布 → 下次继续功能 / 官方同步循环</text>
+  <text x="72" y="995" class="body">保留发布记录与备份，每次发布使用新的固定版本。</text>
+  <rect x="648" y="929" width="584" height="96" rx="14" fill="#fff1df" stroke="#dec197"/>
+  <text x="672" y="965" class="head">回滚：旧镜像 + 与其兼容的数据和配置</text>
+  <text x="672" y="995" class="body">存在不兼容迁移时，需要恢复匹配备份，不能只换镜像。</text>
+  <text x="48" y="1071" class="small">生产数据独立于源码和应用镜像保存；合并成功 ≠ 测试通过 ≠ 数据可降级。</text>
+  <text x="1232" y="1071" text-anchor="end" class="small">new-api · 定制开发指南 / 01</text>
+</svg>

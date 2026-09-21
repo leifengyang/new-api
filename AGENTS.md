@@ -2,6 +2,16 @@
 
 DO NOT send optional commentary
 
+## User's persistent custom-development workflow
+
+For implementation, upstream synchronization, or custom releases in this user's fork, read **section 11** of [the custom-development guide](docs/custom-development-workflow.md) before modifying code or Git history, and follow its applicable procedure. This is the default for new features and fixes even without a trigger phrase. Explanation/review-only requests do not authorize Git mutations.
+
+- Trigger phrases: `按定制流程开发：…`, `按定制流程修复：…`, `按定制流程同步官方：<tag>`, `按定制流程发布镜像：<release>`.
+- Use `custom` as the long-lived integration branch, `feature/...` or `fix/...` for implementation, and `sync/...` for upstream merges. Automatically perform the authorized branch, test, task-scoped commit, merge, and own-remote push steps; do not repeatedly ask for routine Git permission. Respect actual tool permission gates.
+- Initial production baseline is user-reported `v1.0.0-rc.37`; verify the official tag before first initialization. The downloaded `main` is not that baseline. Do not treat this historical baseline as a permanent pin after later verified upgrades.
+- Preserve this workflow and its guide across branch initialization and upstream merges. Bootstrap rule/documentation changes from `chore/custom-workflow-rules` separately; never merge that branch's entire `main` ancestry into the rc.37 baseline merely to import these instructions.
+- A development request does not itself request an official-version upgrade, image release, or production deployment. Preserve unrelated work and never force-push, reset shared history, or overwrite release tags as routine synchronization.
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
