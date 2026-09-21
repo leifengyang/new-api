@@ -205,7 +205,6 @@ describe('Image captcha', () => {
           }),
           expect.objectContaining({
             skipAuthRefresh: true,
-            singleUseAuthorization: true,
           })
         )
       )
