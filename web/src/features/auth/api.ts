@@ -75,7 +75,8 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
         captcha_id: payload.captchaId,
         captcha_code: payload.captchaCode,
       },
-      { skipAuthRefresh: true, singleUseAuthorization: true }
+      // Anonymous login must not require a session or replay a spent captcha.
+      { skipAuthRefresh: true }
     )
     if (payload.passwordEncryptionEnabled && !res.data?.success) {
       clearPasswordEncryptionCache()
@@ -254,7 +255,6 @@ export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const res = await api.post(`/api/user/register`, payload, {
     params: { turnstile: payload.turnstile ?? '' },
     skipAuthRefresh: true,
-    singleUseAuthorization: true,
   })
   return res.data
 }

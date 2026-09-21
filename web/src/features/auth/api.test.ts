@@ -17,17 +17,101 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { act, renderHook } from '@testing-library/react'
+import { AxiosError, type AxiosAdapter } from 'axios'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { api, type RefreshOutcome } from '@/lib/api'
-import type { AuthBundle } from '@/stores/auth-store'
+import { useAuthStore, type AuthBundle } from '@/stores/auth-store'
 
-import { executeLogout } from './api'
+import { executeLogout, login, register } from './api'
 import { useOAuthLogin } from './hooks/use-oauth-login'
 import { consumeOAuthLoginRedirect } from './lib/oauth-callback-mode'
 
 afterEach(() => vi.restoreAllMocks())
+
+test.each([
+  ['login', 200],
+  ['register', 200],
+  ['login', 401],
+  ['register', 401],
+] as const)(
+  'sends anonymous %s exactly once without session refresh (HTTP %i)',
+  async (operation, status) => {
+    useAuthStore.getState().auth.reset()
+    const originalAdapter = api.defaults.adapter
+    const open = vi.spyOn(XMLHttpRequest.prototype, 'open')
+    vi.spyOn(XMLHttpRequest.prototype, 'send').mockImplementation(
+      function (this: XMLHttpRequest) {
+        Object.defineProperties(this, {
+          status: { value: 401, configurable: true },
+          statusText: { value: 'Unauthorized', configurable: true },
+          responseText: {
+            value: JSON.stringify({ success: false }),
+            configurable: true,
+          },
+          readyState: { value: 4, configurable: true },
+        })
+        this.onloadend?.(new ProgressEvent('loadend'))
+      }
+    )
+    const adapter = vi.fn<AxiosAdapter>(async (config) => {
+      expect(config.url?.split('?')[0]).toBe(`/api/user/${operation}`)
+      expect(JSON.parse(config.data)).toMatchObject({
+        username: 'captcha-user',
+        password: 'test-password',
+        captcha_id: 'captcha-id',
+        captcha_code: '123456',
+      })
+      const response = {
+        data: { success: status === 200, message: '' },
+        status,
+        statusText: status === 200 ? 'OK' : 'Unauthorized',
+        headers: {},
+        config,
+      }
+      if (status === 401) {
+        throw new AxiosError(
+          'HTTP 401',
+          'ERR_BAD_REQUEST',
+          config,
+          undefined,
+          response
+        )
+      }
+      return response
+    })
+    api.defaults.adapter = adapter
+    const submit = () =>
+      operation === 'login'
+        ? login({
+            username: 'captcha-user',
+            password: 'test-password',
+            captchaId: 'captcha-id',
+            captchaCode: '123456',
+          })
+        : register({
+            username: 'captcha-user',
+            password: 'test-password',
+            captcha_id: 'captcha-id',
+            captcha_code: '123456',
+          })
+    try {
+      if (status === 200) {
+        await expect(submit()).resolves.toMatchObject({ success: true })
+      } else {
+        await expect(submit()).rejects.toMatchObject({
+          response: { status: 401 },
+        })
+      }
+      expect(adapter).toHaveBeenCalledTimes(1)
+      expect(open).not.toHaveBeenCalled()
+    } finally {
+      api.defaults.adapter = originalAdapter
+      useAuthStore.getState().auth.reset()
+    }
+  }
+)
 
 test.each([true, false])(
   'starts Telegram OAuth only when configuration is ready: %s',
