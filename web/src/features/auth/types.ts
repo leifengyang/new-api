@@ -29,6 +29,8 @@ export interface LoginPayload {
   password: string
   turnstile?: string
   passwordEncryptionEnabled?: boolean
+  captchaId: string
+  captchaCode: string
 }
 
 export interface TwoFAPayload {
@@ -43,6 +45,14 @@ export interface RegisterPayload {
   verification_code?: string
   aff_code?: string
   turnstile?: string
+  captcha_id: string
+  captcha_code: string
+}
+
+export interface ImageCaptchaResponse {
+  captcha_id: string
+  image: string
+  expires_in: number
 }
 
 export interface PasswordResetPayload {

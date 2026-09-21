@@ -6,6 +6,7 @@ task_plugin.unknown_meta_field: '插件元数据包含未知字段“{{.Field}}�
 
 # Common messages
 common.invalid_params: "无效的参数"
+common.captcha_invalid: "图片验证码无效或已过期"
 common.database_error: "数据库出错，请联系管理员"
 common.retry_later: "请稍后重试"
 common.generate_failed: "生成失败"

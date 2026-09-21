@@ -17,13 +17,17 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -815,4 +819,94 @@ func TestOAuthBindProviderErrorConsumesSessionBoundFlow(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
 	assert.Zero(t, provider.exchangeCalls)
 	assert.Zero(t, provider.userInfoCalls)
+}
+
+// Test the complete CAPTCHA gate before authentication without requiring a DB.
+// Accepted challenges reach the existing controller's empty-credential rejection;
+// rejected challenges must never reach credential processing.
+func TestImageCaptchaGatesPasswordAuthentication(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+	previousEnabled, previousClient := common.RedisEnabled, common.RDB
+	previousLogin, previousRegister, previousPasswordRegister := common.PasswordLoginEnabled, common.RegisterEnabled, common.PasswordRegisterEnabled
+	previousEncryption := common.PasswordLoginEncryptionEnabled
+	common.RedisEnabled, common.RDB = true, client
+	common.PasswordLoginEnabled, common.RegisterEnabled, common.PasswordRegisterEnabled = true, true, true
+	common.PasswordLoginEncryptionEnabled = false
+	require.NoError(t, i18n.Init())
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB = previousEnabled, previousClient
+		common.PasswordLoginEnabled, common.RegisterEnabled, common.PasswordRegisterEnabled = previousLogin, previousRegister, previousPasswordRegister
+		common.PasswordLoginEncryptionEnabled = previousEncryption
+		require.NoError(t, client.Close())
+	})
+	engine := gin.New()
+	engine.Use(middleware.BodyStorageCleanup(), middleware.DisableCache())
+	engine.GET("/api/captcha", GetImageCaptcha)
+	engine.POST("/api/user/login", middleware.AnonymousRequestBodyLimit(), middleware.ImageCaptchaCheck("login"), Login)
+	engine.POST("/api/user/register", middleware.AnonymousRequestBodyLimit(), middleware.ImageCaptchaCheck("register"), Register)
+	for _, purpose := range []string{"login", "register"} {
+		t.Run(purpose, func(t *testing.T) {
+			for _, test := range []struct {
+				name, code      string
+				absent, expired bool
+			}{
+				{name: "missing captcha", absent: true},
+				{name: "incorrect answer", code: "654321"},
+				{name: "empty answer"},
+				{name: "expired answer", code: "123456", expired: true},
+				{name: "correct answer", code: "123456"},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					image := httptest.NewRecorder()
+					engine.ServeHTTP(image, httptest.NewRequest(http.MethodGet, "/api/captcha?purpose="+purpose, nil))
+					var challenge struct {
+						Success bool
+						Data    struct {
+							ID    string `json:"captcha_id"`
+							Image string `json:"image"`
+						}
+					}
+					require.NoError(t, common.Unmarshal(image.Body.Bytes(), &challenge))
+					require.True(t, challenge.Success)
+					assert.Contains(t, image.Header().Get("Cache-Control"), "no-store")
+					assert.True(t, strings.HasPrefix(challenge.Data.Image, "data:image/png;base64,"))
+					key := "auth:image-captcha:" + challenge.Data.ID
+					server.Set(key, purpose+":123456")
+					server.SetTTL(key, common.ImageCaptchaTTL)
+					if test.expired {
+						server.FastForward(common.ImageCaptchaTTL)
+					}
+					payload := map[string]string{"captcha_id": challenge.Data.ID, "captcha_code": test.code}
+					if test.absent {
+						payload = map[string]string{}
+					}
+					body, err := common.Marshal(payload)
+					require.NoError(t, err)
+					request := httptest.NewRequest(http.MethodPost, "/api/user/"+purpose, strings.NewReader(string(body)))
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("Accept-Language", "en")
+					response := httptest.NewRecorder()
+					engine.ServeHTTP(response, request)
+					var result struct {
+						Success bool
+						Message string
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+					assert.False(t, result.Success)
+					if test.name == "correct answer" {
+						assert.Equal(t, i18n.Translate("en", i18n.MsgInvalidParams), result.Message)
+					} else {
+						assert.Equal(t, i18n.Translate("en", i18n.MsgCaptchaInvalid), result.Message)
+					}
+					// A valid answer cannot replay after either an accepted or failed attempt.
+					if !test.absent {
+						valid, err := common.VerifyImageCaptcha(context.Background(), purpose, challenge.Data.ID, "123456")
+						require.NoError(t, err)
+						assert.False(t, valid)
+					}
+				})
+			}
+		})
+	}
 }

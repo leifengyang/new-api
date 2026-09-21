@@ -5,6 +5,7 @@ task_plugin.unknown_meta_field: 'Plugin metadata contains an unknown field "{{.F
 
 # Common messages
 common.invalid_params: "Invalid parameters"
+common.captcha_invalid: "The image captcha is invalid or expired"
 common.database_error: "Database error, please contact the administrator"
 common.retry_later: "Please try again later"
 common.generate_failed: "Generation failed"

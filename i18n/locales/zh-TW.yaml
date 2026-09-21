@@ -6,6 +6,7 @@ task_plugin.unknown_meta_field: '外掛中繼資料包含未知欄位「{{.Field
 
 # Common messages
 common.invalid_params: "無效的參數"
+common.captcha_invalid: "圖片驗證碼無效或已過期"
 common.database_error: "資料庫出錯，請聯繫管理員"
 common.retry_later: "請稍後重試"
 common.generate_failed: "生成失敗"

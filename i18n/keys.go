@@ -28,6 +28,7 @@ const (
 	MsgAlreadyExists     = "common.already_exists"
 	MsgNameCannotBeEmpty = "common.name_cannot_be_empty"
 	MsgBatchTooMany      = "common.batch_too_many"
+	MsgCaptchaInvalid    = "common.captcha_invalid"
 )
 
 // Auth middleware messages
