@@ -20,7 +20,10 @@ import axios from 'axios'
 
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
 import { AuthOperationError } from '@/lib/secure-verification'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import {
+  createServerError,
+  getServerErrorMessageKey,
+} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -37,6 +40,7 @@ import type {
   TwoFAPayload,
   RegisterPayload,
   ApiResponse,
+  ImageCaptchaResponse,
 } from './types'
 
 // ============================================================================
@@ -68,8 +72,10 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
       {
         username: payload.username,
         ...passwordFields,
+        captcha_id: payload.captchaId,
+        captcha_code: payload.captchaCode,
       },
-      { skipAuthRefresh: true }
+      { skipAuthRefresh: true, singleUseAuthorization: true }
     )
     if (payload.passwordEncryptionEnabled && !res.data?.success) {
       clearPasswordEncryptionCache()
@@ -247,8 +253,27 @@ export async function telegramLogin(
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const res = await api.post(`/api/user/register`, payload, {
     params: { turnstile: payload.turnstile ?? '' },
+    skipAuthRefresh: true,
+    singleUseAuthorization: true,
   })
   return res.data
+}
+
+export async function getImageCaptcha(
+  purpose: 'login' | 'register',
+  signal?: AbortSignal
+): Promise<ImageCaptchaResponse> {
+  const res = await api.get<ApiResponse<ImageCaptchaResponse>>('/api/captcha', {
+    params: { purpose },
+    disableDuplicate: true,
+    skipErrorHandler: true,
+    skipAuthRefresh: true,
+    signal,
+  })
+  if (!res.data.success || !res.data.data) {
+    throw createServerError(res.data)
+  }
+  return res.data.data
 }
 
 // Send email verification code

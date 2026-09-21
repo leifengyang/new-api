@@ -141,6 +141,24 @@ Redis 限流使用原子 Lua 固定窗口，替代旧的近似滑动窗口 List 
 
 开放注册仍会受 Critical IP 限流保护，但分布式 IP 多账号攻击不能仅靠 IP 限流阻止。公网开放注册的部署应同时启用 Turnstile 和邮箱验证；更强的设备或多维风控需作为独立安全项目设计。
 
+## 定制版登录与注册图片验证码
+
+定制版在密码登录与密码注册前强制校验图片验证码，不需要额外配置或第三方站点密钥。`GET /api/captcha?purpose=login`（注册使用 `purpose=register`）返回 `data.captcha_id`、PNG data URL `data.image` 和秒数 `data.expires_in`。调用 `POST /api/user/login` 或 `POST /api/user/register` 时，必须在原 JSON 请求体中增加 `captcha_id`、`captcha_code`；旧前端或脚本缺少这两个字段会被拒绝。
+
+验证码为六位数字，使用加密安全随机数，五分钟有效；一个挑战只能用于签发时指定的登录或注册操作，首次提交后即失效，包括空答案、错误答案和错误用途。错误和过期使用相同提示，不检查账号是否存在。浏览器在每次提交完成后换图并清空答案，支持手动刷新、键盘操作、加载错误提示和到期提示。图片不携带明文答案元数据。图片验证码只是反自动化的附加措施，不是认证因素，也不替代密码、MFA 或现有 Turnstile。
+
+获取图片使用单独的 IP 限流桶，每 IP 每分钟最多 20 次，与登录/注册原有 Critical 限流同时生效。响应禁止缓存，答案放在 JSON 中，不进入 URL 或审计日志。验证码失败只记录用途与客户端 IP；Redis 故障返回不可用并拒绝认证。Redis 已配置时，各节点共享短期挑战并通过 Lua 原子取出、删除；不配置 Redis 时使用有容量上限的本机内存（最多 10000 个待验证挑战），仅适用于单节点或有固定节点路由的部署。多节点必须共享 Redis，不能在故障时自动回退内存。
+
+此关卡仅保护密码登录和密码注册入口。Passkey、OAuth、微信登录继续通过各自的身份验证及公共登录策略，不能通过图片验证码直接签发会话。邮箱发送、密码恢复和二次验证沿用各自原有控制。本次不修改用户、会话或其他数据库模型及迁移。
+
+安全依据：OWASP ASVS **5.0.0** 的 `6.1.1`、`6.1.3`、`6.3.1`、`6.3.4`（反自动化及认证路径控制），以及 [Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) 的 CAPTCHA/限流指导和 [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) 的随机标识、过期及敏感日志指导。验证码不能保证阻止 OCR 或人工代答；此次变更不构成整个项目的 ASVS 合规审计。现有注册重复账号提示等全流程枚举防护仍需独立评估，不能声称符合 `6.3.8` 的完整要求。
+
+前端共用 `features/auth/components/image-captcha.tsx`，组合已有 `Button`、`Input`、`Label`。已有 `components/turnstile.tsx` 封装第三方验证令牌，不提供本地图片挑战、答案输入和过期管理，因此保留它并增加独立的图片验证码组件。
+
+本次验证（Windows、Go 1.27.1、Bun 1.4.2）：`go test ./common ./middleware ./controller -run ImageCaptcha -count=1 -timeout=60s`、`go build ./...`、前端 `bun run typecheck`、`bun run build` 和六个修改的 TypeScript 文件的 oxlint/oxfmt 检查通过。Vitest 的 `features/auth/components/__tests__/image-captcha.test.tsx`、`features/auth/api.test.ts`、`features/auth/otp/__tests__/login-verification.test.tsx` 共 20 项通过，覆盖验证码刷新、失败、过期和表单提交，以及既有认证 API/二次验证行为。
+
+扩大检查的限制：`go test ./common ./middleware ./controller` 中 common/middleware 通过，controller 测试失败，包含 Windows 无法删除仍被占用的临时 SQLite `audit.db`；在独立目录的未修改基线 `b36a967d0` 上，`TestSecurityLoginFactorStateDoesNotAddPasswordLoginQueries` 和 `TestSecurityAccountEncryptedLongPasswordLogin` 复现相同清理错误（SQLite 3.50.4）。全量 `bun run lint` 也有未修改文件的既有错误；本次修改文件的独立 lint 已通过。因此不声称全仓库测试或 lint 全绿。
+
 ## PAT 调用契约
 
 `User.AccessToken`（面板 PAT）继续支持 `Authorization: Bearer <pat>`，也兼容原有的单值 `Authorization: <pat>`。`New-Api-User` 不再参与鉴权，外部脚本不需要再发送 Bearer 与用户 ID 双请求头。这是有意的调用契约简化；旧 PAT 本身无需重新生成。

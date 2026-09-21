@@ -40,6 +40,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { login, wechatLoginByCode } from '@/features/auth/api'
+import { ImageCaptcha } from '@/features/auth/components/image-captcha'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
@@ -80,6 +81,9 @@ export function UserAuthForm({
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const [captchaId, setCaptchaId] = useState('')
+  const [captchaCode, setCaptchaCode] = useState('')
+  const [captchaGeneration, setCaptchaGeneration] = useState(0)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
   const loginFailedMessage = t('Login failed')
 
@@ -160,6 +164,7 @@ export function UserAuthForm({
   }, [status])
 
   async function onSubmit(data: z.infer<typeof loginFormSchema>) {
+    if (isLoading || !captchaId || !/^\d{6}$/.test(captchaCode)) return
     if (requiresLegalConsent && !agreedToLegal) {
       toast.error(legalConsentErrorMessage)
       return
@@ -178,6 +183,8 @@ export function UserAuthForm({
       const res = await login({
         username: data.username,
         password: data.password,
+        captchaId,
+        captchaCode,
         turnstile: submittedTurnstileToken,
         passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
       })
@@ -194,6 +201,9 @@ export function UserAuthForm({
       handleServerError(AuthOperationError.from(error, loginFailedMessage))
     } finally {
       setIsLoading(false)
+      setCaptchaId('')
+      setCaptchaCode('')
+      setCaptchaGeneration((current) => current + 1)
     }
   }
 
@@ -396,10 +406,24 @@ export function UserAuthForm({
             />
 
             {/* Submit Button */}
+            <ImageCaptcha
+              key={captchaGeneration}
+              purpose='login'
+              disabled={isLoading}
+              value={captchaCode}
+              onChange={setCaptchaCode}
+              onCaptchaChange={setCaptchaId}
+            />
+
             <Button
               type='submit'
               className='mt-2 w-full justify-center gap-2'
-              disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
+              disabled={
+                isLoading ||
+                !captchaId ||
+                !/^\d{6}$/.test(captchaCode) ||
+                (requiresLegalConsent && !agreedToLegal)
+              }
             >
               {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
               {t('Sign in')}

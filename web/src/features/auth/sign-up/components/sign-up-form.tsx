@@ -39,6 +39,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { register, wechatLoginByCode } from '@/features/auth/api'
+import { ImageCaptcha } from '@/features/auth/components/image-captcha'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { registerFormSchema } from '@/features/auth/constants'
@@ -67,6 +68,9 @@ export function SignUpForm({
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const [captchaId, setCaptchaId] = useState('')
+  const [captchaCode, setCaptchaCode] = useState('')
+  const [captchaGeneration, setCaptchaGeneration] = useState(0)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
 
   const { status } = useStatus()
@@ -140,6 +144,7 @@ export function SignUpForm({
   }, [])
 
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
+    if (isLoading || !captchaId || !/^\d{6}$/.test(captchaCode)) return
     if (requiresLegalConsent && !agreedToLegal) {
       toast.error(legalConsentErrorMessage)
       return
@@ -168,6 +173,8 @@ export function SignUpForm({
         verification_code: verificationCode || undefined,
         aff_code: getAffiliateCode(),
         turnstile: turnstileToken,
+        captcha_id: captchaId,
+        captcha_code: captchaCode,
       })
 
       if (res?.success) {
@@ -182,6 +189,13 @@ export function SignUpForm({
       )
     } finally {
       setIsLoading(false)
+      setCaptchaId('')
+      setCaptchaCode('')
+      setCaptchaGeneration((current) => current + 1)
+      if (isTurnstileEnabled) {
+        setTurnstileToken('')
+        setTurnstileWidgetKey((current) => current + 1)
+      }
     }
   }
 
@@ -351,6 +365,15 @@ export function SignUpForm({
         )}
 
         {/* Turnstile */}
+        <ImageCaptcha
+          key={captchaGeneration}
+          purpose='register'
+          disabled={isLoading}
+          value={captchaCode}
+          onChange={setCaptchaCode}
+          onCaptchaChange={setCaptchaId}
+        />
+
         {isTurnstileEnabled && (
           <div className='mt-2'>
             <Turnstile
@@ -374,6 +397,8 @@ export function SignUpForm({
           className='mt-2 w-full justify-center gap-2'
           disabled={
             isLoading ||
+            !captchaId ||
+            !/^\d{6}$/.test(captchaCode) ||
             (requiresLegalConsent && !agreedToLegal) ||
             !turnstileReady
           }
