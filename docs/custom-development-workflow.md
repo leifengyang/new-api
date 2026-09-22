@@ -1,6 +1,6 @@
 # new-api 二次开发、同步官方更新与 Docker 发布指南
 
-适用场景：线上正在运行 `v1.0.0-rc.37`，准备开发自己的功能，并持续吸收 QuantumNous/new-api 的官方更新。
+适用场景：线上正在运行 `v1.0.0-rc.39`，准备开发自己的功能，并持续吸收 QuantumNous/new-api 的官方更新。
 
 **推荐方案：自己的 Git 仓库 + 长期定制分支 `custom` + 功能分支 + 官方版本合并 + 自己的 Docker 镜像。** Git 能保留已提交的自定义改动；官方与自定义代码发生冲突时，需要人工整合。没有文本冲突也必须测试，不能承诺任意更新都自动兼容。
 
@@ -20,25 +20,27 @@
 
 图中的 `U1` 表示以后选定的官方版本，**不是实际 Git 标签名**；`C1`、`M1` 等是示意提交。
 
-## 2. 你当前目录的实际情况
+## 2. 这个目录当前的实际情况
 
-本次只检查本地仓库，没有查询远端发布列表或登录生产服务器：
+以下是本次对本地仓库的检查结果，没有查询远端发布列表，也没有登录生产服务器：
 
 | 项目 | 检查结果与含义 |
 | --- | --- |
-| 当前分支 | `main` |
-| 当前提交 | `9c293e8c02371bda844af79e3500ff2d516d1dda` |
-| 当前 origin | `https://github.com/leifengyang/new-api.git`；是否属于你、是否可写，需要按你的账号确认 |
-| upstream | 当前未配置；官方仓库为 `https://github.com/QuantumNous/new-api.git` |
-| 本地 `v1.0.0-rc.37` 标签 | 尚未找到，需要从官方获取并核对 |
+| 当前分支 | `custom`，定制主线已经建立并在使用 |
+| `custom` 顶端提交 | `8fd38b85e`（本次文档更新之前） |
+| 官方基线 | `v1.0.0-rc.39`（`9978ee1e2`）已是 `custom` 的祖先提交 |
+| `origin` | `https://github.com/leifengyang/new-api.git`，已确认为你可写的仓库 |
+| `upstream` | 已配置为 `https://github.com/QuantumNous/new-api.git` |
+| 本地官方标签 | `v1.0.0-rc.35` 到 `v1.0.0-rc.39` 都已存在 |
+| 已有定制发布标签 | `custom-v1.0.0-rc.39.1`、`custom-v1.0.0-rc.39.2`，都已推送到 `origin` |
 | Git 历史 | 非浅克隆 |
-| 当前 `VERSION` | 文件存在但内容为空；当前发布 CI 会在构建前写入版本号 |
+| 当前 `VERSION` | 文件存在但内容为空；发布 CI 会在构建前写入版本号 |
 | Docker 构建 | 根目录有多阶段 `Dockerfile`，会编译前端和 Go 后端 |
-| Compose 示例 | 当前使用 `calciumion/new-api:latest`，不能直接代表你的生产配置 |
+| Compose 示例 | 仓库示例使用 `calciumion/new-api:latest`，不能直接代表你的生产配置 |
 
-**下载到的 `main` 不等于你线上运行的 `v1.0.0-rc.37`。** 如果直接从现在的 `main` 开发，首次上线还会同时升级其间的官方改动。建议先从线上对应的官方标签开发；确认新功能后，再单独安排官方版本升级。
+定制主线已经初始化完成。第 4.1 节的克隆与建分支步骤只在换机器或另开一个工作目录时才需要执行；日常开发直接从第 4.2 节的功能分支循环开始。
 
-本指南选择重新克隆到一个独立开发目录，保留你当前目录。文中的 Git 命令是待执行示例；首次文档交付时未执行切分支、推送、构建或发布。后续规则维护使用独立的 `chore/custom-workflow-rules` 分支，见第 11 节，不代表已初始化业务开发基线。
+**本地有 `custom-v1.0.0-rc.39.2` 标签，只说明源码发布点已固定，不代表该版本已经上线。** 线上实际运行的版本只能通过部署环境核实。
 
 ## 3. 仓库、分支、标签和镜像分别做什么
 
@@ -49,10 +51,10 @@
 | `custom` | 你的长期集成与发布分支 | 包含官方基线、定制功能和历次官方合并 |
 | `feature/...` | 单个新功能 | 从 `custom` 创建，完成后合回 |
 | `sync/...` | 一次官方升级的验证分支 | 从 `custom` 创建，合入指定官方标签，验证后合回 |
-| `custom-v1.0.0-rc.37.1` | 第一次定制发布的 Git 标签 | 指向固定源码提交，发布后不移动、不复用 |
-| `你的账号/new-api:custom-v1.0.0-rc.37.1` | 自己构建的 Docker 镜像 | 部署用固定标签，最好进一步固定 digest |
+| `custom-v1.0.0-rc.39.1` | 一次定制发布的 Git 标签（目前已发到 `.2`） | 指向固定源码提交，发布后不移动、不复用 |
+| `你的账号/new-api:custom-v1.0.0-rc.39.1` | 自己构建的 Docker 镜像 | 部署用固定标签，最好进一步固定 digest |
 
-以后仍在 rc.37 上修补，可以发布 `.2`、`.3`；升级官方基线后，用新官方版本加定制序号命名。**Git 标签、镜像标签和容器中的应用版本应能相互对应。**
+仍在 rc.39 上修补时依次发布 `.3`、`.4`；升级官方基线后，用新官方版本加定制序号命名。**Git 标签、镜像标签和容器中的应用版本应能相互对应。**
 
 ## 4. 第一次准备：以线上版本建立开发基线
 
@@ -71,8 +73,8 @@ Set-Location new-api-custom
 git remote add upstream https://github.com/QuantumNous/new-api.git
 git fetch upstream --tags
 git remote -v
-git show --no-patch --format=fuller v1.0.0-rc.37
-git switch -c custom v1.0.0-rc.37
+git show --no-patch --format=fuller v1.0.0-rc.39
+git switch -c custom v1.0.0-rc.39
 git push -u origin custom
 ```
 
@@ -155,7 +157,7 @@ git merge --continue
 
 没有冲突只表示文本可以合并，不代表接口、前端、数据库和你的业务行为兼容。至少验证原有核心流程、自定义功能和此次官方变更涉及的路径，并在独立测试环境演练升级。
 
-当前下载的 `main` 有下面这些脚本；**rc.37 或其他标签可能不同，先检查该提交的 `web/package.json`、`go.mod`、Dockerfile 和 AGENTS.md**：
+当前 `custom` 有下面这些脚本；**升级官方基线后可能变化，先检查该提交的 `web/package.json`、`go.mod`、Dockerfile 和 AGENTS.md**：
 
 ```powershell
 Push-Location web
@@ -197,12 +199,12 @@ git push origin custom
 
 ### 6.1 固定这次发布的源码
 
-下面以首次 rc.37 定制发布为例；若已升级，改成与实际基线对应的新名称。确认所有功能已提交、验证，工作区干净：
+下面以下一次 rc.39 定制发布 `custom-v1.0.0-rc.39.3` 为例（`.1`、`.2` 已发布）；升级官方基线后改成与新基线对应的名称。确认所有功能已提交、验证，工作区干净：
 
 ```powershell
 git switch custom
 git status --short
-$Release = 'custom-v1.0.0-rc.37.1'
+$Release = 'custom-v1.0.0-rc.39.3'
 $ImageRepo = 'YOUR_DOCKERHUB_ACCOUNT/new-api'
 git tag -a $Release -m "new-api custom release $Release"
 git push origin custom
@@ -233,7 +235,7 @@ docker buildx build --platform linux/amd64 --load --label "org.opencontainers.im
 
 `VERSION` 只在临时构建副本中写入，使应用显示定制版本；源码由 Git 标签定位。标签不可复用，镜像构建记录同时保留源码 SHA、平台和生成的镜像 digest。基础镜像、软件源等依赖也会影响产物，固定 Git 标签本身不保证每次构建字节完全相同。
 
-上例适用于 x86_64 Linux 服务器。ARM 服务器改成 `linux/arm64`；跨架构构建需要 Docker 支持对应模拟环境或原生构建节点。采用**该标签自己的 Dockerfile**，不要把当前 main 的 Dockerfile 直接覆盖到 rc.37。当前 Dockerfile 会自动构建前后端，镜像构建成功并不替代业务测试。
+上例适用于 x86_64 Linux 服务器。ARM 服务器改成 `linux/arm64`；跨架构构建需要 Docker 支持对应模拟环境或原生构建节点。采用**该标签自己的 Dockerfile**，不要把其他版本的 Dockerfile 直接覆盖到这次的发布源码上。当前 Dockerfile 会自动构建前后端，镜像构建成功并不替代业务测试。
 
 ### 6.3 推到自己的镜像仓库
 
@@ -268,7 +270,7 @@ docker buildx imagetools inspect "${ImageRepo}:$Release"
 ```yaml
 services:
   new-api:
-    image: YOUR_DOCKERHUB_ACCOUNT/new-api:custom-v1.0.0-rc.37.1
+    image: YOUR_DOCKERHUB_ACCOUNT/new-api:custom-v1.0.0-rc.39.3
 ```
 
 验证后也可写为 `YOUR_DOCKERHUB_ACCOUNT/new-api@sha256:实际digest` 以固定内容。私有镜像先在服务器 `docker login`。基础生产文件名假定为 `docker-compose.yml`：
@@ -318,7 +320,9 @@ curl -fsS http://127.0.0.1:3000/api/status
 
 ## 10. 本文的验证范围
 
-本次交付为操作说明及 SVG 图，依据当前本地 Git 状态、Dockerfile、Compose、构建脚本和工作流编写。没有执行官方标签拉取、源码合并、镜像构建、数据库验证或生产部署；`v1.0.0-rc.37` 的源码文件和实际升级要求，应在获取对应官方标签后再次核对。
+本文为操作说明及 SVG 图，依据本地 Git 状态、Dockerfile、Compose、构建脚本和工作流编写。第 2 节的检查结果是写作时的快照，每次执行前都要重新核对。
+
+本次更新只核对了本地仓库状态，没有执行源码合并、镜像构建、数据库验证或生产部署；线上运行的版本与镜像 digest 需要在部署环境确认。
 
 ## 11. 给开发助手的持久执行规则
 
@@ -346,14 +350,14 @@ curl -fsS http://127.0.0.1:3000/api/status
 4. `upstream` 应指向 `https://github.com/QuantumNous/new-api.git`；缺少时可添加并获取所需引用。已有 `upstream` 地址不同时先查明，不擅自替换。
 5. `origin` 必须是用户已确认的自有仓库，或由已认证账号的仓库权限信息证实可写且归属符合用户意图。Git 配置中的姓名与 URL 字符串相似本身不是认证证据。目标不明时，先完成可做的本地工作，在推送前只询问一次仓库归属；确认后沿用，除非地址或权限变化。
 
-最初记录：用户报告线上为 `v1.0.0-rc.37`；本地当时为 `main`，origin 为 `leifengyang/new-api`。这些是历史上下文，不能当作每次执行时的现状。上线版本只能通过实际部署核实；本地构建或创建标签不等于已上线。
+背景：用户报告线上运行 `v1.0.0-rc.39`；本地 `custom` 已基于该官方标签建立，`origin` 为 `leifengyang/new-api`，`upstream` 已配置。这些是写作时的上下文，不能当作每次执行时的现状。上线版本只能通过实际部署核实；本地构建或创建标签不等于已上线。
 
 ### 11.3 首次初始化 custom
 
-- 若 `custom` 已存在，检查其历史与已同步的官方标签，在该历史上继续；不要每次重新从 rc.37 创建。如果远端已有 `origin/custom`，先获取、核对并建立跟踪分支，避免另造一条同名历史。
-- 只有确实尚无定制主线时，才从经核实的官方 `v1.0.0-rc.37` 标签创建 `custom`。使用前保留当前目录所有工作；不能核实标签与线上源码关系时，不用 `main` 顶替。
+- 若 `custom` 已存在，检查其历史与已同步的官方标签，在该历史上继续；不要每次重新从官方标签创建。如果远端已有 `origin/custom`，先获取、核对并建立跟踪分支，避免另造一条同名历史。
+- 本仓库的 `custom` 已存在，这一步已经完成。只有在确实尚无定制主线的新环境里，才从经核实的官方 `v1.0.0-rc.39` 标签创建 `custom`。使用前保留当前目录所有工作；不能核实标签与线上源码关系时，不用 `main` 顶替。
 - 当前这套规则首次保存在 `chore/custom-workflow-rules` 分支。该分支基于下载时的 `main`，仅用于保全规则和文档。初始化后，仅移植这次规则提交所增加的 AGENTS 小节、操作文档和两张 SVG：检查目标版本原有规则后整合新增小节，避免覆盖旧版其他约定；检查提交范围后可 cherry-pick，并按此要求解决冲突。
-- **不要 merge 整条 `chore/custom-workflow-rules` 分支来导入规则**，否则会同时把较新的 main 源码带入 rc.37。如果规则已更新，找到最新有效规则内容，仍仅移植规则相关变更。
+- **不要 merge 整条 `chore/custom-workflow-rules` 分支来导入规则**，否则会同时把其他版本的源码带入当前基线。如果规则已更新，找到最新有效规则内容，仍仅移植规则相关变更。
 - 规则移植后形成一次独立的准备提交，让以后克隆、切到 `custom` 或从它创建功能分支时都能读到指令。规则与文档维护可以使用 `chore/...` 分支；准备任务本身不代表业务主线已完成初始化。
 
 ### 11.4 默认功能与修复流程
