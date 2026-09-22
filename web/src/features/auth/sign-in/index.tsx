@@ -34,11 +34,13 @@ export function SignIn() {
 
   return (
     <AuthLayout
-      lede={t('Route, meter and bill every model request through one endpoint.')}
+      lede={t(
+        'Route, meter and bill every model request through one endpoint.'
+      )}
     >
-      <div className='w-full space-y-8'>
-        <div className='space-y-1.5'>
-          <h2 className='text-2xl font-semibold tracking-tight'>
+      <div className='w-full space-y-6'>
+        <div className='space-y-1'>
+          <h2 className='text-xl font-semibold tracking-[-0.01em]'>
             {t('Sign in')}
           </h2>
           {canRegister && (

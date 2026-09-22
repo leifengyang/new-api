@@ -26,15 +26,15 @@ export function Otp() {
   const { t } = useTranslation()
   return (
     <AuthLayout>
-      <div className='w-full space-y-8'>
+      <div className='w-full space-y-6'>
         <div className='space-y-3'>
-          <h2 className='text-center text-2xl font-semibold tracking-tight sm:text-left'>
+          <h2 className='text-xl font-semibold tracking-[-0.01em]'>
             {t('Security verification')}
           </h2>
-          <p className='text-muted-foreground text-left text-sm sm:text-base'>
+          <p className='text-muted-foreground text-sm leading-relaxed'>
             {t('Verify your identity to finish signing in.')}
           </p>
-          <p className='text-muted-foreground text-left text-sm sm:text-base'>
+          <p className='text-muted-foreground text-sm leading-relaxed'>
             {t('Session expired?')}{' '}
             <Link
               to='/sign-in'

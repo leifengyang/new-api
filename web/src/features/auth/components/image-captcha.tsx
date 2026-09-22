@@ -79,14 +79,14 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
   return (
     <div className='grid gap-2' aria-busy={captcha.isFetching}>
       <Label htmlFor={fieldId}>{t('Image captcha code')}</Label>
-      <div className='flex flex-wrap items-center gap-2'>
+      <div className='flex items-center gap-2'>
         {captcha.data && !imageFailed ? (
           <img
             src={captcha.data.image}
             alt={t('Image captcha')}
             width={180}
             height={60}
-            className='h-[60px] w-[180px] rounded-lg border bg-white object-contain'
+            className='h-11 w-[8.25rem] shrink-0 rounded-lg border bg-white object-cover'
             onError={() => {
               setImageFailed(true)
               props.onChange('')
@@ -95,14 +95,26 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
           />
         ) : (
           <div
-            className='bg-muted h-[60px] w-[180px] rounded-lg'
+            className='bg-muted h-11 w-[8.25rem] shrink-0 rounded-lg'
             aria-hidden='true'
           />
         )}
+        <Input
+          id={fieldId}
+          value={props.value}
+          onChange={(event) => props.onChange(event.target.value)}
+          placeholder={t('Enter the image captcha')}
+          autoComplete='off'
+          inputMode='numeric'
+          maxLength={6}
+          disabled={props.disabled || unavailable}
+          className='h-11 min-w-0 flex-1 px-3.5'
+        />
         <Button
           type='button'
           variant='outline'
           size='icon'
+          className='size-11 shrink-0'
           onClick={refresh}
           disabled={props.disabled || captcha.isFetching}
           aria-label={t('Refresh image captcha')}
@@ -114,25 +126,15 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
         </Button>
       </div>
       {(captcha.isError || imageFailed) && (
-        <p role='alert' className='text-destructive text-sm'>
+        <p role='alert' className='text-destructive text-xs'>
           {t('Unable to load the image captcha. Please refresh.')}
         </p>
       )}
       {expired && (
-        <p role='status' className='text-muted-foreground text-sm'>
+        <p role='status' className='text-muted-foreground text-xs'>
           {t('The image captcha has expired. Please refresh.')}
         </p>
       )}
-      <Input
-        id={fieldId}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-        placeholder={t('Enter the image captcha')}
-        autoComplete='off'
-        inputMode='numeric'
-        maxLength={6}
-        disabled={props.disabled || unavailable}
-      />
     </div>
   )
 }

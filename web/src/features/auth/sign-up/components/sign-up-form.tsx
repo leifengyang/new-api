@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -61,6 +61,7 @@ export function SignUpForm({
   ...props
 }: React.HTMLAttributes<HTMLFormElement>) {
   const { t } = useTranslation()
+  const verificationCodeId = useId()
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
   const [agreedToLegal, setAgreedToLegal] = useState(false)
@@ -262,7 +263,7 @@ export function SignUpForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className={cn('grid gap-4', className)}
+        className={cn('grid gap-5', className)}
         {...props}
       >
         {/* Username Field */}
@@ -273,7 +274,11 @@ export function SignUpForm({
             <FormItem>
               <FormLabel>{t('Username')}</FormLabel>
               <FormControl>
-                <Input placeholder={t('Enter your username')} {...field} />
+                <Input
+                  placeholder={t('Enter your username')}
+                  className='h-11 px-3.5'
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -290,6 +295,7 @@ export function SignUpForm({
               <FormControl>
                 <PasswordInput
                   placeholder={t('Enter password (8–128 characters)')}
+                  className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                   {...field}
                 />
               </FormControl>
@@ -306,7 +312,11 @@ export function SignUpForm({
             <FormItem>
               <FormLabel>{t('Confirm password')}</FormLabel>
               <FormControl>
-                <PasswordInput placeholder={t('Confirm password')} {...field} />
+                <PasswordInput
+                  placeholder={t('Confirm password')}
+                  className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -329,6 +339,7 @@ export function SignUpForm({
                     <Input
                       placeholder={t('name@example.com')}
                       type='email'
+                      className='h-11 px-3.5'
                       {...field}
                     />
                   </FormControl>
@@ -338,28 +349,34 @@ export function SignUpForm({
             />
 
             {/* Verification Code Field */}
-            <div className='flex items-end gap-2'>
-              <div className='flex-1'>
+            <div className='grid gap-2'>
+              <Label htmlFor={verificationCodeId}>
+                {t('Verification code')}
+              </Label>
+              <div className='flex gap-2'>
                 <Input
+                  id={verificationCodeId}
                   placeholder={t('Verification code')}
+                  className='h-11 flex-1 px-3.5'
                   value={verificationCode}
                   onChange={(e) => setVerificationCode(e.target.value)}
                 />
+                <Button
+                  variant='outline'
+                  type='button'
+                  className='h-11 shrink-0 px-4'
+                  disabled={
+                    isLoading ||
+                    isSendingCode ||
+                    isActive ||
+                    !emailValue ||
+                    !turnstileReady
+                  }
+                  onClick={handleSendVerificationCode}
+                >
+                  {verificationCodeAction}
+                </Button>
               </div>
-              <Button
-                variant='outline'
-                type='button'
-                disabled={
-                  isLoading ||
-                  isSendingCode ||
-                  isActive ||
-                  !emailValue ||
-                  !turnstileReady
-                }
-                onClick={handleSendVerificationCode}
-              >
-                {verificationCodeAction}
-              </Button>
             </div>
           </>
         )}
@@ -375,7 +392,7 @@ export function SignUpForm({
         />
 
         {isTurnstileEnabled && (
-          <div className='mt-2'>
+          <div>
             <Turnstile
               key={turnstileWidgetKey}
               siteKey={turnstileSiteKey}
@@ -388,13 +405,12 @@ export function SignUpForm({
           status={status}
           checked={agreedToLegal}
           onCheckedChange={setAgreedToLegal}
-          className='mt-1'
         />
 
         {/* Submit Button */}
         <Button
           type='submit'
-          className='mt-2 w-full justify-center gap-2'
+          className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
           disabled={
             isLoading ||
             !captchaId ||
@@ -413,7 +429,6 @@ export function SignUpForm({
             disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
             onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
             isWeChatLoading={isWeChatSubmitting}
-            className='pt-2'
           />
         )}
       </form>
