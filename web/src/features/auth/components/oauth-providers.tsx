@@ -49,103 +49,99 @@ type ProviderButton = {
   disabled?: boolean
 }
 
-export function OAuthProviders({
-  status,
-  disabled = false,
-  className,
-  onWeChatLogin,
-  isWeChatLoading = false,
-  redirectTo,
-}: OAuthProvidersProps) {
+export function OAuthProviders(props: OAuthProvidersProps) {
   const { t } = useTranslation()
-  const {
-    isLoading,
-    githubButtonText,
-    githubButtonDisabled,
-    handleGitHubLogin,
-    handleDiscordLogin,
-    handleOIDCLogin,
-    handleLinuxDOLogin,
-    handleTelegramLogin,
-    handleCustomOAuthLogin,
-  } = useOAuthLogin(status, redirectTo)
+  const oauth = useOAuthLogin(props.status, props.redirectTo)
+  const disabled = props.disabled ?? false
+  const isWeChatLoading = props.isWeChatLoading ?? false
 
   const providerButtons: ProviderButton[] = []
 
-  if (status?.wechat_login && onWeChatLogin) {
+  if (props.status?.wechat_login && props.onWeChatLogin) {
     providerButtons.push({
       key: 'wechat',
       label: t('Continue with WeChat'),
-      onClick: onWeChatLogin,
-      icon: <IconWeChat className='h-4 w-4' />,
+      onClick: props.onWeChatLogin,
+      icon: <IconWeChat aria-hidden='true' className='h-4 w-4' />,
       disabled: isWeChatLoading,
     })
   }
 
-  if (status?.github_oauth) {
+  if (props.status?.github_oauth) {
     providerButtons.push({
       key: 'github',
-      label: githubButtonText || t('Continue with GitHub'),
-      onClick: handleGitHubLogin,
-      icon: <IconGithub className='h-4 w-4' />,
-      disabled: githubButtonDisabled,
+      label: oauth.githubButtonText || t('Continue with GitHub'),
+      onClick: oauth.handleGitHubLogin,
+      icon: <IconGithub aria-hidden='true' className='h-4 w-4' />,
+      disabled: oauth.githubButtonDisabled,
     })
   }
 
-  if (status?.discord_oauth) {
+  if (props.status?.discord_oauth) {
     providerButtons.push({
       key: 'discord',
       label: t('Continue with Discord'),
-      onClick: handleDiscordLogin,
-      icon: <IconDiscord className='h-4 w-4' />,
+      onClick: oauth.handleDiscordLogin,
+      icon: <IconDiscord aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
-  if (status?.oidc_enabled) {
-    const oidcDisplayName = status.oidc_display_name?.trim() || 'OIDC'
+  if (props.status?.oidc_enabled) {
+    const oidcDisplayName = props.status.oidc_display_name?.trim() || 'OIDC'
     providerButtons.push({
       key: 'oidc',
       label: t('Continue with {{name}}', {
         name: oidcDisplayName,
       }),
-      onClick: handleOIDCLogin,
+      onClick: oauth.handleOIDCLogin,
     })
   }
 
-  if (status?.linuxdo_oauth) {
+  if (props.status?.linuxdo_oauth) {
     providerButtons.push({
       key: 'linuxdo',
       label: t('Continue with LinuxDO'),
-      onClick: handleLinuxDOLogin,
-      icon: <IconLinuxDo className='h-4 w-4' />,
+      onClick: oauth.handleLinuxDOLogin,
+      icon: <IconLinuxDo aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
-  if (status?.telegram_oauth) {
+  if (props.status?.telegram_oauth) {
     providerButtons.push({
       key: 'telegram',
       label: t('Continue with Telegram'),
-      onClick: handleTelegramLogin,
-      icon: <IconTelegram data-icon='inline-start' />,
+      onClick: oauth.handleTelegramLogin,
+      icon: <IconTelegram aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
-  // Custom OAuth providers
-  const customProviders = status?.custom_oauth_providers
+  const customProviders = props.status?.custom_oauth_providers
   if (customProviders && customProviders.length > 0) {
     for (const provider of customProviders) {
       providerButtons.push({
         key: `custom-${provider.slug}`,
         label: t('Continue with {{name}}', { name: provider.name }),
-        onClick: () => handleCustomOAuthLogin(provider),
+        onClick: () => oauth.handleCustomOAuthLogin(provider),
       })
     }
   }
 
   if (providerButtons.length === 0) return null
 
+  /**
+   * Branded providers collapse into one compact row of square buttons, which
+   * keeps the form short. A lone icon would be a guessing game, so a single
+   * branded provider stays in the labelled stack with the unbranded ones.
+   */
+  const branded = providerButtons.filter((provider) => provider.icon)
+  const showIconRow = branded.length > 1
+  const iconRow = showIconRow ? branded : []
+  const labelledStack = showIconRow
+    ? providerButtons.filter((provider) => !provider.icon)
+    : providerButtons
+
   return (
-    <div className={cn('space-y-4', className)}>
+    <div className={cn('space-y-4', props.className)}>
       <div className='flex items-center gap-3'>
         <span className='bg-border h-px flex-1' aria-hidden='true' />
         <span className='text-muted-foreground text-xs'>
@@ -154,23 +150,43 @@ export function OAuthProviders({
         <span className='bg-border h-px flex-1' aria-hidden='true' />
       </div>
 
-      <div className='flex flex-col gap-2'>
-        {providerButtons.map(
-          ({ key, label, onClick, icon, disabled: extraDisabled }) => (
+      {iconRow.length > 0 && (
+        <div className='flex flex-wrap justify-center gap-2'>
+          {iconRow.map((provider) => (
             <Button
-              key={key}
+              key={provider.key}
               variant='outline'
               type='button'
-              disabled={disabled || isLoading || extraDisabled}
-              onClick={onClick}
+              size='icon'
+              aria-label={provider.label}
+              title={provider.label}
+              disabled={disabled || oauth.isLoading || provider.disabled}
+              onClick={provider.onClick}
+              className='size-11 [&_svg]:size-[1.15rem]'
+            >
+              {provider.icon}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {labelledStack.length > 0 && (
+        <div className='flex flex-col gap-2'>
+          {labelledStack.map((provider) => (
+            <Button
+              key={provider.key}
+              variant='outline'
+              type='button'
+              disabled={disabled || oauth.isLoading || provider.disabled}
+              onClick={provider.onClick}
               className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
             >
-              {icon}
-              {label}
+              {provider.icon}
+              {provider.label}
             </Button>
-          )
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

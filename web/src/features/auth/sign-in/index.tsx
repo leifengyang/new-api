@@ -40,7 +40,7 @@ export function SignIn() {
     >
       <div className='w-full space-y-6'>
         <div className='space-y-1'>
-          <h2 className='text-xl font-semibold tracking-[-0.01em]'>
+          <h2 className='text-2xl font-semibold tracking-[-0.015em]'>
             {t('Sign in')}
           </h2>
           {canRegister && (

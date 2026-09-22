@@ -746,123 +746,110 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
-/* ── Auth screens: request-lane backdrop ──
- * One orchestrated idea behind the sign-in and sign-up screens: traffic runs
- * along horizontal lanes, crosses the gate column that stands for this
- * deployment, and carries on out. Only `transform` and `opacity` animate, so
- * the whole field stays on the compositor. Every colour is theme-derived, so
- * the backdrop follows the active preset and the dark class. */
-.auth-lane-field {
-  -webkit-mask-image: radial-gradient(
-    115% 85% at 50% 48%,
-    black 28%,
-    transparent 76%
+/* ── Auth screens: the switchboard ──
+ * One orchestrated idea behind the sign-in and sign-up screens: every upstream
+ * provider funnels into this deployment and leaves again on a single endpoint.
+ * The stage is deliberately dark whatever the active theme, because the pulses
+ * only read as traffic against a dark ground; its hue is still derived from
+ * `--primary`, so the panel follows the user's theme preset. */
+.auth-stage {
+  --auth-ink: oklch(0.99 0 0);
+
+  background-color: color-mix(in oklch, var(--primary) 14%, black);
+  background-image: radial-gradient(
+    110% 90% at 70% 48%,
+    color-mix(in oklch, var(--primary) 30%, transparent),
+    transparent 68%
   );
-  mask-image: radial-gradient(115% 85% at 50% 48%, black 28%, transparent 76%);
+  color: var(--auth-ink);
 }
 
-.auth-lane {
-  stroke: color-mix(in oklch, var(--foreground) 8%, transparent);
+.auth-stage-endpoint {
+  color: color-mix(in oklch, var(--auth-ink) 92%, transparent);
 }
 
-@keyframes auth-packet-travel {
+.auth-stage-dim {
+  color: color-mix(in oklch, var(--auth-ink) 70%, transparent);
+}
+
+.auth-route-field {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.auth-route {
+  stroke: color-mix(in oklch, var(--auth-ink) 12%, transparent);
+  stroke-width: 1.25;
+}
+
+/* `pathLength="100"` normalises every route, so one dash of 12 units travels
+ * the full length in one cycle no matter how long the curve actually is. */
+@keyframes auth-route-travel {
   from {
-    transform: translate3d(0, 0, 0);
+    stroke-dashoffset: 100;
   }
+
   to {
-    transform: translate3d(calc(100vw + 18rem), 0, 0);
+    stroke-dashoffset: 0;
   }
 }
 
-.auth-packet {
-  position: absolute;
-  left: -18rem;
-  width: 18rem;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in oklch, var(--primary) 55%, transparent)
-  );
-  animation-name: auth-packet-travel;
+.auth-route-pulse {
+  stroke: color-mix(in oklch, var(--primary) 55%, var(--auth-ink));
+  stroke-width: 2;
+  stroke-dasharray: 12 88;
+  stroke-dashoffset: 100;
+  animation-name: auth-route-travel;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
-  will-change: transform;
 }
 
-.auth-packet-head {
-  position: absolute;
-  inset-inline-end: 0;
-  top: 50%;
-  width: 3px;
-  height: 3px;
-  margin-top: -1.5px;
-  border-radius: 9999px;
-  background: var(--primary);
-  box-shadow: 0 0 10px 2px color-mix(in oklch, var(--primary) 40%, transparent);
+.auth-route-pulse-out {
+  stroke: color-mix(in oklch, var(--primary) 30%, var(--auth-ink));
+  stroke-width: 3;
+  stroke-dasharray: 22 78;
 }
 
-/* 1fr / 1.3fr puts the column seam at 100 / 2.3 ≈ 43.5%. */
-.auth-gate-band {
-  inset-inline-start: 37.5%;
-  width: 12%;
-  background: radial-gradient(
-    50% 42% at 50% 50%,
-    color-mix(in oklch, var(--primary) 16%, transparent),
-    transparent 70%
-  );
+.auth-node-halo {
+  fill: color-mix(in oklch, var(--primary) 20%, transparent);
+  stroke: none;
 }
 
-.auth-gate-line {
-  inset-inline-start: 43.5%;
-  width: 1px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in oklch, var(--primary) 28%, transparent) 22%,
-    color-mix(in oklch, var(--primary) 28%, transparent) 78%,
-    transparent
-  );
-}
-
-@keyframes auth-gate-pulse {
-  from {
-    opacity: 0.45;
+@keyframes auth-node-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.7);
   }
-  to {
-    opacity: 1;
+
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
   }
 }
 
-.auth-gate-pulse {
-  animation: auth-gate-pulse 5.5s ease-in-out infinite alternate;
+.auth-node-ring {
+  fill: none;
+  stroke: color-mix(in oklch, var(--primary) 70%, var(--auth-ink));
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: auth-node-pulse 3.4s ease-out infinite;
 }
 
-/* Keeps the panel and the brand type off the brightest part of the field. */
-.auth-backdrop-vignette {
-  background: radial-gradient(
-    120% 100% at 50% 0%,
-    transparent 40%,
-    color-mix(in oklch, var(--background) 55%, transparent)
-  );
+.auth-node {
+  fill: color-mix(in oklch, var(--primary) 40%, var(--auth-ink));
+  stroke: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-packet {
+  .auth-route-pulse {
     animation: none;
-    transform: translate3d(var(--auth-packet-rest, 50vw), 0, 0);
+    stroke-dashoffset: var(--auth-route-rest, 50);
   }
 
-  .auth-gate-pulse {
+  .auth-node-ring {
     animation: none;
-    opacity: 0.8;
+    opacity: 0.45;
   }
-}
-
-/* Raised surface for the auth form. Token-derived so it stays believable on
- * light and dark presets alike. */
-.auth-panel {
-  box-shadow:
-    0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent),
-    0 28px 56px -28px color-mix(in oklch, var(--foreground) 22%, transparent);
 }

@@ -105,7 +105,7 @@ export function OAuthCallbackScreen({
             <Icon className='h-8 w-8' />
           </div>
           <div className='space-y-2'>
-            <h2 className='text-xl font-semibold tracking-[-0.01em]'>
+            <h2 className='text-2xl font-semibold tracking-[-0.015em]'>
               {headline}
             </h2>
             <p className='text-muted-foreground text-sm sm:text-base'>

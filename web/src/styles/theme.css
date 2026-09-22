@@ -103,6 +103,9 @@ For commercial licensing, please contact support@quantumnous.com
    * in theme-presets.css. Default mirrors `--font-sans` so behavior is
    * identical when no font preference is set. */
   --font-body: var(--font-sans);
+  /* Native form controls, scrollbars and the canvas follow the app theme
+   * rather than the OS setting. */
+  color-scheme: light;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -180,6 +183,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 .dark {
   /* OpenAI-like dark mode with a crisp charcoal canvas. */
+  color-scheme: dark;
   --background: oklch(0.235 0 0);
   --foreground: oklch(0.965 0 0);
   --card: oklch(0.285 0 0);

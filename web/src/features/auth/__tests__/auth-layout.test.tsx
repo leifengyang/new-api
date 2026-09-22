@@ -80,10 +80,10 @@ describe('Auth layout', () => {
     expect(screen.getByText(LEDE)).toBeInTheDocument()
   })
 
-  it('renders no lede paragraph for the screens that provide none', async () => {
+  it('renders no lede for the screens that provide none', async () => {
     setSystemConfig(false)
 
-    const { container } = renderLayout(
+    renderLayout(
       <AuthLayout>
         <p>form</p>
       </AuthLayout>
@@ -92,9 +92,38 @@ describe('Auth layout', () => {
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent(
       'Acme Gateway'
     )
-    const panel = container.querySelector('aside')
-    expect(panel).not.toBeNull()
-    expect(panel?.querySelectorAll('p')).toHaveLength(0)
+    expect(screen.queryByText(LEDE)).toBeNull()
+  })
+
+  it('shows the base URL callers point their clients at', async () => {
+    setSystemConfig(false)
+
+    renderLayout(
+      <AuthLayout lede={LEDE}>
+        <p>form</p>
+      </AuthLayout>
+    )
+
+    await screen.findByRole('heading', { level: 1 })
+
+    expect(screen.getByText(`${window.location.origin}/v1`)).toBeInTheDocument()
+  })
+
+  it('keeps the brand stage and the form area as separate landmarks', async () => {
+    setSystemConfig(false)
+
+    const { container } = renderLayout(
+      <AuthLayout lede={LEDE}>
+        <p>form</p>
+      </AuthLayout>
+    )
+
+    await screen.findByRole('heading', { level: 1 })
+
+    const stage = container.querySelector('aside')
+    expect(stage).not.toBeNull()
+    expect(stage).toHaveClass('auth-stage')
+    expect(stage?.contains(screen.getByRole('main'))).toBe(false)
   })
 
   it('keeps the decorative gate motif out of the accessible tree', async () => {

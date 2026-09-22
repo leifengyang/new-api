@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from '@tanstack/react-router'
 import { Loader2, LogIn, KeyRound } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -131,6 +131,21 @@ export function UserAuthForm({
       .catch(() => setPasskeySupported(false))
   }, [])
 
+  const captchaInputRef = useRef<HTMLInputElement>(null)
+  const consentCheckboxRef = useRef<HTMLButtonElement>(null)
+  const [gateError, setGateError] = useState<'captcha' | 'consent' | null>(null)
+  const captchaErrorMessage = t('Enter the 6-digit code from the image')
+
+  const handleCaptchaCodeChange = useCallback((value: string) => {
+    setCaptchaCode(value)
+    setGateError((current) => (current === 'captcha' ? null : current))
+  }, [])
+
+  const handleLegalConsentChange = useCallback((value: boolean) => {
+    setAgreedToLegal(value)
+    setGateError((current) => (current === 'consent' ? null : current))
+  }, [])
+
   const form = useForm<z.infer<typeof loginFormSchema>>({
     resolver: zodResolver(loginFormSchema),
     defaultValues: {
@@ -154,11 +169,23 @@ export function UserAuthForm({
   }, [status])
 
   async function onSubmit(data: z.infer<typeof loginFormSchema>) {
-    if (isLoading || !captchaId || !/^\d{6}$/.test(captchaCode)) return
-    if (requiresLegalConsent && !agreedToLegal) {
-      toast.error(legalConsentErrorMessage)
+    if (isLoading) return
+
+    // Submit stays clickable so a blocked attempt can say what is missing
+    // instead of leaving a dead button; the server re-checks all of this.
+    if (!captchaId || !/^\d{6}$/.test(captchaCode)) {
+      setGateError('captcha')
+      captchaInputRef.current?.focus()
       return
     }
+
+    if (requiresLegalConsent && !agreedToLegal) {
+      setGateError('consent')
+      consentCheckboxRef.current?.focus()
+      return
+    }
+
+    setGateError(null)
 
     if (!validateTurnstile()) return
 
@@ -361,6 +388,10 @@ export function UserAuthForm({
                   <FormControl>
                     <Input
                       placeholder={t('Enter your username or email')}
+                      autoComplete='username'
+                      autoCapitalize='none'
+                      autoCorrect='off'
+                      spellCheck={false}
                       className='h-11 px-3.5'
                       {...field}
                     />
@@ -388,6 +419,7 @@ export function UserAuthForm({
                   <FormControl>
                     <PasswordInput
                       placeholder={t('Enter password')}
+                      autoComplete='current-password'
                       className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                       {...field}
                     />
@@ -403,19 +435,16 @@ export function UserAuthForm({
               purpose='login'
               disabled={isLoading}
               value={captchaCode}
-              onChange={setCaptchaCode}
+              onChange={handleCaptchaCodeChange}
               onCaptchaChange={setCaptchaId}
+              inputRef={captchaInputRef}
+              error={gateError === 'captcha' ? captchaErrorMessage : undefined}
             />
 
             <Button
               type='submit'
               className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
-              disabled={
-                isLoading ||
-                !captchaId ||
-                !/^\d{6}$/.test(captchaCode) ||
-                (requiresLegalConsent && !agreedToLegal)
-              }
+              disabled={isLoading}
             >
               {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
               {t('Sign in')}
@@ -438,7 +467,9 @@ export function UserAuthForm({
         <LegalConsent
           status={status}
           checked={agreedToLegal}
-          onCheckedChange={setAgreedToLegal}
+          onCheckedChange={handleLegalConsentChange}
+          checkboxRef={consentCheckboxRef}
+          error={gateError === 'consent' ? legalConsentErrorMessage : undefined}
         />
 
         {alternativeLoginMethods}
