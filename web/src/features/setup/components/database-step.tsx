@@ -149,9 +149,9 @@ export function DatabaseStep({ status }: DatabaseStepProps) {
       )}
 
       {status?.database_type === 'postgres' && (
-        <Alert className='border-sky-200 bg-sky-50 dark:border-sky-900/60 dark:bg-sky-950/40'>
+        <Alert className='border-info/30 bg-info/10'>
           <AlertTitle className='flex items-center gap-2'>
-            <Server className='size-4 text-sky-500' />
+            <Server className='text-info size-4' />
             {t('PostgreSQL detected')}
           </AlertTitle>
           <AlertDescription>

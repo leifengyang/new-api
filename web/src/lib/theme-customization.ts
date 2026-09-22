@@ -25,9 +25,13 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const THEME_PRESETS = [
   {
+    // Ink on paper: a business-black reading of Anthropic's language. The
+    // swatches preview the two colours the system actually spends — ink-black
+    // for primary actions, brass for focus, active states and the second
+    // chart series.
     value: 'default',
     name: 'Default',
-    swatches: ['oklch(0.72 0.18 250)', 'oklch(0.7 0.12 280)'],
+    swatches: ['oklch(0.235 0.006 80)', 'oklch(0.598 0.092 68)'],
   },
   {
     // Inspired by Anthropic's official brand language: warm cream canvas
@@ -176,7 +180,7 @@ export const THEME_COOKIE_KEYS = {
 export const PRESET_DEFAULT_FONT: Partial<
   Record<ThemePreset, ResolvedThemeFont>
 > = {
-  default: 'sans',
+  default: 'serif',
   anthropic: 'serif',
 }
 
