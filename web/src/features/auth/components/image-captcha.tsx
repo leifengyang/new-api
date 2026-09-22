@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
+import type * as React from 'react'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -32,6 +33,10 @@ interface ImageCaptchaProps {
   onChange: (value: string) => void
   onCaptchaChange: (id: string) => void
   disabled?: boolean
+  /** Submit-time message shown under the field when the code is missing. */
+  error?: string
+  /** Lets the form move focus here when submit stops on this field. */
+  inputRef?: React.Ref<HTMLInputElement>
 }
 
 export function ImageCaptcha(props: ImageCaptchaProps) {
@@ -39,6 +44,7 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
   const onChange = props.onChange
   const onCaptchaChange = props.onCaptchaChange
   const fieldId = useId()
+  const errorId = useId()
   const [revision, setRevision] = useState(0)
   const [expired, setExpired] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
@@ -101,13 +107,17 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
         )}
         <Input
           id={fieldId}
+          ref={props.inputRef}
           value={props.value}
           onChange={(event) => props.onChange(event.target.value)}
-          placeholder={t('Enter the image captcha')}
+          placeholder={t('6 digits')}
           autoComplete='off'
+          spellCheck={false}
           inputMode='numeric'
           maxLength={6}
           disabled={props.disabled || unavailable}
+          aria-invalid={props.error ? true : undefined}
+          aria-describedby={props.error ? errorId : undefined}
           className='h-11 min-w-0 flex-1 px-3.5'
         />
         <Button
@@ -125,6 +135,11 @@ export function ImageCaptcha(props: ImageCaptchaProps) {
           />
         </Button>
       </div>
+      {props.error && (
+        <p id={errorId} role='alert' className='text-destructive text-xs'>
+          {props.error}
+        </p>
+      )}
       {(captcha.isError || imageFailed) && (
         <p role='alert' className='text-destructive text-xs'>
           {t('Unable to load the image captcha. Please refresh.')}

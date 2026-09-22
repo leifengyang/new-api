@@ -18,7 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -144,12 +152,47 @@ export function SignUpForm({
     }
   }, [])
 
+  const captchaInputRef = useRef<HTMLInputElement>(null)
+  const consentCheckboxRef = useRef<HTMLButtonElement>(null)
+  const [gateError, setGateError] = useState<
+    'captcha' | 'consent' | 'turnstile' | null
+  >(null)
+  const captchaErrorMessage = t('Enter the 6-digit code from the image')
+  const turnstileErrorMessage = t('Finish the verification challenge first')
+
+  const handleCaptchaCodeChange = useCallback((value: string) => {
+    setCaptchaCode(value)
+    setGateError((current) => (current === 'captcha' ? null : current))
+  }, [])
+
+  const handleLegalConsentChange = useCallback((value: boolean) => {
+    setAgreedToLegal(value)
+    setGateError((current) => (current === 'consent' ? null : current))
+  }, [])
+
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
-    if (isLoading || !captchaId || !/^\d{6}$/.test(captchaCode)) return
-    if (requiresLegalConsent && !agreedToLegal) {
-      toast.error(legalConsentErrorMessage)
+    if (isLoading) return
+
+    // Submit stays clickable so a blocked attempt can say what is missing
+    // instead of leaving a dead button; the server re-checks all of this.
+    if (!captchaId || !/^\d{6}$/.test(captchaCode)) {
+      setGateError('captcha')
+      captchaInputRef.current?.focus()
       return
     }
+
+    if (requiresLegalConsent && !agreedToLegal) {
+      setGateError('consent')
+      consentCheckboxRef.current?.focus()
+      return
+    }
+
+    if (!turnstileReady) {
+      setGateError('turnstile')
+      return
+    }
+
+    setGateError(null)
 
     // Validate email verification if required
     if (emailVerificationRequired) {
@@ -276,6 +319,10 @@ export function SignUpForm({
               <FormControl>
                 <Input
                   placeholder={t('Enter your username')}
+                  autoComplete='username'
+                  autoCapitalize='none'
+                  autoCorrect='off'
+                  spellCheck={false}
                   className='h-11 px-3.5'
                   {...field}
                 />
@@ -295,6 +342,7 @@ export function SignUpForm({
               <FormControl>
                 <PasswordInput
                   placeholder={t('Enter password (8–128 characters)')}
+                  autoComplete='new-password'
                   className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                   {...field}
                 />
@@ -314,6 +362,7 @@ export function SignUpForm({
               <FormControl>
                 <PasswordInput
                   placeholder={t('Confirm password')}
+                  autoComplete='new-password'
                   className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                   {...field}
                 />
@@ -339,6 +388,10 @@ export function SignUpForm({
                     <Input
                       placeholder={t('name@example.com')}
                       type='email'
+                      autoComplete='email'
+                      autoCapitalize='none'
+                      autoCorrect='off'
+                      spellCheck={false}
                       className='h-11 px-3.5'
                       {...field}
                     />
@@ -356,7 +409,10 @@ export function SignUpForm({
               <div className='flex gap-2'>
                 <Input
                   id={verificationCodeId}
-                  placeholder={t('Verification code')}
+                  placeholder={t('6 digits')}
+                  autoComplete='one-time-code'
+                  inputMode='numeric'
+                  spellCheck={false}
                   className='h-11 flex-1 px-3.5'
                   value={verificationCode}
                   onChange={(e) => setVerificationCode(e.target.value)}
@@ -387,37 +443,40 @@ export function SignUpForm({
           purpose='register'
           disabled={isLoading}
           value={captchaCode}
-          onChange={setCaptchaCode}
+          onChange={handleCaptchaCodeChange}
           onCaptchaChange={setCaptchaId}
+          inputRef={captchaInputRef}
+          error={gateError === 'captcha' ? captchaErrorMessage : undefined}
         />
 
         {isTurnstileEnabled && (
-          <div>
+          <div className='grid gap-2'>
             <Turnstile
               key={turnstileWidgetKey}
               siteKey={turnstileSiteKey}
               onVerify={setTurnstileToken}
             />
+            {gateError === 'turnstile' && (
+              <p role='alert' className='text-destructive text-xs'>
+                {turnstileErrorMessage}
+              </p>
+            )}
           </div>
         )}
 
         <LegalConsent
           status={status}
           checked={agreedToLegal}
-          onCheckedChange={setAgreedToLegal}
+          onCheckedChange={handleLegalConsentChange}
+          checkboxRef={consentCheckboxRef}
+          error={gateError === 'consent' ? legalConsentErrorMessage : undefined}
         />
 
         {/* Submit Button */}
         <Button
           type='submit'
           className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
-          disabled={
-            isLoading ||
-            !captchaId ||
-            !/^\d{6}$/.test(captchaCode) ||
-            (requiresLegalConsent && !agreedToLegal) ||
-            !turnstileReady
-          }
+          disabled={isLoading}
         >
           {isLoading ? <Loader2 className='h-4 w-4 animate-spin' /> : null}
           {t('Create account')}

@@ -28,7 +28,7 @@ export function ForgotPassword() {
     <AuthLayout>
       <div className='w-full space-y-6'>
         <div className='space-y-3'>
-          <h2 className='text-xl font-semibold tracking-[-0.01em]'>
+          <h2 className='text-2xl font-semibold tracking-[-0.015em]'>
             {t('Forgot password')}
           </h2>
           <p className='text-muted-foreground text-sm leading-relaxed'>

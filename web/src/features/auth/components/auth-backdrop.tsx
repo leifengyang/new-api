@@ -18,29 +18,85 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type * as React from 'react'
 
-/** Horizontal request lanes, as a percentage of the viewport height. */
-const LANES = [11, 20, 28, 37, 45, 54, 62, 71, 79, 88]
+type Route = {
+  id: string
+  /** Path geometry in the 440×560 user space the field is drawn in. */
+  d: string
+  /** Seconds one pulse takes to travel the whole route. */
+  duration: number
+  /** Negative so every route is already mid-flight on first paint. */
+  delay: number
+  /**
+   * Where the pulse parks when the visitor has asked for reduced motion, as a
+   * stroke-dashoffset in the normalised 0–100 path length. The values differ
+   * per route so the still frame reads as a composed diagram, not a stalled
+   * animation.
+   */
+  rest: string
+}
 
-/**
- * Traffic on the lanes. `rest` is where a packet parks when the visitor has
- * asked for reduced motion — the lane field then reads as a static topology
- * diagram instead of a frozen animation.
- */
-const PACKETS = [
-  { top: 11, duration: 21, delay: -3, rest: '24vw' },
-  { top: 20, duration: 16, delay: -11, rest: '67vw' },
-  { top: 37, duration: 26, delay: -6, rest: '41vw' },
-  { top: 45, duration: 13, delay: -1, rest: '82vw' },
-  { top: 62, duration: 19, delay: -14, rest: '15vw' },
-  { top: 71, duration: 24, delay: -8, rest: '55vw' },
-  { top: 88, duration: 17, delay: -5, rest: '73vw' },
+/** Upstream providers converging on this deployment. */
+const INBOUND: Route[] = [
+  {
+    id: 'in-1',
+    d: 'M -24 48 C 132 48, 176 280, 300 280',
+    duration: 7.5,
+    delay: -1.2,
+    rest: '38',
+  },
+  {
+    id: 'in-2',
+    d: 'M -24 164 C 124 164, 192 280, 300 280',
+    duration: 9.5,
+    delay: -6.4,
+    rest: '61',
+  },
+  {
+    id: 'in-3',
+    d: 'M -24 280 L 300 280',
+    duration: 6,
+    delay: -3.1,
+    rest: '17',
+  },
+  {
+    id: 'in-4',
+    d: 'M -24 396 C 124 396, 192 280, 300 280',
+    duration: 8.5,
+    delay: -4.7,
+    rest: '74',
+  },
+  {
+    id: 'in-5',
+    d: 'M -24 512 C 132 512, 176 280, 300 280',
+    duration: 11,
+    delay: -8.3,
+    rest: '46',
+  },
 ]
 
+/** The single OpenAI-compatible route back out to the caller. */
+const OUTBOUND: Route = {
+  id: 'out',
+  d: 'M 300 280 L 464 280',
+  duration: 3.4,
+  delay: -0.6,
+  rest: '29',
+}
+
+const ROUTES = [...INBOUND, OUTBOUND]
+
+function pulseStyle(route: Route): React.CSSProperties {
+  return {
+    animationDuration: `${route.duration}s`,
+    animationDelay: `${route.delay}s`,
+    '--auth-route-rest': route.rest,
+  } as React.CSSProperties
+}
+
 /**
- * The one moving idea on the auth screens: requests travel along lanes, cross
- * the gate column that stands for this deployment, and carry on out the other
- * side. Everything is decorative, so the whole layer is hidden from assistive
- * technology and never takes pointer events.
+ * The one moving idea on the auth screens: every upstream provider funnels into
+ * this deployment and leaves again on a single endpoint. Purely decorative, so
+ * the layer is hidden from assistive technology and never takes pointer events.
  */
 export function AuthBackdrop() {
   return (
@@ -49,47 +105,38 @@ export function AuthBackdrop() {
       className='pointer-events-none absolute inset-0 overflow-hidden'
     >
       <svg
-        className='auth-lane-field absolute inset-0 h-full w-full'
-        viewBox='0 0 100 100'
-        preserveAspectRatio='none'
+        className='auth-route-field absolute inset-0 h-full w-full'
+        viewBox='0 0 440 560'
+        preserveAspectRatio='xMidYMid slice'
+        focusable='false'
       >
-        {LANES.map((y) => (
-          <line
-            key={y}
-            className='auth-lane'
-            x1='0'
-            y1={y}
-            x2='100'
-            y2={y}
-            strokeWidth='1'
-            vectorEffect='non-scaling-stroke'
+        {ROUTES.map((route) => (
+          <path
+            key={route.id}
+            className='auth-route'
+            d={route.d}
+            pathLength='100'
           />
         ))}
+
+        {ROUTES.map((route) => (
+          <path
+            key={route.id}
+            className={
+              route.id === OUTBOUND.id
+                ? 'auth-route-pulse auth-route-pulse-out'
+                : 'auth-route-pulse'
+            }
+            d={route.d}
+            pathLength='100'
+            style={pulseStyle(route)}
+          />
+        ))}
+
+        <circle className='auth-node-halo' cx='300' cy='280' r='52' />
+        <circle className='auth-node-ring' cx='300' cy='280' r='21' />
+        <circle className='auth-node' cx='300' cy='280' r='7' />
       </svg>
-
-      {PACKETS.map((packet) => (
-        <span
-          key={packet.top}
-          className='auth-packet'
-          style={
-            {
-              top: `${packet.top}%`,
-              animationDuration: `${packet.duration}s`,
-              animationDelay: `${packet.delay}s`,
-              '--auth-packet-rest': packet.rest,
-            } as React.CSSProperties
-          }
-        >
-          <span className='auth-packet-head' />
-        </span>
-      ))}
-
-      {/* The gate: a soft band with a hairline at its centre, sitting on the
-       * seam between the brand column and the form panel (1fr / 1.3fr). */}
-      <div className='auth-gate-band auth-gate-pulse absolute inset-y-0 hidden lg:block' />
-      <div className='auth-gate-line absolute inset-y-0 hidden lg:block' />
-
-      <div className='auth-backdrop-vignette absolute inset-0' />
     </div>
   )
 }

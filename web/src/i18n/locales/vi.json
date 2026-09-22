@@ -6626,7 +6626,7 @@
     "Waffo Public Key (Production)": "Waffo Public Key (Sản xuất)",
     "Waffo Public Key (Sandbox)": "Khóa công khai Waffo (Sandbox)",
     "Waiting": "Đang chờ",
-    "Waiting for email...": "Đang chờ email...",
+    "Waiting for email…": "Đang chờ email…",
     "Waiting for two comparable samples. Counter resets restart the sampling window.": "Đang chờ hai mẫu có thể so sánh. Đặt lại bộ đếm sẽ bắt đầu lại khoảng lấy mẫu.",
     "Waiting requests": "Yêu cầu đang chờ",
     "Wallet": "Ví",
@@ -6780,6 +6780,11 @@
     "Zoom": "Zoom",
     "New here?": "Lần đầu sử dụng?",
     "Route, meter and bill every model request through one endpoint.": "Định tuyến, đo lường và tính phí mọi yêu cầu mô hình qua một điểm cuối duy nhất.",
-    "Create an account to issue API keys, track quota, and review every request.": "Tạo tài khoản để phát hành khóa API, theo dõi hạn mức và xem lại mọi yêu cầu."
+    "Create an account to issue API keys, track quota, and review every request.": "Tạo tài khoản để phát hành khóa API, theo dõi hạn mức và xem lại mọi yêu cầu.",
+    "6 digits": "6 chữ số",
+    "Enter the 6-digit code from the image": "Nhập mã 6 chữ số trong hình",
+    "Finish the verification challenge first": "Hãy hoàn tất xác minh trước",
+    "and the": "và",
+    "Toggle password visibility": "Hiện hoặc ẩn mật khẩu"
   }
 }

@@ -25,9 +25,9 @@ describe('auth backdrop', () => {
   it('hides the whole decorative field from assistive technology', () => {
     const { container } = render(<AuthBackdrop />)
 
-    const lanes = container.querySelector('svg')
-
-    expect(lanes?.closest('[aria-hidden="true"]')).not.toBeNull()
+    expect(
+      container.querySelector('svg')?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
   })
 
   it('keeps the field out of the tab order by rendering no interactive nodes', () => {
@@ -38,26 +38,52 @@ describe('auth backdrop', () => {
     ).toHaveLength(0)
   })
 
-  it('gives every packet a resting offset so reduced motion parks them apart', () => {
+  it('draws a faint base stroke for every route that carries a pulse', () => {
     const { container } = render(<AuthBackdrop />)
 
-    const packets = [...container.querySelectorAll<HTMLElement>('.auth-packet')]
+    const routes = container.querySelectorAll('.auth-route')
+    const pulses = container.querySelectorAll('.auth-route-pulse')
 
-    expect(packets.length).toBeGreaterThan(0)
-    const restingOffsets = packets.map((packet) =>
-      packet.style.getPropertyValue('--auth-packet-rest')
-    )
-    expect(restingOffsets.every(Boolean)).toBe(true)
-    expect(new Set(restingOffsets).size).toBe(packets.length)
+    expect(routes.length).toBeGreaterThan(1)
+    expect(pulses).toHaveLength(routes.length)
   })
 
-  it('staggers packet timing so they never travel as one block', () => {
+  it('normalises every route so one dash spans the same share of each path', () => {
+    const { container } = render(<AuthBackdrop />)
+
+    const lengths = [...container.querySelectorAll('.auth-route-pulse')].map(
+      (pulse) => pulse.getAttribute('pathLength')
+    )
+
+    expect(lengths.length).toBeGreaterThan(0)
+    expect(lengths.every((length) => length === '100')).toBe(true)
+  })
+
+  it('parks each pulse at its own offset so reduced motion still reads as a diagram', () => {
+    const { container } = render(<AuthBackdrop />)
+
+    const parked = [
+      ...container.querySelectorAll<SVGPathElement>('.auth-route-pulse'),
+    ].map((pulse) => pulse.style.getPropertyValue('--auth-route-rest'))
+
+    expect(parked.length).toBeGreaterThan(0)
+    expect(parked.every(Boolean)).toBe(true)
+    expect(new Set(parked).size).toBe(parked.length)
+  })
+
+  it('staggers pulse timing so the routes never travel as one block', () => {
     const { container } = render(<AuthBackdrop />)
 
     const durations = [
-      ...container.querySelectorAll<HTMLElement>('.auth-packet'),
-    ].map((packet) => packet.style.animationDuration)
+      ...container.querySelectorAll<SVGPathElement>('.auth-route-pulse'),
+    ].map((pulse) => pulse.style.animationDuration)
 
     expect(new Set(durations).size).toBeGreaterThan(1)
+  })
+
+  it('marks the single outbound route apart from the inbound ones', () => {
+    const { container } = render(<AuthBackdrop />)
+
+    expect(container.querySelectorAll('.auth-route-pulse-out')).toHaveLength(1)
   })
 })

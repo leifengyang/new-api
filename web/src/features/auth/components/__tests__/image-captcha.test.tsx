@@ -193,7 +193,13 @@ describe('Image captcha', () => {
       const submit = screen.getByRole('button', {
         name: purpose === 'login' ? 'Sign in' : 'Create account',
       })
-      expect(submit).toBeDisabled()
+      // Submit stays clickable so a blocked attempt can name what is missing.
+      expect(submit).toBeEnabled()
+      await user.click(submit)
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Enter the 6-digit code from the image'
+      )
+      expect(post).not.toHaveBeenCalled()
       await user.type(input, '123456')
       await user.click(submit)
       await waitFor(() =>
@@ -211,7 +217,7 @@ describe('Image captcha', () => {
       await waitFor(() =>
         expect(screen.getByLabelText('Image captcha code')).toHaveValue('')
       )
-      expect(submit).toBeDisabled()
+      expect(submit).toBeEnabled()
       await waitFor(() =>
         expect(screen.getByLabelText('Image captcha code')).toBeEnabled()
       )

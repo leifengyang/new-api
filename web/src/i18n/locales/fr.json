@@ -6626,7 +6626,7 @@
     "Waffo Public Key (Production)": "Clé publique Waffo (Production)",
     "Waffo Public Key (Sandbox)": "Clé publique Waffo (Sandbox)",
     "Waiting": "En attente",
-    "Waiting for email...": "En attente de l'e-mail...",
+    "Waiting for email…": "En attente de l'e-mail…",
     "Waiting for two comparable samples. Counter resets restart the sampling window.": "En attente de deux relevés comparables. Un compteur remis à zéro redémarre la période.",
     "Waiting requests": "Requêtes en attente",
     "Wallet": "Portefeuille",
@@ -6780,6 +6780,11 @@
     "Zoom": "Zoom",
     "New here?": "Première visite ?",
     "Route, meter and bill every model request through one endpoint.": "Routez, mesurez et facturez chaque requête de modèle via un seul point d'accès.",
-    "Create an account to issue API keys, track quota, and review every request.": "Créez un compte pour émettre des clés API, suivre votre quota et consulter chaque requête."
+    "Create an account to issue API keys, track quota, and review every request.": "Créez un compte pour émettre des clés API, suivre votre quota et consulter chaque requête.",
+    "6 digits": "6 chiffres",
+    "Enter the 6-digit code from the image": "Saisissez le code à 6 chiffres affiché sur l'image",
+    "Finish the verification challenge first": "Terminez d'abord la vérification",
+    "and the": "et la",
+    "Toggle password visibility": "Afficher ou masquer le mot de passe"
   }
 }
