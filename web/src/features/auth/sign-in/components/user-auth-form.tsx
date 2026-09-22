@@ -302,13 +302,13 @@ export function UserAuthForm({
   const alternativeLoginMethods = (
     <>
       {passkeyLoginEnabled && (
-        <div className='mt-2 space-y-1'>
+        <div className='space-y-2'>
           <Button
             type='button'
             variant='outline'
             disabled={passkeyButtonDisabled}
             onClick={handlePasskeyLogin}
-            className='h-11 w-full justify-center gap-2 rounded-lg'
+            className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
           >
             {isPasskeyLoading ? (
               <Loader2 className='h-4 w-4 animate-spin' />
@@ -346,7 +346,7 @@ export function UserAuthForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className={cn('grid gap-4', className)}
+        className={cn('grid gap-5', className)}
         {...props}
       >
         {passwordLoginEnabled && (
@@ -361,6 +361,7 @@ export function UserAuthForm({
                   <FormControl>
                     <Input
                       placeholder={t('Enter your username or email')}
+                      className='h-11 px-3.5'
                       {...field}
                     />
                   </FormControl>
@@ -374,21 +375,24 @@ export function UserAuthForm({
               control={form.control}
               name='password'
               render={({ field }) => (
-                <FormItem className='relative'>
-                  <FormLabel>{t('Password')}</FormLabel>
+                <FormItem>
+                  <div className='flex items-baseline justify-between gap-3'>
+                    <FormLabel>{t('Password')}</FormLabel>
+                    <Link
+                      to='/forgot-password'
+                      className='text-muted-foreground hover:text-foreground text-xs font-medium transition-colors'
+                    >
+                      {t('Forgot password?')}
+                    </Link>
+                  </div>
                   <FormControl>
                     <PasswordInput
                       placeholder={t('Enter password')}
+                      className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                       {...field}
                     />
                   </FormControl>
                   <FormMessage />
-                  <Link
-                    to='/forgot-password'
-                    className='text-muted-foreground absolute end-0 -top-0.5 z-10 text-sm font-medium hover:opacity-75'
-                  >
-                    {t('Forgot password?')}
-                  </Link>
                 </FormItem>
               )}
             />
@@ -405,7 +409,7 @@ export function UserAuthForm({
 
             <Button
               type='submit'
-              className='mt-2 w-full justify-center gap-2'
+              className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
               disabled={
                 isLoading ||
                 !captchaId ||
@@ -419,7 +423,7 @@ export function UserAuthForm({
 
             {/* Turnstile */}
             {isTurnstileEnabled && (
-              <div className='mt-2'>
+              <div>
                 <Turnstile
                   key={turnstileWidgetKey}
                   siteKey={turnstileSiteKey}
@@ -435,7 +439,6 @@ export function UserAuthForm({
           status={status}
           checked={agreedToLegal}
           onCheckedChange={setAgreedToLegal}
-          className='mt-1'
         />
 
         {alternativeLoginMethods}

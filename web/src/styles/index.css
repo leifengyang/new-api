@@ -746,47 +746,123 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
-/* ── Sign-in gateway motif ──
- * One orchestrated moment on the auth screens: the strands draw toward the
- * gate node, the node settles last. Every strand carries `pathLength="1"`,
- * so one normalised dash pair works whatever the real path length is. */
-@keyframes auth-gate-draw {
+/* ── Auth screens: request-lane backdrop ──
+ * One orchestrated idea behind the sign-in and sign-up screens: traffic runs
+ * along horizontal lanes, crosses the gate column that stands for this
+ * deployment, and carries on out. Only `transform` and `opacity` animate, so
+ * the whole field stays on the compositor. Every colour is theme-derived, so
+ * the backdrop follows the active preset and the dark class. */
+.auth-lane-field {
+  -webkit-mask-image: radial-gradient(
+    115% 85% at 50% 48%,
+    black 28%,
+    transparent 76%
+  );
+  mask-image: radial-gradient(115% 85% at 50% 48%, black 28%, transparent 76%);
+}
+
+.auth-lane {
+  stroke: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+@keyframes auth-packet-travel {
   from {
-    stroke-dashoffset: 1;
+    transform: translate3d(0, 0, 0);
   }
   to {
-    stroke-dashoffset: 0;
+    transform: translate3d(calc(100vw + 18rem), 0, 0);
   }
 }
 
-@keyframes auth-gate-node-settle {
+.auth-packet {
+  position: absolute;
+  left: -18rem;
+  width: 18rem;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--primary) 55%, transparent)
+  );
+  animation-name: auth-packet-travel;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+
+.auth-packet-head {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 9999px;
+  background: var(--primary);
+  box-shadow: 0 0 10px 2px color-mix(in oklch, var(--primary) 40%, transparent);
+}
+
+/* 1fr / 1.3fr puts the column seam at 100 / 2.3 ≈ 43.5%. */
+.auth-gate-band {
+  inset-inline-start: 37.5%;
+  width: 12%;
+  background: radial-gradient(
+    50% 42% at 50% 50%,
+    color-mix(in oklch, var(--primary) 16%, transparent),
+    transparent 70%
+  );
+}
+
+.auth-gate-line {
+  inset-inline-start: 43.5%;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in oklch, var(--primary) 28%, transparent) 22%,
+    color-mix(in oklch, var(--primary) 28%, transparent) 78%,
+    transparent
+  );
+}
+
+@keyframes auth-gate-pulse {
   from {
-    opacity: 0;
-    transform: scale(0.4);
+    opacity: 0.45;
   }
   to {
     opacity: 1;
-    transform: scale(1);
   }
 }
 
-.auth-gate-strand {
-  stroke-dasharray: 1;
-  animation: auth-gate-draw 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: var(--auth-gate-delay, 0ms);
+.auth-gate-pulse {
+  animation: auth-gate-pulse 5.5s ease-in-out infinite alternate;
 }
 
-.auth-gate-node {
-  animation: auth-gate-node-settle 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: 620ms;
+/* Keeps the panel and the brand type off the brightest part of the field. */
+.auth-backdrop-vignette {
+  background: radial-gradient(
+    120% 100% at 50% 0%,
+    transparent 40%,
+    color-mix(in oklch, var(--background) 55%, transparent)
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-gate-strand,
-  .auth-gate-node {
-    animation: none !important;
-    stroke-dashoffset: 0 !important;
-    opacity: 1 !important;
-    transform: none !important;
+  .auth-packet {
+    animation: none;
+    transform: translate3d(var(--auth-packet-rest, 50vw), 0, 0);
   }
+
+  .auth-gate-pulse {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+
+/* Raised surface for the auth form. Token-derived so it stays believable on
+ * light and dark presets alike. */
+.auth-panel {
+  box-shadow:
+    0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent),
+    0 28px 56px -28px color-mix(in oklch, var(--foreground) 22%, transparent);
 }

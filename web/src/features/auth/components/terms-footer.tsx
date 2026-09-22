@@ -66,7 +66,9 @@ export function TermsFooter({
   const [firstLink, secondLink] = activeLinks
 
   return (
-    <p className={cn('text-muted-foreground text-center text-xs', className)}>
+    <p
+      className={cn('text-muted-foreground text-xs leading-relaxed', className)}
+    >
       {text}{' '}
       {firstLink && (
         <a

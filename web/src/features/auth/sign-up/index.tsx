@@ -35,9 +35,9 @@ export function SignUp() {
         'Create an account to issue API keys, track quota, and review every request.'
       )}
     >
-      <div className='w-full space-y-8'>
-        <div className='space-y-1.5'>
-          <h2 className='text-2xl font-semibold tracking-tight'>
+      <div className='w-full space-y-6'>
+        <div className='space-y-1'>
+          <h2 className='text-xl font-semibold tracking-[-0.01em]'>
             {t('Create an account')}
           </h2>
           <p className='text-muted-foreground text-sm'>
