@@ -22,42 +22,64 @@ import { useTranslation } from 'react-i18next'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
+import { AuthGate } from './components/auth-gate'
+
 type AuthLayoutProps = {
   children: React.ReactNode
+  /** One plain sentence naming what this deployment does for the visitor. */
+  lede?: string
 }
 
-export function AuthLayout({ children }: AuthLayoutProps) {
+export function AuthLayout(props: AuthLayoutProps) {
   const { t } = useTranslation()
   const { systemName, logo, loading } = useSystemConfig()
 
   return (
-    <div className='relative grid h-svh max-w-none'>
-      <Link
-        to='/'
-        className='absolute top-4 left-4 z-10 flex items-center gap-2 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'
+    <div className='bg-background min-h-svh lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]'>
+      <aside
+        className='relative isolate flex flex-col gap-5 overflow-hidden px-6 pt-8 pb-8 sm:px-10 lg:justify-between lg:gap-12 lg:px-14 lg:py-16'
+        style={{
+          backgroundColor: 'color-mix(in oklch, var(--primary) 5%, var(--background))',
+        }}
       >
-        <div className='relative h-8 w-8'>
+        <AuthGate />
+
+        <Link
+          to='/'
+          className='relative z-10 flex w-fit items-center gap-3 transition-opacity hover:opacity-80'
+        >
           {loading ? (
-            <Skeleton className='absolute inset-0 rounded-full' />
+            <Skeleton className='size-9 rounded-full' />
           ) : (
             <img
               src={logo}
               alt={t('Logo')}
-              className='h-8 w-8 rounded-full object-cover'
+              className='size-9 rounded-full object-cover'
             />
           )}
+        </Link>
+
+        <div className='relative z-10 max-w-[32ch]'>
+          {loading ? (
+            <Skeleton className='h-8 w-56 lg:h-12 lg:w-64' />
+          ) : (
+            <h1 className='text-2xl leading-[1.05] font-semibold tracking-[-0.02em] text-balance lg:text-[clamp(2rem,3.2vw,2.75rem)] lg:leading-[1.02] lg:tracking-[-0.03em]'>
+              {systemName}
+            </h1>
+          )}
+          {props.lede && (
+            <p className='text-muted-foreground mt-2 text-sm leading-relaxed lg:mt-5 lg:text-base'>
+              {props.lede}
+            </p>
+          )}
         </div>
-        {loading ? (
-          <Skeleton className='h-6 w-24' />
-        ) : (
-          <h1 className='text-xl font-medium'>{systemName}</h1>
-        )}
-      </Link>
-      <div className='container flex items-center pt-16 sm:pt-0'>
-        <div className='mx-auto flex w-full flex-col justify-center space-y-2 px-4 py-8 sm:w-[480px] sm:p-8'>
-          {children}
+      </aside>
+
+      <main className='flex justify-center px-6 py-10 sm:px-10 lg:items-center lg:px-14 lg:py-16'>
+        <div className='w-full max-w-[26rem] lg:max-w-[27rem]'>
+          {props.children}
         </div>
-      </div>
+      </main>
     </div>
   )
 }
