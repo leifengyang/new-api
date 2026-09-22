@@ -705,7 +705,11 @@ For commercial licensing, please contact support@quantumnous.com
  * two-layer mask (content-box XOR full box) keeps only a `padding`-wide
  * ring visible, so the highlight hugs the rounded perimeter. Animating
  * the gradient's start angle makes the bright segment travel around all
- * four edges and corners without touching the interior. */
+ * four edges and corners without touching the interior.
+ *
+ * Coloured from `--ring` rather than `--primary`: the default theme's primary
+ * is ink-black (paper-white when inverted), which reads as chrome rather than
+ * as a highlight. Every preset's ring is by definition its stand-out colour. */
 .auto-group-flow-border {
   padding: 1.5px;
   border-radius: inherit;
@@ -713,8 +717,8 @@ For commercial licensing, please contact support@quantumnous.com
     from var(--auto-group-flow-angle),
     transparent 0deg,
     transparent 240deg,
-    color-mix(in oklch, var(--primary) 45%, transparent) 300deg,
-    var(--primary) 342deg,
+    color-mix(in oklch, var(--ring) 45%, transparent) 300deg,
+    var(--ring) 342deg,
     transparent 360deg
   );
   mask:
@@ -733,8 +737,8 @@ For commercial licensing, please contact support@quantumnous.com
   background: conic-gradient(
     from var(--auto-group-flow-angle),
     transparent 0deg 300deg,
-    color-mix(in oklch, var(--primary) 30%, transparent) 318deg,
-    var(--primary) 348deg,
+    color-mix(in oklch, var(--ring) 30%, transparent) 318deg,
+    var(--ring) 348deg,
     transparent 360deg
   );
   animation-duration: 3s;
@@ -750,15 +754,20 @@ For commercial licensing, please contact support@quantumnous.com
  * One orchestrated idea behind the sign-in and sign-up screens: every upstream
  * provider funnels into this deployment and leaves again on a single endpoint.
  * The stage is deliberately dark whatever the active theme, because the pulses
- * only read as traffic against a dark ground; its hue is still derived from
- * `--primary`, so the panel follows the user's theme preset. */
+ * only read as traffic against a dark ground.
+ *
+ * The accent is derived from `--ring` rather than `--primary`: the default
+ * theme's primary is ink-black, which would vanish here, while every preset's
+ * ring is by definition a colour meant to stand out. Mixing a little paper into
+ * it lifts darker rings (the default's brass) clear of the ink ground. */
 .auth-stage {
-  --auth-ink: oklch(0.99 0 0);
+  --auth-ink: oklch(0.975 0.003 106);
+  --auth-accent: color-mix(in oklch, var(--ring) 88%, var(--auth-ink));
 
-  background-color: color-mix(in oklch, var(--primary) 14%, black);
+  background-color: color-mix(in oklch, var(--ring) 8%, oklch(0.16 0.004 80));
   background-image: radial-gradient(
     110% 90% at 70% 48%,
-    color-mix(in oklch, var(--primary) 30%, transparent),
+    color-mix(in oklch, var(--auth-accent) 20%, transparent),
     transparent 68%
   );
   color: var(--auth-ink);
@@ -794,8 +803,11 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
+/* Inbound traffic travels as paper-white light; only the single outbound
+ * endpoint route is spent on the accent, so the eye lands where the request
+ * actually leaves. */
 .auth-route-pulse {
-  stroke: color-mix(in oklch, var(--primary) 55%, var(--auth-ink));
+  stroke: color-mix(in oklch, var(--auth-ink) 82%, transparent);
   stroke-width: 2;
   stroke-dasharray: 12 88;
   stroke-dashoffset: 100;
@@ -805,13 +817,13 @@ For commercial licensing, please contact support@quantumnous.com
 }
 
 .auth-route-pulse-out {
-  stroke: color-mix(in oklch, var(--primary) 30%, var(--auth-ink));
+  stroke: var(--auth-accent);
   stroke-width: 3;
   stroke-dasharray: 22 78;
 }
 
 .auth-node-halo {
-  fill: color-mix(in oklch, var(--primary) 20%, transparent);
+  fill: color-mix(in oklch, var(--auth-accent) 18%, transparent);
   stroke: none;
 }
 
@@ -830,7 +842,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 .auth-node-ring {
   fill: none;
-  stroke: color-mix(in oklch, var(--primary) 70%, var(--auth-ink));
+  stroke: color-mix(in oklch, var(--auth-accent) 75%, var(--auth-ink));
   stroke-width: 1.5;
   transform-box: fill-box;
   transform-origin: center;
@@ -838,7 +850,7 @@ For commercial licensing, please contact support@quantumnous.com
 }
 
 .auth-node {
-  fill: color-mix(in oklch, var(--primary) 40%, var(--auth-ink));
+  fill: color-mix(in oklch, var(--auth-accent) 55%, var(--auth-ink));
   stroke: none;
 }
 

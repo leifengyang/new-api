@@ -93,64 +93,78 @@ For commercial licensing, please contact support@quantumnous.com
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── Default theme: ink on paper ──
+ * A business-black reading of Anthropic's design language. The canvas is warm
+ * paper (#f5f5f2), type is ink (#1a1917), and the single accent is a restrained
+ * brass (#a8793c) that carries focus rings, active states and the chart's
+ * second series. Primary actions are ink-black rather than a brand hue, so the
+ * colour budget is spent on data and state, not on chrome.
+ *
+ * Surfaces follow a warm-neutral ladder (paper → card → popover) instead of
+ * being tinted with the primary, which is why `--accent` here is a warm grey:
+ * an ink-tinted hover would just read as dirty. */
 :root {
-  --radius: 1rem;
+  --radius: 0.625rem;
   --app-header-height: 3rem;
   /* Static build-channel fallback consumed when JS hasn't booted yet. */
   --app-rev: '2k6e8r7p';
   /* Currently active body font. The font axis swaps this between
    * `--font-sans` and `--font-serif` via `[data-theme-font='...']` blocks
-   * in theme-presets.css. Default mirrors `--font-sans` so behavior is
-   * identical when no font preference is set. */
-  --font-body: var(--font-sans);
+   * in theme-presets.css. The default resolves to serif (see
+   * `PRESET_DEFAULT_FONT`), so the pre-hydration value mirrors it and the
+   * body face does not swap once the provider mounts. */
+  --font-body: var(--font-serif);
   /* Native form controls, scrollbars and the canvas follow the app theme
    * rather than the OS setting. */
   color-scheme: light;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.966 0.003 106);
+  --foreground: oklch(0.205 0.004 80);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.205 0.004 80);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.692 0.141 243.716);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.95 0 0);
-  --secondary-foreground: oklch(0.42 0.16 250);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.49 0 0);
-  --accent: color-mix(in oklch, var(--primary) 12%, var(--background));
-  --accent-foreground: oklch(0.145 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.596 0.145 163.225);
-  --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.681 0.162 75.834);
-  --warning-foreground: oklch(0.145 0 0);
-  --info: oklch(0.588 0.158 241.966);
-  --info-foreground: oklch(0.985 0 0);
-  --neutral: oklch(0.708 0 0);
-  --neutral-foreground: oklch(0.145 0 0);
-  --border: oklch(0.93 0 0);
-  --input: oklch(0.93 0 0);
-  --ring: oklch(0.708 0.16 249.003);
-  --chart-1: oklch(0.72 0.18 250);
-  --chart-2: oklch(0.65 0.15 200);
-  --chart-3: oklch(0.7 0.12 280);
-  --chart-4: oklch(0.68 0.19 325);
-  --chart-5: oklch(0.68 0.16 155);
-  --overview-accent-1: oklch(0.72 0.18 250);
-  --overview-accent-2: oklch(0.65 0.15 200);
-  --overview-accent-3: oklch(0.7 0.12 280);
-  --sidebar: color-mix(in oklch, var(--foreground) 0.5%, var(--background));
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.64 0.197 253.892);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: color-mix(in oklch, var(--primary) 12%, var(--background));
-  --sidebar-accent-foreground: oklch(0.579 0.196 255.909);
-  --sidebar-border: oklch(0.93 0 0);
-  --sidebar-ring: oklch(0.58 0.2 250);
-  --skeleton-base: oklch(0.97 0 0);
-  --skeleton-highlight: oklch(0.985 0 0);
+  --popover-foreground: oklch(0.205 0.004 80);
+  --primary: oklch(0.235 0.006 80);
+  --primary-foreground: oklch(0.975 0.003 106);
+  --secondary: oklch(0.94 0.004 100);
+  --secondary-foreground: oklch(0.255 0.006 80);
+  --muted: oklch(0.951 0.004 102);
+  --muted-foreground: oklch(0.505 0.005 95);
+  --accent: oklch(0.923 0.006 98);
+  --accent-foreground: oklch(0.205 0.004 80);
+  --destructive: oklch(0.512 0.152 27);
+  --destructive-foreground: oklch(0.975 0.003 106);
+  --success: oklch(0.505 0.088 132);
+  --success-foreground: oklch(0.975 0.003 106);
+  /* A darker brass than the accent: white type has to clear 4.5:1 on it. */
+  --warning: oklch(0.55 0.088 68);
+  --warning-foreground: oklch(0.975 0.003 106);
+  --info: oklch(0.505 0.072 248);
+  --info-foreground: oklch(0.975 0.003 106);
+  --neutral: oklch(0.62 0.005 95);
+  --neutral-foreground: oklch(0.205 0.004 80);
+  --border: oklch(0.906 0.006 100);
+  --input: oklch(0.906 0.006 100);
+  /* Brass, not ink: the focus ring has to separate from both the paper and
+   * the ink-black controls it wraps. */
+  --ring: oklch(0.598 0.092 68);
+  --chart-1: oklch(0.32 0.012 80);
+  --chart-2: oklch(0.598 0.092 68);
+  --chart-3: oklch(0.52 0.066 246);
+  --chart-4: oklch(0.56 0.078 132);
+  --chart-5: oklch(0.615 0.016 85);
+  --overview-accent-1: oklch(0.32 0.012 80);
+  --overview-accent-2: oklch(0.598 0.092 68);
+  --overview-accent-3: oklch(0.52 0.066 246);
+  --sidebar: oklch(0.948 0.004 104);
+  --sidebar-foreground: oklch(0.205 0.004 80);
+  --sidebar-primary: oklch(0.235 0.006 80);
+  --sidebar-primary-foreground: oklch(0.975 0.003 106);
+  --sidebar-accent: oklch(0.915 0.006 98);
+  --sidebar-accent-foreground: oklch(0.205 0.004 80);
+  --sidebar-border: oklch(0.9 0.006 100);
+  --sidebar-ring: oklch(0.598 0.092 68);
+  --skeleton-base: oklch(0.932 0.005 100);
+  --skeleton-highlight: oklch(0.968 0.003 104);
   --table-row: var(--background);
   --table-header: color-mix(
     in oklch,
@@ -182,50 +196,56 @@ For commercial licensing, please contact support@quantumnous.com
 }
 
 .dark {
-  /* OpenAI-like dark mode with a crisp charcoal canvas. */
+  /* The same ink/paper relationship, inverted: warm near-black surfaces and a
+   * paper-white primary. Brass stays the single accent in both modes. */
   color-scheme: dark;
-  --background: oklch(0.235 0 0);
-  --foreground: oklch(0.965 0 0);
-  --card: oklch(0.285 0 0);
-  --card-foreground: oklch(0.965 0 0);
-  --popover: oklch(0.305 0 0);
-  --popover-foreground: oklch(0.965 0 0);
-  --primary: oklch(0.54 0.142 248.516);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.335 0 0);
-  --secondary-foreground: oklch(0.9 0.05 250);
-  --muted: oklch(0.305 0 0);
-  --muted-foreground: oklch(0.78 0 0);
-  --accent: color-mix(in oklch, var(--primary) 20%, var(--background));
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --success: oklch(0.696 0.17 162.48);
-  --success-foreground: oklch(0.145 0 0);
-  --warning: oklch(0.769 0.188 70.08);
-  --warning-foreground: oklch(0.145 0 0);
-  --info: oklch(0.613 0.14 239.919);
-  --info-foreground: oklch(0.145 0 0);
-  --neutral: oklch(0.76 0 0);
-  --neutral-foreground: oklch(0.155 0 0);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.205 0.004 80);
+  --foreground: oklch(0.952 0.003 100);
+  --card: oklch(0.247 0.004 80);
+  --card-foreground: oklch(0.952 0.003 100);
+  --popover: oklch(0.267 0.004 80);
+  --popover-foreground: oklch(0.952 0.003 100);
+  --primary: oklch(0.945 0.003 100);
+  --primary-foreground: oklch(0.205 0.004 80);
+  --secondary: oklch(0.288 0.004 80);
+  --secondary-foreground: oklch(0.93 0.003 100);
+  --muted: oklch(0.267 0.004 80);
+  --muted-foreground: oklch(0.745 0.006 95);
+  --accent: oklch(0.305 0.005 85);
+  --accent-foreground: oklch(0.96 0.003 100);
+  --destructive: oklch(0.63 0.15 27);
+  /* Ink, like every other semantic foreground in this mode: paper type on a
+   * lifted red only reaches 3.5:1. */
+  --destructive-foreground: oklch(0.205 0.004 80);
+  --success: oklch(0.655 0.092 135);
+  --success-foreground: oklch(0.205 0.004 80);
+  --warning: oklch(0.715 0.1 72);
+  --warning-foreground: oklch(0.205 0.004 80);
+  --info: oklch(0.655 0.072 248);
+  --info-foreground: oklch(0.205 0.004 80);
+  --neutral: oklch(0.72 0.006 90);
+  --neutral-foreground: oklch(0.205 0.004 80);
+  --border: oklch(1 0 0 / 11%);
   --input: oklch(1 0 0 / 17%);
-  --ring: oklch(0.554 0.148 250.726);
-  --chart-1: oklch(0.76 0.14 250);
-  --chart-2: oklch(0.76 0.13 200);
-  --chart-3: oklch(0.76 0.13 285);
-  --chart-4: oklch(0.75 0.16 325);
-  --chart-5: oklch(0.76 0.14 155);
-  --sidebar: oklch(0.225 0 0);
-  --sidebar-foreground: oklch(0.95 0 0);
-  --sidebar-primary: oklch(0.588 0.123 246.488);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: color-mix(in oklch, var(--primary) 20%, var(--background));
-  --sidebar-accent-foreground: oklch(0.9 0.05 250);
-  --sidebar-border: oklch(1 0 0 / 11%);
-  --sidebar-ring: oklch(0.7 0.17 250);
-  --skeleton-base: oklch(0.335 0 0);
-  --skeleton-highlight: oklch(0.44 0 0);
+  --ring: oklch(0.665 0.098 70);
+  --chart-1: oklch(0.86 0.008 95);
+  --chart-2: oklch(0.7 0.1 70);
+  --chart-3: oklch(0.675 0.066 246);
+  --chart-4: oklch(0.68 0.082 132);
+  --chart-5: oklch(0.6 0.014 85);
+  --overview-accent-1: oklch(0.86 0.008 95);
+  --overview-accent-2: oklch(0.7 0.1 70);
+  --overview-accent-3: oklch(0.675 0.066 246);
+  --sidebar: oklch(0.192 0.004 80);
+  --sidebar-foreground: oklch(0.94 0.003 100);
+  --sidebar-primary: oklch(0.945 0.003 100);
+  --sidebar-primary-foreground: oklch(0.205 0.004 80);
+  --sidebar-accent: oklch(0.295 0.005 85);
+  --sidebar-accent-foreground: oklch(0.95 0.003 100);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.665 0.098 70);
+  --skeleton-base: oklch(0.288 0.004 80);
+  --skeleton-highlight: oklch(0.365 0.005 82);
   --table-row: var(--background);
   --table-header: color-mix(in oklch, var(--foreground) 6%, var(--background));
   --table-header-hover: color-mix(
