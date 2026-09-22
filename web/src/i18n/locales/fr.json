@@ -6777,6 +6777,9 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "New here?": "Première visite ?",
+    "Route, meter and bill every model request through one endpoint.": "Routez, mesurez et facturez chaque requête de modèle via un seul point d'accès.",
+    "Create an account to issue API keys, track quota, and review every request.": "Créez un compte pour émettre des clés API, suivre votre quota et consulter chaque requête."
   }
 }

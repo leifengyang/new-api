@@ -30,31 +30,30 @@ export function SignUp() {
   const { status } = useStatus()
 
   return (
-    <AuthLayout>
+    <AuthLayout
+      lede={t(
+        'Create an account to issue API keys, track quota, and review every request.'
+      )}
+    >
       <div className='w-full space-y-8'>
-        <div className='space-y-2'>
-          <h2 className='text-center text-2xl font-semibold tracking-tight sm:text-left'>
+        <div className='space-y-1.5'>
+          <h2 className='text-2xl font-semibold tracking-tight'>
             {t('Create an account')}
           </h2>
-          <p className='text-muted-foreground text-left text-sm sm:text-base'>
+          <p className='text-muted-foreground text-sm'>
             {t('Already have an account?')}{' '}
             <Link
               to='/sign-in'
-              className='hover:text-primary font-medium underline underline-offset-4'
+              className='text-foreground hover:text-primary font-medium underline underline-offset-4'
             >
               {t('Sign in')}
             </Link>
-            .
           </p>
         </div>
 
         <SignUpForm />
 
-        <TermsFooter
-          variant='sign-up'
-          status={status}
-          className='text-center'
-        />
+        <TermsFooter variant='sign-up' status={status} />
       </div>
     </AuthLayout>
   )
