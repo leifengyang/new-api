@@ -819,4 +819,15 @@ export const STATIC_I18N_KEYS = [
   'Vendor name and icon must not exceed 128 characters.',
   'Shown',
   'Not shown',
+  // Invite rebate ledger (status, skip reason and top-up source labels).
+  'Credited',
+  'Not Credited',
+  'The inviter already holds the maximum balance, so this rebate could not be credited',
+  'Epay',
+  'Stripe',
+  'Creem',
+  'Waffo',
+  'Waffo Pancake',
+  'Redemption Code',
+  'Manual Adjustment',
 ] as const
