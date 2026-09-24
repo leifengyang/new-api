@@ -32,7 +32,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
 import {
@@ -43,6 +42,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { SafeNumberInput } from '../utils/numeric-field'
 import {
   MAX_INVITE_REBATE_RATE_BASIS_POINTS,
   basisPointsToPercent,
@@ -165,25 +165,11 @@ export function InviteRebateSettingsSection(
                 <FormItem>
                   <FormLabel>{t('Rebate rate (%)')}</FormLabel>
                   <FormControl>
-                    {/*
-                      Bound by hand rather than with safeNumberFieldProps():
-                      that helper drops a non-finite value instead of writing
-                      it, which also swallows the transient states every
-                      keystroke passes through ('' after clearing, '12.' on the
-                      way to 12.5), so the field cannot be typed into at all.
-                      Out-of-range input is reported by the zod schema below
-                      instead, as in QuotaSettingsSection.
-                    */}
-                    <Input
-                      type='number'
+                    <SafeNumberInput
+                      field={field}
                       min={0}
                       max={MAX_INVITE_REBATE_RATE_BASIS_POINTS / 100}
                       step={0.01}
-                      value={field.value ?? ''}
-                      onChange={field.onChange}
-                      name={field.name}
-                      onBlur={field.onBlur}
-                      ref={field.ref}
                       disabled={updateOption.isPending || isSubmitting}
                     />
                   </FormControl>

@@ -30,7 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 
 import { SettingsCard } from '../components/settings-card'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 import type { RoutingPolicyFormValues } from './routing-form'
 
 export function RetrySection() {
@@ -46,13 +46,7 @@ export function RetrySection() {
             <FormItem>
               <FormLabel>{t('Maximum retries')}</FormLabel>
               <FormControl>
-                <Input
-                  type='number'
-                  min={0}
-                  max={99}
-                  step={1}
-                  {...safeNumberFieldProps(field)}
-                />
+                <SafeNumberInput min={0} max={99} step={1} field={field} />
               </FormControl>
               <FormDescription>
                 {t('Excludes the first attempt. Counted per group.')}

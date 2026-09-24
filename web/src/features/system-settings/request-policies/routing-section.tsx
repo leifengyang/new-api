@@ -17,7 +17,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -31,7 +30,7 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { ChannelAffinitySection } from '../general/channel-affinity'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 import { getPolicyConfig, type PolicyConfig } from './api'
 import { policyLabel } from './policy-label'
 import { RetrySection } from './retry-section'
@@ -308,12 +307,7 @@ function AffinitySettings() {
                     <FormItem>
                       <FormLabel>{item.label}</FormLabel>
                       <FormControl>
-                        <Input
-                          type='number'
-                          min={0}
-                          step={1}
-                          {...safeNumberFieldProps(field)}
-                        />
+                        <SafeNumberInput min={0} step={1} field={field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

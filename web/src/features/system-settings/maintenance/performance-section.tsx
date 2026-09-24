@@ -61,7 +61,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 
 /**
  * IMPORTANT: react-hook-form 7 interprets dotted `name` strings as nested
@@ -366,11 +366,10 @@ export function PerformanceSection(props: Props) {
                 <FormItem>
                   <FormLabel>{t('Disk Cache Threshold (MB)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={1}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!diskEnabled}
                     />
                   </FormControl>
@@ -388,11 +387,10 @@ export function PerformanceSection(props: Props) {
                 <FormItem>
                   <FormLabel>{t('Max Disk Cache Size (MB)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={100}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!diskEnabled}
                     />
                   </FormControl>
@@ -484,11 +482,10 @@ export function PerformanceSection(props: Props) {
                 <FormItem>
                   <FormLabel>{t('CPU Threshold (%)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={0}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!monitorEnabled}
                     />
                   </FormControl>
@@ -503,12 +500,11 @@ export function PerformanceSection(props: Props) {
                 <FormItem>
                   <FormLabel>{t('Memory Threshold (%)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={0}
                       max={100}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!monitorEnabled}
                     />
                   </FormControl>
@@ -523,12 +519,11 @@ export function PerformanceSection(props: Props) {
                 <FormItem>
                   <FormLabel>{t('Disk Threshold (%)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={0}
                       max={100}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!monitorEnabled}
                     />
                   </FormControl>
