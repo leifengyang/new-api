@@ -202,8 +202,18 @@ func UpdateOption(c *gin.Context) {
 	}
 	switch option.Key {
 	case "QuotaForInviter", "QuotaForInvitee":
-		if isPositiveOptionValue(option.Value.(string)) && !operation_setting.IsPaymentComplianceConfirmed() {
-			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+		// 这两个字段是旧的「注册即送邀请奖励」，已被邀请返现（按充值金额抽成）
+		// 取代。保留字段是为了兼容仍然会提交它们的旧前端，但只接受 0：非 0 会
+		// 与返现叠加，等于同一笔邀请发两份钱。
+		if isPositiveOptionValue(option.Value.(string)) {
+			common.ApiErrorMsg(c, "邀请奖励已由邀请返现取代，该配置仅支持 0")
+			return
+		}
+	case operation_setting.InviteRebateRateKey:
+		rate, err := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		if err != nil || !operation_setting.IsValidInviteRebateRateBasisPoints(rate) {
+			common.ApiErrorMsg(c, fmt.Sprintf("返现比例需为 0 到 %d 之间的万分比（1000 表示 10%%）",
+				operation_setting.MaxInviteRebateRateBasisPoints))
 			return
 		}
 	default:

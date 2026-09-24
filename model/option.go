@@ -604,10 +604,17 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TurnstileSecretKey = value
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
-	case "QuotaForInviter":
-		common.QuotaForInviter, _ = strconv.Atoi(value)
-	case "QuotaForInvitee":
-		common.QuotaForInvitee, _ = strconv.Atoi(value)
+	case "QuotaForInviter", "QuotaForInvitee":
+		// 注册即送的邀请奖励已被邀请返现取代（model/invite_rebate.go），两者
+		// 同时生效等于给同一个邀请人发两笔钱。这里无视存量配置强制归零，
+		// 保证老部署升级后也不会出现叠加；邀请关系（aff_count、inviter_id）
+		// 的记账不受影响。
+		common.OptionMap[key] = "0"
+		if key == "QuotaForInviter" {
+			common.QuotaForInviter = 0
+		} else {
+			common.QuotaForInvitee = 0
+		}
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":
