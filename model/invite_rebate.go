@@ -30,6 +30,17 @@ const (
 	InviteRebateStatusSkipped  = "skipped"
 )
 
+// inviteRebateSavePoint 圈住一次返现尝试。理由见 creditInviteRebateTx。
+const inviteRebateSavePoint = "invite_rebate_attempt"
+
+// discardInviteRebateAttempt 放弃本次返现，并把外层充值事务救回可提交状态。
+// 只能在保存点已经开好之后调用。
+func discardInviteRebateAttempt(tx *gorm.DB) {
+	if err := tx.RollbackTo(inviteRebateSavePoint).Error; err != nil {
+		common.SysError(fmt.Sprintf("invite rebate: failed to roll back to savepoint: %s", err.Error()))
+	}
+}
+
 // InviteRebateSkipWalletLimit 表示邀请人钱包已到 common.MaxWalletQuota 上限，
 // 返现无法入账。这种情况不影响付款人的充值。
 const InviteRebateSkipWalletLimit = "inviter_wallet_limit"
@@ -87,6 +98,13 @@ type inviteRebateCredit struct {
 // 它刻意不返回错误：返现是充值的附带结果，任何失败（邀请人不存在、钱包触顶、
 // 流水写入失败）都只能影响返现本身，绝不能让付款人的充值失败。无法入账的
 // 情况会落库成 skipped 流水或写进错误日志，不会静默丢弃。
+//
+// 「不返回错误」还不够：写入部分必须跑在 SAVEPOINT 里。PostgreSQL 上一条语句
+// 失败会把整个事务置为 aborted，此后连 COMMIT 都会变成 ROLLBACK——而「插入撞上
+// (source, source_ref) 唯一索引」正是这里预期内的重放结果，只忽略错误继续走的
+// 话，付款人的充值会被这笔返现一起回滚（钱收了、额度没到）。SQLite / MySQL 的
+// 失败语句不会污染事务，保存点在那里只是多一次往返；三个库走同一条路径，行为
+// 不随方言分叉。
 func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string) *inviteRebateCredit {
 	setting := operation_setting.GetInviteRebateSetting()
 	if !setting.Enabled || setting.RateBasisPoints <= 0 || baseQuota <= 0 || sourceRef == "" {
@@ -144,17 +162,25 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 		Status:          InviteRebateStatusCredited,
 	}
 
+	// 前面的分支都还没写过库，保存点因此开在第一次写入之前。
+	if err := tx.SavePoint(inviteRebateSavePoint).Error; err != nil {
+		common.SysError(fmt.Sprintf("invite rebate: failed to open savepoint for %s/%s: %s", source, sourceRef, err.Error()))
+		return nil
+	}
+
 	// 先落流水再加钱，顺序不能反：唯一索引是防重的唯一硬约束，如果先加钱，
 	// 重放的流水会被索引拦下但钱已经进了邀请人钱包，重放一次就多送一次。
 	// 插入失败即代表这笔来源已经发过（或返现侧本身出问题），直接放弃。
 	if err := tx.Create(&record).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: failed to record rebate for %s/%s: %s", source, sourceRef, err.Error()))
+		discardInviteRebateAttempt(tx)
 		return nil
 	}
 
 	if err := creditInviterWalletTx(tx, inviter.Id, rebateQuota); err != nil {
 		if !errors.Is(err, ErrInviteRebateWalletLimit) {
 			common.SysError(fmt.Sprintf("invite rebate: failed to credit inviter %d: %s", inviter.Id, err.Error()))
+			discardInviteRebateAttempt(tx)
 			return nil
 		}
 		// 钱包触顶时改写成 skipped 留档，基数与比例保留，管理员能看到本该返多少。
@@ -163,6 +189,8 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 		record.RebateQuota = 0
 		if saveErr := tx.Save(&record).Error; saveErr != nil {
 			common.SysError(fmt.Sprintf("invite rebate: failed to mark rebate %d skipped: %s", record.Id, saveErr.Error()))
+			discardInviteRebateAttempt(tx)
+			return nil
 		}
 		common.SysError(fmt.Sprintf("invite rebate: inviter %d wallet at limit, rebate of %d skipped", inviter.Id, rebateQuota))
 		return nil

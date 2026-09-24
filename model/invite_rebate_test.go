@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -644,4 +645,257 @@ func TestGetInviteRebatesKeywordMatchesBothSidesByName(t *testing.T) {
 	_, total, err = GetInviteRebates(InviteRebateFilter{Keyword: "nobody"}, 0, 10)
 	require.NoError(t, err)
 	assert.Zero(t, total)
+}
+
+// ── 三库矩阵 ────────────────────────────────────────────────────────────────
+//
+// 返现模块带来两处 schema 变更（users.member_level 列、invite_rebates 表及其
+// (source, source_ref) 复合唯一索引），查询里又用到了 LIKE ... ESCAPE 和
+// COALESCE(SUM(bigint))。这些写法在 SQLite / MySQL / PostgreSQL 上的行为并不
+// 一致，只能在真实的三个库上验证，所以下面这组用例必须逐个方言各跑一遍。
+
+// useInviteRebateMatrixDB 为指定方言准备一个干净的库。SQLite 每次新建文件库；
+// MySQL / PostgreSQL 复用 TEST_MYSQL_DSN / TEST_POSTGRES_DSN 指向的实例，并先
+// 把返现相关的表删掉重来（与 model 包其它迁移用例同一约定）。刻意走 chooseDB
+// 而不是 gorm.Open，好把生产用的 dialector 包装一起覆盖进来：MySQL 的
+// parseTime 补齐、PostgreSQL 的 PreferSimpleProtocol。
+func useInviteRebateMatrixDB(t *testing.T, dialect string) *gorm.DB {
+	t.Helper()
+	const envName = "INVITE_REBATE_MATRIX_DSN"
+	switch dialect {
+	case "sqlite":
+		previousPath := common.SQLitePath
+		common.SQLitePath = filepath.Join(t.TempDir(), "invite-rebate-matrix.db")
+		t.Cleanup(func() { common.SQLitePath = previousPath })
+		t.Setenv(envName, "local")
+	case "mysql":
+		dsn := os.Getenv("TEST_MYSQL_DSN")
+		if dsn == "" {
+			t.Skip("TEST_MYSQL_DSN is not configured")
+		}
+		t.Setenv(envName, dsn)
+	case "postgres":
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("TEST_POSTGRES_DSN is not configured")
+		}
+		t.Setenv(envName, dsn)
+	}
+
+	db, dbType, err := chooseDB(envName, false)
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	previousDB := DB
+	previousLogDB := LOG_DB
+	previousType := common.MainDatabaseType()
+	DB = db
+	LOG_DB = db
+	common.SetMainDatabaseType(dbType)
+	t.Cleanup(func() {
+		DB = previousDB
+		LOG_DB = previousLogDB
+		common.SetMainDatabaseType(previousType)
+		_ = db.Migrator().DropTable(&InviteRebate{}, &Log{}, &User{})
+		_ = sqlDB.Close()
+	})
+
+	// 外部实例是复用的：上一次跑剩的表会让唯一索引把新数据挡下来。
+	require.NoError(t, db.Migrator().DropTable(&InviteRebate{}, &Log{}, &User{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &InviteRebate{}, &Log{}))
+	return db
+}
+
+func TestInviteRebateDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			setInviteRebateSetting(t, true, 1000)
+			db := useInviteRebateMatrixDB(t, dialect)
+
+			versionQuery := "SELECT version()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("%s version: %s", dialect, version)
+
+			t.Run("member_level_column_and_indexes", func(t *testing.T) {
+				assert.True(t, db.Migrator().HasTable(&InviteRebate{}))
+				assert.True(t, db.Migrator().HasColumn(&User{}, "member_level"))
+				assert.True(t, db.Migrator().HasIndex(&InviteRebate{}, "idx_invite_rebate_source"))
+
+				// 重启不能再产生 schema 变更。member_level 用 int + default:0 而不是
+				// GORM 的布尔默认值，正是因为 MySQL / PostgreSQL 对默认值的表达差异
+				// 会让 AutoMigrate 每次启动都重复 ALTER TABLE。
+				recorder := &migrationSQLRecorder{}
+				require.NoError(t, db.Session(&gorm.Session{Logger: recorder}).
+					AutoMigrate(&User{}, &InviteRebate{}, &Log{}))
+				assert.Empty(t, recorder.schemaMutations())
+			})
+
+			t.Run("unique_source_ref_blocks_replays", func(t *testing.T) {
+				createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+
+				// 同一个 (source, source_ref) 发两次，第二次即 webhook 重放。
+				//
+				// 断言的重点是「外层充值事务仍然提交成功、付款人的额度落库」，而不只是
+				// 「返现没重复发」：PostgreSQL 会把失败语句之后的事务置为 aborted，COMMIT
+				// 随即变成 ROLLBACK，付款人的充值会被这笔发不出去的返现一起回滚。SQLite 和
+				// MySQL 的失败语句不污染事务，所以只有 PostgreSQL 这一档真的会抓到这个回归，
+				// 但三个库跑的是同一段代码路径。
+				for attempt := range 2 {
+					var credit *inviteRebateCredit
+					require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+						if err := tx.Model(&User{}).Where("id = ?", 2).
+							Update("quota", gorm.Expr("quota + ?", 1000)).Error; err != nil {
+							return err
+						}
+						credit = creditInviteRebateTx(tx, 2, 100000, InviteRebateSourceEpay, "trade-dup")
+						return nil
+					}), "第 %d 次充值所在的事务必须能提交", attempt+1)
+					if attempt == 0 {
+						require.NotNil(t, credit)
+					} else {
+						assert.Nil(t, credit)
+					}
+				}
+
+				// 两次充值都入账，返现只发了一次。
+				requireQuota(t, db, 2, 2000)
+				requireQuota(t, db, 1, 10000)
+				var count int64
+				require.NoError(t, db.Model(&InviteRebate{}).Count(&count).Error)
+				assert.EqualValues(t, 1, count)
+			})
+
+			t.Run("keyword_search_escapes_like_wildcards", func(t *testing.T) {
+				createNamedInviteRebateUser(t, db, 11, "zhang_san", common.RoleCommonUser, MemberLevelInternal, 0)
+				createNamedInviteRebateUser(t, db, 12, "user12", common.RoleCommonUser, MemberLevelNormal, 11)
+				createNamedInviteRebateUser(t, db, 13, "zhangXsan", common.RoleCommonUser, MemberLevelInternal, 0)
+				createNamedInviteRebateUser(t, db, 14, "user14", common.RoleCommonUser, MemberLevelNormal, 13)
+				createNamedInviteRebateUser(t, db, 15, "li!si", common.RoleCommonUser, MemberLevelInternal, 0)
+				createNamedInviteRebateUser(t, db, 16, "user16", common.RoleCommonUser, MemberLevelNormal, 15)
+				createNamedInviteRebateUser(t, db, 17, "lisi", common.RoleCommonUser, MemberLevelInternal, 0)
+				createNamedInviteRebateUser(t, db, 18, "user18", common.RoleCommonUser, MemberLevelNormal, 17)
+
+				require.NotNil(t, creditRebateInTx(t, 12, 100000, InviteRebateSourceEpay, "trade-k1"))
+				require.NotNil(t, creditRebateInTx(t, 14, 100000, InviteRebateSourceEpay, "trade-k2"))
+				require.NotNil(t, creditRebateInTx(t, 16, 100000, InviteRebateSourceEpay, "trade-k3"))
+				require.NotNil(t, creditRebateInTx(t, 18, 100000, InviteRebateSourceEpay, "trade-k4"))
+
+				// 名字里的 _ 是普通字符。没转义时 %zhang_san% 会把 zhangXsan 一起捞出来。
+				matched, total, err := GetInviteRebates(InviteRebateFilter{Keyword: "zhang_san"}, 0, 10)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+				require.Len(t, matched, 1)
+				assert.Equal(t, 11, matched[0].InviterId)
+
+				// 名字里的 ! 既是关键字又是 ESCAPE 字符，必须自己转义自己：
+				// 没转义时 %li!si% 会被读成「li + 转义 s + i」，匹配到 lisi。
+				matched, total, err = GetInviteRebates(InviteRebateFilter{Keyword: "li!si"}, 0, 10)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+				require.Len(t, matched, 1)
+				assert.Equal(t, 15, matched[0].InviterId)
+
+				// 与其它条件叠加时，名字匹配仍受这些条件约束；括号缺失会让 OR 逃出
+				// source 的约束，把别的来源的流水一起返回。
+				_, total, err = GetInviteRebates(InviteRebateFilter{
+					Keyword: "zhang",
+					Source:  InviteRebateSourceStripe,
+					Status:  InviteRebateStatusCredited,
+				}, 0, 10)
+				require.NoError(t, err)
+				assert.Zero(t, total)
+
+				// 已注销学员留下的历史返现仍要能被搜到（Unscoped）。
+				require.NoError(t, db.Where("id = ?", 15).Delete(&User{}).Error)
+				_, total, err = GetInviteRebates(InviteRebateFilter{Keyword: "li!si"}, 0, 10)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+			})
+
+			t.Run("wallet_sized_quota_and_summary", func(t *testing.T) {
+				createInviteRebateUser(t, db, 21, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 22, common.RoleCommonUser, MemberLevelNormal, 21)
+
+				// 返现额可以超过 int32：bigint 列必须原样往返。
+				credit := creditRebateInTx(t, 22, 9_000_000_000_000_000, InviteRebateSourceStripe, "trade-big")
+				require.NotNil(t, credit)
+				assert.Equal(t, 900_000_000_000_000, credit.Quota)
+				requireQuota(t, db, 21, 900_000_000_000_000)
+
+				// COALESCE(SUM(bigint), 0) 在 PostgreSQL 上是 numeric，聚合结果扫进
+				// Go 的 int 不能丢精度；空集的 COALESCE 分支也要落到 0。
+				summary, err := GetInviteRebateSummary(21)
+				require.NoError(t, err)
+				assert.Equal(t, 900_000_000_000_000, summary.TotalQuota)
+				assert.Zero(t, summary.ReversedQuota)
+				assert.EqualValues(t, 1, summary.RebateCount)
+
+				empty, err := GetInviteRebateSummary(9999)
+				require.NoError(t, err)
+				assert.Zero(t, empty.TotalQuota)
+				assert.Zero(t, empty.ReversedQuota)
+				assert.Zero(t, empty.RebateCount)
+			})
+
+			t.Run("member_level_filter", func(t *testing.T) {
+				createInviteRebateUser(t, db, 31, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 32, common.RoleCommonUser, MemberLevelNormal, 0)
+				createInviteRebateUser(t, db, 33, common.RoleCommonUser, MemberLevelNormal, 0)
+
+				internal := MemberLevelInternal
+				users, total, err := SearchUsers("user3", "", nil, nil, &internal, 0, 50)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+				require.Len(t, users, 1)
+				assert.Equal(t, 31, users[0].Id)
+				assert.Equal(t, MemberLevelInternal, users[0].MemberLevel)
+
+				external := MemberLevelNormal
+				_, total, err = SearchUsers("user3", "", nil, nil, &external, 0, 50)
+				require.NoError(t, err)
+				assert.EqualValues(t, 2, total)
+
+				affected, err := UpdateUsersMemberLevelByBatch([]int{32, 33}, MemberLevelInternal)
+				require.NoError(t, err)
+				assert.EqualValues(t, 2, affected)
+				assert.True(t, IsInviteRebateEligible(32))
+			})
+
+			t.Run("credit_reverse_and_wallet_limit", func(t *testing.T) {
+				createInviteRebateUser(t, db, 41, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 42, common.RoleCommonUser, MemberLevelNormal, 41)
+				require.NotNil(t, creditRebateInTx(t, 42, 100000, InviteRebateSourceEpay, "trade-rev"))
+
+				var rebate InviteRebate
+				require.NoError(t, db.Where("source_ref = ?", "trade-rev").First(&rebate).Error)
+
+				// 撤销取的是「FOR UPDATE + reversed_quota 的 CAS」：SQLite 上 FOR UPDATE
+				// 是空操作，MySQL / PostgreSQL 上会真的加行锁，两条路径都要扣对且只能扣一次。
+				reversed, err := ReverseInviteRebate(rebate.Id, 7, "三库验证")
+				require.NoError(t, err)
+				assert.Equal(t, 10000, reversed.ReversedQuota)
+				requireQuota(t, db, 41, 0)
+				_, err = ReverseInviteRebate(rebate.Id, 7, "再撤一次")
+				assert.ErrorIs(t, err, ErrInviteRebateNotCredited)
+
+				// 触顶守卫把上限比较和自增放在同一条 UPDATE 里，边界值要能原样存取。
+				require.NoError(t, db.Model(&User{}).Where("id = ?", 41).
+					Update("quota", common.MaxWalletQuota).Error)
+				assert.Nil(t, creditRebateInTx(t, 42, 50000, InviteRebateSourceStripe, "trade-full"))
+				requireQuota(t, db, 41, common.MaxWalletQuota)
+
+				var skipped InviteRebate
+				require.NoError(t, db.Where("source_ref = ?", "trade-full").First(&skipped).Error)
+				assert.Equal(t, InviteRebateStatusSkipped, skipped.Status)
+				assert.Equal(t, InviteRebateSkipWalletLimit, skipped.SkipReason)
+			})
+		})
+	}
 }
