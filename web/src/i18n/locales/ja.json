@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "画像に表示されている 6 桁のコードを入力してください",
     "Finish the verification challenge first": "先に認証チャレンジを完了してください",
     "and the": "および",
-    "Toggle password visibility": "パスワードの表示を切り替える"
+    "Toggle password visibility": "パスワードの表示を切り替える",
+    "Invite Rebate": "招待リベート",
+    "Enable invite rebate": "招待リベートを有効にする",
+    "Credit the inviter automatically whenever an invited user tops up": "招待されたユーザーがチャージするたびに、招待者へ自動でリベートを付与します",
+    "Rebate rate (%)": "リベート率（%）",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "各チャージのうち招待者に付与する割合。現在は {{rate}}（{{basisPoints}} ベーシスポイント）。0 にすると、内部メンバーの対象を変えずに付与を停止できます。",
+    "Save invite rebate settings": "招待リベート設定を保存",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "登録時の招待者・被招待者への報酬は、このリベートに置き換えられました。リベートを受け取れるのは内部メンバーだけで、しかも自分が直接招待したユーザーのチャージ分に限られます。"
   }
 }

@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "Nhập mã 6 chữ số trong hình",
     "Finish the verification challenge first": "Hãy hoàn tất xác minh trước",
     "and the": "và",
-    "Toggle password visibility": "Hiện hoặc ẩn mật khẩu"
+    "Toggle password visibility": "Hiện hoặc ẩn mật khẩu",
+    "Invite Rebate": "Hoàn tiền mời",
+    "Enable invite rebate": "Bật hoàn tiền mời",
+    "Credit the inviter automatically whenever an invited user tops up": "Tự động cộng hoàn tiền cho người mời mỗi khi người được mời nạp tiền",
+    "Rebate rate (%)": "Tỷ lệ hoàn tiền (%)",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Tỷ lệ mỗi lần nạp được cộng cho người mời. Hiện tại {{rate}} ({{basisPoints}} điểm cơ bản). Đặt 0 để ngừng chi trả mà không thay đổi ai là thành viên nội bộ.",
+    "Save invite rebate settings": "Lưu cài đặt hoàn tiền mời",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Phần thưởng cho người mời và người được mời khi đăng ký đã được thay bằng khoản hoàn tiền này. Chỉ thành viên nội bộ mới nhận được, và chỉ từ các lần nạp của những người họ mời trực tiếp."
   }
 }

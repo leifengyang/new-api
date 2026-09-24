@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "请输入图片中的 6 位验证码",
     "Finish the verification challenge first": "请先完成人机验证",
     "and the": "和",
-    "Toggle password visibility": "切换密码可见性"
+    "Toggle password visibility": "切换密码可见性",
+    "Invite Rebate": "邀请返现",
+    "Enable invite rebate": "启用邀请返现",
+    "Credit the inviter automatically whenever an invited user tops up": "被邀请用户充值时，自动为邀请人返现",
+    "Rebate rate (%)": "返现比例（%）",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "每笔充值返给邀请人的比例。当前为 {{rate}}（{{basisPoints}} 个基点）。设为 0 可停止返现，且不改变谁是内部会员。",
+    "Save invite rebate settings": "保存邀请返现设置",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "注册时的邀请人与被邀请人奖励已被本返现取代。只有内部会员可获得返现，且仅来自其直接邀请用户的充值。"
   }
 }

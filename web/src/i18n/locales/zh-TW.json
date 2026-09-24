@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "請輸入圖片中的 6 位驗證碼",
     "Finish the verification challenge first": "請先完成人機驗證",
     "and the": "和",
-    "Toggle password visibility": "切換密碼可見性"
+    "Toggle password visibility": "切換密碼可見性",
+    "Invite Rebate": "邀請返現",
+    "Enable invite rebate": "啟用邀請返現",
+    "Credit the inviter automatically whenever an invited user tops up": "被邀請使用者儲值時，自動為邀請人返現",
+    "Rebate rate (%)": "返現比例（%）",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "每筆儲值返給邀請人的比例。目前為 {{rate}}（{{basisPoints}} 個基點）。設為 0 可停止返現，且不改變誰是內部會員。",
+    "Save invite rebate settings": "儲存邀請返現設定",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "註冊時的邀請人與被邀請人獎勵已被本返現取代。只有內部會員可獲得返現，且僅來自其直接邀請使用者的儲值。"
   }
 }

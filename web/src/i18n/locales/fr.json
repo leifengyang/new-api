@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "Saisissez le code à 6 chiffres affiché sur l'image",
     "Finish the verification challenge first": "Terminez d'abord la vérification",
     "and the": "et la",
-    "Toggle password visibility": "Afficher ou masquer le mot de passe"
+    "Toggle password visibility": "Afficher ou masquer le mot de passe",
+    "Invite Rebate": "Commission de parrainage",
+    "Enable invite rebate": "Activer la commission de parrainage",
+    "Credit the inviter automatically whenever an invited user tops up": "Créditer automatiquement l’inviteur à chaque rechargement d’un utilisateur invité",
+    "Rebate rate (%)": "Taux de commission (%)",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Part de chaque rechargement créditée à l’inviteur. Actuellement {{rate}} ({{basisPoints}} points de base). Réglez sur 0 pour arrêter les versements sans changer qui est membre interne.",
+    "Save invite rebate settings": "Enregistrer les paramètres de commission",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Les récompenses d’inviteur et d’invité à l’inscription ont été remplacées par cette commission. Seuls les membres internes en bénéficient, et uniquement sur les rechargements des utilisateurs qu’ils ont invités directement."
   }
 }

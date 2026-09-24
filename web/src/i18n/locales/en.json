@@ -6791,6 +6791,13 @@
     "Enter the 6-digit code from the image": "Enter the 6-digit code from the image",
     "Finish the verification challenge first": "Finish the verification challenge first",
     "and the": "and the",
-    "Toggle password visibility": "Toggle password visibility"
+    "Toggle password visibility": "Toggle password visibility",
+    "Invite Rebate": "Invite Rebate",
+    "Enable invite rebate": "Enable invite rebate",
+    "Credit the inviter automatically whenever an invited user tops up": "Credit the inviter automatically whenever an invited user tops up",
+    "Rebate rate (%)": "Rebate rate (%)",
+    "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.",
+    "Save invite rebate settings": "Save invite rebate settings",
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly."
   }
 }
