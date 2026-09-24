@@ -403,6 +403,42 @@ func GetInviteRebateSummary(inviterId int) (*InviteRebateSummary, error) {
 	return summary, nil
 }
 
+// fillInviteRebateTotals 给一页用户填上各自的累计返现，供管理端用户列表展示。
+//
+// 口径与用户端钱包里的「累计返现」一致（GetInviteRebateSummary）：只算已入账的
+// 流水，按返现原额累计。冲正只是把这笔钱收回去，不代表当初没发过，后台流水页
+// 会单独呈现，这里不重复扣减——否则管理员看到的数字会和学员自己看到的对不上。
+//
+// 列表是一页 User，逐行调用汇总会变成 N+1 次查询，所以用一次 GROUP BY 取回整页。
+func fillInviteRebateTotals(users []*User) error {
+	if len(users) == 0 {
+		return nil
+	}
+	ids := make([]int, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.Id)
+	}
+	var totals []struct {
+		InviterId int
+		Total     int
+	}
+	if err := DB.Model(&InviteRebate{}).
+		Select("inviter_id, SUM(rebate_quota) AS total").
+		Where("inviter_id IN ? AND status = ?", ids, InviteRebateStatusCredited).
+		Group("inviter_id").
+		Scan(&totals).Error; err != nil {
+		return err
+	}
+	byInviter := make(map[int]int, len(totals))
+	for _, row := range totals {
+		byInviter[row.InviterId] = row.Total
+	}
+	for _, user := range users {
+		user.InviteRebateQuota = byInviter[user.Id]
+	}
+	return nil
+}
+
 // resolveMemberLevelForNewUser 决定新注册用户的会员等级，必须在建号事务内调用。
 //
 // 只有通过管理员邀请链接进来的用户才是内部学员。内部学员自己发出的链接拉进来

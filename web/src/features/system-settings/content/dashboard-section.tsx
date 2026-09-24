@@ -31,7 +31,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -50,7 +49,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 
 const dataDashboardSchema = z.object({
   DataExportEnabled: z.boolean(),
@@ -130,12 +129,11 @@ export function DashboardSection({ defaultValues }: DashboardSectionProps) {
                 <FormItem>
                   <FormLabel>{t('Refresh interval (minutes)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={1}
                       max={1440}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!isEnabled}
                     />
                   </FormControl>

@@ -544,6 +544,78 @@ func TestGetUsernamesByIdsIncludesDeletedUsers(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// 管理端用户列表的「收益」列展示累计返现，按页一次性汇总。
+// 口径必须和学员自己在钱包里看到的累计返现（GetInviteRebateSummary）一致：
+// 只算已入账的流水；冲正只是把这笔钱收回去，不代表当初没发过，这里不回冲。
+func TestUserListFillsCumulativeInviteRebate(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 3, common.RoleCommonUser, MemberLevelNormal, 1)
+	createInviteRebateUser(t, db, 4, common.RoleCommonUser, MemberLevelNormal, 1)
+	createInviteRebateUser(t, db, 5, common.RoleCommonUser, MemberLevelNormal, 2)
+
+	// 10% 的费率：邀请人 1 累计 10000+20000，邀请人 2 累计 5000。
+	require.NotNil(t, creditRebateInTx(t, 3, 100000, InviteRebateSourceEpay, "trade-1"))
+	require.NotNil(t, creditRebateInTx(t, 4, 200000, InviteRebateSourceEpay, "trade-2"))
+	require.NotNil(t, creditRebateInTx(t, 5, 50000, InviteRebateSourceStripe, "trade-3"))
+
+	users, total, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, total)
+	require.Len(t, users, 5)
+
+	expected := map[int]int{1: 30000, 2: 5000, 3: 0, 4: 0, 5: 0}
+	for _, user := range users {
+		assert.Equal(t, expected[user.Id], user.InviteRebateQuota, "user%d 的收益列", user.Id)
+		summary, err := GetInviteRebateSummary(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, summary.TotalQuota, user.InviteRebateQuota,
+			"user%d 的收益列必须和钱包里的累计返现一致", user.Id)
+	}
+
+	// 搜索是另一条查询路径，同样要填上。
+	found, _, err := SearchUsers("user1", "", nil, nil, nil, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, 1, found[0].Id)
+	assert.Equal(t, 30000, found[0].InviteRebateQuota)
+
+	// 分页只汇总本页出现的邀请人，不把库里其他人的数字带过来。
+	page, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 2})
+	require.NoError(t, err)
+	require.Len(t, page, 2)
+	assert.Equal(t, 5, page[0].Id)
+	assert.Equal(t, 4, page[1].Id)
+	assert.Zero(t, page[0].InviteRebateQuota)
+	assert.Zero(t, page[1].InviteRebateQuota)
+
+	// 钱包已满导致「跳过」的流水不是收益：学员自己也没收到这笔钱。
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 2).Update("quota", common.MaxWalletQuota).Error)
+	require.Nil(t, creditRebateInTx(t, 5, 50000, InviteRebateSourceStripe, "trade-4"))
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 2).Update("quota", 0).Error)
+
+	users, _, err = GetAllUsers(&common.PageInfo{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	for _, user := range users {
+		assert.Equal(t, expected[user.Id], user.InviteRebateQuota,
+			"被跳过的流水不该进 user%d 的收益列", user.Id)
+	}
+
+	// 冲正后收益列保持不变：钱是被收回去了，但当初确实发过，后台流水页单独呈现。
+	var rebate InviteRebate
+	require.NoError(t, db.Where("inviter_id = ?", 2).First(&rebate).Error)
+	_, err = ReverseInviteRebate(rebate.Id, 99, "下线充值被退款")
+	require.NoError(t, err)
+	users, _, err = GetAllUsers(&common.PageInfo{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	for _, user := range users {
+		assert.Equal(t, expected[user.Id], user.InviteRebateQuota,
+			"冲正后 user%d 的收益列不该被重复扣减", user.Id)
+	}
+}
+
 func TestGetInviteRebatesFiltersAndPaginates(t *testing.T) {
 	db := useInviteRebateDB(t)
 	setInviteRebateSetting(t, true, 1000)
@@ -866,6 +938,43 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				require.NoError(t, err)
 				assert.EqualValues(t, 2, affected)
 				assert.True(t, IsInviteRebateEligible(32))
+			})
+
+			t.Run("user_list_rebate_column", func(t *testing.T) {
+				createInviteRebateUser(t, db, 51, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 52, common.RoleCommonUser, MemberLevelInternal, 0)
+				createInviteRebateUser(t, db, 53, common.RoleCommonUser, MemberLevelNormal, 51)
+				createInviteRebateUser(t, db, 54, common.RoleCommonUser, MemberLevelNormal, 52)
+				createInviteRebateUser(t, db, 55, common.RoleCommonUser, MemberLevelNormal, 51)
+
+				require.NotNil(t, creditRebateInTx(t, 53, 100000, InviteRebateSourceEpay, "trade-list-1"))
+				require.NotNil(t, creditRebateInTx(t, 55, 100000, InviteRebateSourceEpay, "trade-list-2"))
+				require.NotNil(t, creditRebateInTx(t, 54, 100000, InviteRebateSourceEpay, "trade-list-3"))
+
+				// 收益列是「一次 GROUP BY 汇总整页」，不再逐行查询：SUM(bigint) 在
+				// PostgreSQL 上是 numeric，MySQL 的 ONLY_FULL_GROUP_BY 又只接受按
+				// 分组列取值的投影，两边都得给出同一个数，且本页没有流水的邀请人
+				// 要被填成 0（空集不出现在 GROUP BY 结果里）。
+				assertRebateColumn := func(t *testing.T, users []*User) {
+					t.Helper()
+					got := make(map[int]int, len(users))
+					for _, user := range users {
+						got[user.Id] = user.InviteRebateQuota
+					}
+					// 51 拉来 53、55 两笔，52 拉来 54 一笔；53 自己是被邀请人，没发过返现。
+					assert.Equal(t, 20000, got[51], "user%d 的收益列", 51)
+					assert.Equal(t, 10000, got[52], "user%d 的收益列", 52)
+					assert.Zero(t, got[53], "user%d 的收益列", 53)
+				}
+
+				users, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 50})
+				require.NoError(t, err)
+				assertRebateColumn(t, users)
+
+				// 列表有两条查询路径，搜索那条也要填。
+				found, _, err := SearchUsers("user5", "", nil, nil, nil, 0, 10)
+				require.NoError(t, err)
+				assertRebateColumn(t, found)
 			})
 
 			t.Run("credit_reverse_and_wallet_limit", func(t *testing.T) {

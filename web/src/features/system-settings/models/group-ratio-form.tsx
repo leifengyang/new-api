@@ -43,7 +43,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import {
   Sheet,
   SheetContent,
@@ -59,7 +58,7 @@ import {
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 import {
   GroupRatioVisualEditor,
   type GroupSettingsSection,
@@ -182,9 +181,8 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                       {t('Maximum custom groups per token')}
                     </FormLabel>
                     <FormControl>
-                      <Input
-                        {...safeNumberFieldProps(field)}
-                        type='number'
+                      <SafeNumberInput
+                        field={field}
                         min={1}
                         step={1}
                         aria-invalid={fieldState.invalid}
@@ -369,9 +367,8 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                 <FormItem data-invalid={fieldState.invalid}>
                   <FormLabel>{t('Maximum custom groups per token')}</FormLabel>
                   <FormControl>
-                    <Input
-                      {...safeNumberFieldProps(field)}
-                      type='number'
+                    <SafeNumberInput
+                      field={field}
                       min={1}
                       step={1}
                       aria-invalid={fieldState.invalid}

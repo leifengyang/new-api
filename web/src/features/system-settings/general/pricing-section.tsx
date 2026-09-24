@@ -53,7 +53,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 
 const createPricingSchema = (t: (key: string) => string) =>
   z
@@ -243,11 +243,7 @@ export function PricingSection({ defaultValues }: PricingSectionProps) {
                           : t('USD Exchange Rate')}
                     </FormLabel>
                     <FormControl>
-                      <Input
-                        type='number'
-                        step='0.01'
-                        {...safeNumberFieldProps(field)}
-                      />
+                      <SafeNumberInput step='0.01' field={field} />
                     </FormControl>
                     <FormDescription>
                       {t(

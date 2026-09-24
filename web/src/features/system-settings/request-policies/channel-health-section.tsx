@@ -58,7 +58,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 import type { HealthSettings } from './defaults'
 import { useSavePolicy } from './use-save-policy'
 
@@ -415,12 +415,7 @@ export function ChannelHealthSection({
                       <FormItem>
                         <FormLabel>{t('Test interval (minutes)')}</FormLabel>
                         <FormControl>
-                          <Input
-                            type='number'
-                            min={1}
-                            step={1}
-                            {...safeNumberFieldProps(field)}
-                          />
+                          <SafeNumberInput min={1} step={1} field={field} />
                         </FormControl>
                         <FormDescription>
                           {channelTestMode === 'passive_recovery'
@@ -443,12 +438,11 @@ export function ChannelHealthSection({
                   <FormItem>
                     <FormLabel>{t('Channel test concurrency')}</FormLabel>
                     <FormControl>
-                      <Input
-                        type='number'
+                      <SafeNumberInput
                         min={1}
                         max={MAX_CHANNEL_TEST_CONCURRENCY}
                         step={1}
-                        {...safeNumberFieldProps(field)}
+                        field={field}
                       />
                     </FormControl>
                     <FormDescription>

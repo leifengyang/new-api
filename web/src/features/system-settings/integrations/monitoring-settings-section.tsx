@@ -52,7 +52,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 
 const numericString = z.string().refine((value) => {
   const trimmed = value.trim()
@@ -245,11 +245,10 @@ export function MonitoringSettingsSection({
                 <FormItem>
                   <FormLabel>{t('Flush interval (minutes)')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={1}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!perfMetricsEnabled}
                     />
                   </FormControl>
@@ -297,11 +296,10 @@ export function MonitoringSettingsSection({
                 <FormItem>
                   <FormLabel>{t('Retention days')}</FormLabel>
                   <FormControl>
-                    <Input
-                      type='number'
+                    <SafeNumberInput
                       min={0}
                       step={1}
-                      {...safeNumberFieldProps(field)}
+                      field={field}
                       disabled={!perfMetricsEnabled}
                     />
                   </FormControl>

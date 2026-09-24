@@ -32,7 +32,6 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
 import {
@@ -43,7 +42,7 @@ import {
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { safeNumberFieldProps } from '../utils/numeric-field'
+import { SafeNumberInput } from '../utils/numeric-field'
 
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee'
@@ -183,11 +182,10 @@ export function GrokSettingsCard(props: Props) {
               <FormItem className='max-w-xs'>
                 <FormLabel>{t('Violation deduction amount')}</FormLabel>
                 <FormControl>
-                  <Input
-                    type='number'
+                  <SafeNumberInput
                     step={0.01}
                     min={0}
-                    {...safeNumberFieldProps(field)}
+                    field={field}
                     disabled={!enabled}
                   />
                 </FormControl>

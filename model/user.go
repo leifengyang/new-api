@@ -116,6 +116,7 @@ type User struct {
 	AffCount             int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
 	AffQuota             int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
 	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviteRebateQuota    int                        `json:"invite_rebate_quota" gorm:"-:all"`                               // 累计邀请返现，仅用户列表按页填充
 	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
 	MemberLevel          int                        `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
 	DeletedAt            gorm.DeletedAt             `gorm:"index"`
@@ -461,6 +462,10 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 		return nil, 0, err
 	}
 
+	if err = fillInviteRebateTotals(users); err != nil {
+		return nil, 0, err
+	}
+
 	return users, total, nil
 }
 
@@ -530,6 +535,10 @@ func SearchUsers(keyword string, group string, role *int, status *int, memberLev
 
 	// 提交事务
 	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err = fillInviteRebateTotals(users); err != nil {
 		return nil, 0, err
 	}
 
