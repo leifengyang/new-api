@@ -6842,6 +6842,13 @@
     "Epay": "Epay",
     "Creem": "Creem",
     "Waffo Pancake": "Waffo Pancake",
-    "Manual Adjustment": "管理员手动调整"
+    "Manual Adjustment": "管理员手动调整",
+    "Failed to load your rebates": "加载返现记录失败",
+    "Every rebate credited for a top-up made by someone you invited.": "你邀请的用户每次充值，都会在这里留下一笔返现。",
+    "Your rebates appear here after someone you invited tops up.": "你邀请的用户充值后，返现记录会显示在这里。",
+    "You earn {{rate}} of every top-up made by the members you invited.": "你邀请的用户每次充值，你都能拿到其中的 {{rate}}。",
+    "Invite rebates are currently disabled.": "邀请返现当前已关闭。",
+    "Only internal members earn rebates. Ask an administrator to upgrade your account.": "只有内部会员才有返现。请联系管理员把你的账号升级为内部会员。",
+    "Rebates": "返现笔数"
   }
 }

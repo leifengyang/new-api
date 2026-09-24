@@ -6842,6 +6842,13 @@
     "Epay": "Epay",
     "Creem": "Creem",
     "Waffo Pancake": "Waffo Pancake",
-    "Manual Adjustment": "Manual Adjustment"
+    "Manual Adjustment": "Manual Adjustment",
+    "Failed to load your rebates": "Failed to load your rebates",
+    "Every rebate credited for a top-up made by someone you invited.": "Every rebate credited for a top-up made by someone you invited.",
+    "Your rebates appear here after someone you invited tops up.": "Your rebates appear here after someone you invited tops up.",
+    "You earn {{rate}} of every top-up made by the members you invited.": "You earn {{rate}} of every top-up made by the members you invited.",
+    "Invite rebates are currently disabled.": "Invite rebates are currently disabled.",
+    "Only internal members earn rebates. Ask an administrator to upgrade your account.": "Only internal members earn rebates. Ask an administrator to upgrade your account.",
+    "Rebates": "Rebates"
   }
 }

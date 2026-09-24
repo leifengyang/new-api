@@ -820,6 +820,8 @@ export const STATIC_I18N_KEYS = [
   'Shown',
   'Not shown',
   // Invite rebate ledger (status, skip reason and top-up source labels).
+  'Internal Member',
+  'External',
   'Credited',
   'Not Credited',
   'The inviter already holds the maximum balance, so this rebate could not be credited',

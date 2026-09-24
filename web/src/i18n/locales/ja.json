@@ -6842,6 +6842,13 @@
     "Epay": "Epay",
     "Creem": "Creem",
     "Waffo Pancake": "Waffo Pancake",
-    "Manual Adjustment": "管理者による手動調整"
+    "Manual Adjustment": "管理者による手動調整",
+    "Failed to load your rebates": "リベート履歴の読み込みに失敗しました",
+    "Every rebate credited for a top-up made by someone you invited.": "招待したユーザーがチャージするたびに、ここにリベートが記録されます。",
+    "Your rebates appear here after someone you invited tops up.": "招待したユーザーがチャージすると、リベート履歴がここに表示されます。",
+    "You earn {{rate}} of every top-up made by the members you invited.": "招待したユーザーがチャージした金額の {{rate}} を受け取れます。",
+    "Invite rebates are currently disabled.": "招待リベートは現在無効です。",
+    "Only internal members earn rebates. Ask an administrator to upgrade your account.": "リベートを受け取れるのは内部メンバーだけです。管理者にアカウントの昇格を依頼してください。",
+    "Rebates": "リベート件数"
   }
 }

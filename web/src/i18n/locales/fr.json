@@ -6842,6 +6842,13 @@
     "Epay": "Epay",
     "Creem": "Creem",
     "Waffo Pancake": "Waffo Pancake",
-    "Manual Adjustment": "Ajustement manuel"
+    "Manual Adjustment": "Ajustement manuel",
+    "Failed to load your rebates": "Échec du chargement de vos commissions",
+    "Every rebate credited for a top-up made by someone you invited.": "Chaque rechargement d'un utilisateur que vous avez invité ajoute une commission ici.",
+    "Your rebates appear here after someone you invited tops up.": "Vos commissions apparaîtront ici dès qu'un utilisateur que vous avez invité effectue un rechargement.",
+    "You earn {{rate}} of every top-up made by the members you invited.": "Vous recevez {{rate}} de chaque rechargement effectué par les utilisateurs que vous avez invités.",
+    "Invite rebates are currently disabled.": "Les commissions d'invitation sont actuellement désactivées.",
+    "Only internal members earn rebates. Ask an administrator to upgrade your account.": "Seuls les membres internes perçoivent une commission. Demandez à un administrateur de faire évoluer votre compte.",
+    "Rebates": "Commissions"
   }
 }

@@ -22,6 +22,7 @@ import type {
   ApiResponse,
   GetInviteRebatesParams,
   GetInviteRebatesResponse,
+  GetSelfInviteRebatesResponse,
 } from './types'
 
 // ============================================================================
@@ -45,6 +46,26 @@ export async function getInviteRebates(
   if (source) queryParams.set('source', source)
   if (status) queryParams.set('status', status)
   const res = await api.get(`/api/invite_rebate/?${queryParams.toString()}`)
+  return res.data
+}
+
+// ============================================================================
+// Invite Rebate Ledger (member's own view)
+// ============================================================================
+
+/**
+ * The member's own rebates: the row list with masked downline names, the
+ * cumulative totals shown on the wallet card, and the flags that decide
+ * whether the rebate programme applies to this account at all.
+ */
+export async function getSelfInviteRebates(
+  params: Pick<GetInviteRebatesParams, 'p' | 'page_size'> = {}
+): Promise<GetSelfInviteRebatesResponse> {
+  const { p = 1, page_size = 20 } = params
+  const queryParams = new URLSearchParams()
+  queryParams.set('p', String(p))
+  queryParams.set('page_size', String(page_size))
+  const res = await api.get(`/api/invite_rebate/self?${queryParams.toString()}`)
   return res.data
 }
 

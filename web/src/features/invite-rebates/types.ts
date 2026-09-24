@@ -87,3 +87,30 @@ export interface InviteRebateSummary {
   reversed_quota: number
   rebate_count: number
 }
+
+/**
+ * The member's own view of their rebates. The downline name is masked and the
+ * money the member does not need to know about — who reversed a rebate and why
+ * — stays on the administrator's copy of the row.
+ */
+export interface SelfInviteRebatesData {
+  page: {
+    items: InviteRebate[]
+    total: number
+    page: number
+    page_size: number
+  }
+  summary: InviteRebateSummary
+  rate_basis_points: number
+  /** Whether the administrator has the rebate programme switched on. */
+  rebate_enabled: boolean
+  member_level: number
+  /** Internal members and only internal members earn a rebate. */
+  rebate_available: boolean
+}
+
+export interface GetSelfInviteRebatesResponse {
+  success: boolean
+  message?: string
+  data?: SelfInviteRebatesData
+}

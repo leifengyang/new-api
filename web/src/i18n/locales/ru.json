@@ -6842,6 +6842,13 @@
     "Epay": "Epay",
     "Creem": "Creem",
     "Waffo Pancake": "Waffo Pancake",
-    "Manual Adjustment": "Ручное начисление администратором"
+    "Manual Adjustment": "Ручное начисление администратором",
+    "Failed to load your rebates": "Не удалось загрузить ваши ребейты",
+    "Every rebate credited for a top-up made by someone you invited.": "Каждое пополнение приглашённого вами пользователя добавляет сюда ребейт.",
+    "Your rebates appear here after someone you invited tops up.": "Ребейты появятся здесь, когда приглашённый вами пользователь пополнит баланс.",
+    "You earn {{rate}} of every top-up made by the members you invited.": "Вы получаете {{rate}} от каждого пополнения приглашённых вами пользователей.",
+    "Invite rebates are currently disabled.": "Реферальные ребейты сейчас отключены.",
+    "Only internal members earn rebates. Ask an administrator to upgrade your account.": "Ребейты доступны только внутренним участникам. Попросите администратора повысить ваш уровень.",
+    "Rebates": "Количество ребейтов"
   }
 }
