@@ -51,6 +51,8 @@ export const userSchema = z.object({
   aff_quota: z.number().optional(),
   aff_history_quota: z.number().optional(),
   inviter_id: z.number().optional(),
+  /** 0 = external user, 1 = internal member. Absent on payloads that omit it. */
+  member_level: z.number().optional(),
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
   role: userRoleSchema,
@@ -111,6 +113,7 @@ export interface SearchUsersParams {
   group?: string
   role?: string
   status?: string
+  member_level?: string
   p?: number
   page_size?: number
   sort_by?: UserSortBy

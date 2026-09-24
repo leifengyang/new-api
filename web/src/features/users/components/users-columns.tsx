@@ -40,6 +40,8 @@ import {
   USER_STATUS,
   USER_STATUSES,
   USER_ROLES,
+  USER_MEMBER_LEVELS,
+  getUserMemberLevel,
   isUserDeleted,
 } from '../constants'
 import type { User } from '../types'
@@ -234,6 +236,47 @@ export function useUsersColumns(): ColumnDef<User>[] {
         enableSorting: false,
         size: 120,
         meta: { mobileOrder: 20 },
+      },
+      {
+        accessorKey: 'member_level',
+        header: t('Member Level'),
+        cell: ({ row }) => {
+          const level = getUserMemberLevel(row.original)
+          const levelConfig =
+            USER_MEMBER_LEVELS[level as keyof typeof USER_MEMBER_LEVELS]
+
+          if (!levelConfig) {
+            return null
+          }
+
+          return (
+            <Tooltip>
+              <TooltipTrigger
+                render={<BadgeCell className='-ml-1.5 cursor-help' />}
+              >
+                <StatusBadge
+                  label={t(levelConfig.labelKey)}
+                  variant={levelConfig.variant}
+                  copyable={false}
+                  className='font-normal'
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className='text-xs'>
+                  {t(
+                    'Internal members earn an invite rebate from the top-ups of the users they invite directly.'
+                  )}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          )
+        },
+        filterFn: (row, _id, value) => {
+          return value.includes(String(getUserMemberLevel(row.original)))
+        },
+        enableSorting: false,
+        size: 140,
+        meta: { mobileHidden: true },
       },
       {
         id: 'invite_info',

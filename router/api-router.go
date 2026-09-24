@@ -162,6 +162,10 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+
+				// 会员等级（内部 / 外部身份）：决定谁有资格拿邀请返现
+				adminRoute.PUT("/member_level", controller.UpdateUserMemberLevel)
+				adminRoute.POST("/member_level/batch", controller.UpdateUsersMemberLevelBatch)
 			}
 		}
 
@@ -308,6 +312,15 @@ func SetApiRouter(router *gin.Engine) {
 			redemptionRoute.PUT("/", controller.UpdateRedemption)
 			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption)
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)
+		}
+
+		// 邀请返现：学员端查看自己的明细，后台查看全量与撤销
+		apiRouter.GET("/invite_rebate/self", middleware.UserAuth(), controller.GetSelfInviteRebates)
+		inviteRebateRoute := apiRouter.Group("/invite_rebate")
+		inviteRebateRoute.Use(middleware.AdminAuth())
+		{
+			inviteRebateRoute.GET("/", controller.GetAllInviteRebates)
+			inviteRebateRoute.POST("/reverse", controller.ReverseInviteRebate)
 		}
 		apiRouter.GET("/audit", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), controller.GetAuditLogs)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)

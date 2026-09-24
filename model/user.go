@@ -19,11 +19,25 @@ import (
 
 const UserNameMaxLength = 20
 
+// 会员等级只有「内部 / 外部」两档身份，不参与定价、限流或分组逻辑，
+// 唯一作用是决定这个人能不能拿邀请返现（见 model/invite_rebate.go）。
+// 用 int 而非 bool：GORM 的布尔默认值标签在 MySQL / PostgreSQL 上会因为
+// 默认值表达差异反复触发 ALTER TABLE。
+const (
+	MemberLevelNormal   = 0 // 外部用户
+	MemberLevelInternal = 1 // 内部学员
+)
+
+func IsValidMemberLevel(level int) bool {
+	return level == MemberLevelNormal || level == MemberLevelInternal
+}
+
 var userSortColumns = map[string]string{
 	"id":            "id",
 	"username":      "username",
 	"quota":         "quota",
 	"group":         "group",
+	"member_level":  "member_level",
 	"created_at":    "created_at",
 	"last_login_at": "last_login_at",
 }
@@ -103,6 +117,7 @@ type User struct {
 	AffQuota             int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
 	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
 	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	MemberLevel          int                        `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
 	DeletedAt            gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting              string                     `json:"setting" gorm:"type:text;column:setting"`
@@ -449,7 +464,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, memberLevel *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -493,6 +508,9 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 		} else {
 			query = query.Where("deleted_at IS NULL").Where("status = ?", *status)
 		}
+	}
+	if memberLevel != nil {
+		query = query.Where("member_level = ?", *memberLevel)
 	}
 
 	// 获取总数
@@ -546,7 +564,7 @@ func GetSelfUserById(id int) (*User, error) {
 		"id", "username", "display_name", "role", "status", "email",
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
-		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
+		"aff_quota", "aff_history", "inviter_id", "member_level", "linux_do_id", "setting",
 		"stripe_customer", "auth_version",
 		"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password",
 	}).First(&profile, "id = ?", id).Error
@@ -690,6 +708,7 @@ func (user *User) Insert(inviterId int) error {
 			}
 			user.Quota = common.QuotaForNewUser
 			user.AffCode = common.GetRandomString(4)
+			user.MemberLevel = resolveMemberLevelForNewUser(tx, inviterId)
 
 			// 初始化用户设置，包括默认的边栏配置
 			if user.Setting == "" {
@@ -754,6 +773,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 		}
 		user.Quota = common.QuotaForNewUser
 		user.AffCode = common.GetRandomString(4)
+		user.MemberLevel = resolveMemberLevelForNewUser(tx, inviterId)
 
 		// 初始化用户设置
 		if user.Setting == "" {
@@ -850,6 +870,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_count",
 		"aff_quota",
 		"aff_history",
+		"member_level",
 		"auth_version",
 	).Updates(newUser).Error; err != nil {
 		return err

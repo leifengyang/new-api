@@ -86,10 +86,20 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // creditTopUpQuota atomically enforces the wallet ceiling while adding quota.
 // Keeping the predicate and increment in one UPDATE prevents two
 // concurrent callbacks from both passing a separate read/check.
-func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]any) error {
+//
+// Every path that puts quota into a wallet must go through here, and must name
+// its source plus a source-unique reference. That signature is what makes the
+// invite rebate (see creditInviteRebateTx) cover all entry points by
+// construction: a new payment provider cannot credit a wallet without
+// declaring which order the credit belongs to, so it cannot silently skip the
+// rebate or hand the rebate a non-unique dedup key.
+//
+// The returned credit, when non-nil, must be applied with finalizeInviteRebate
+// after the transaction commits.
+func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string, sourceRef string, updates map[string]any) (*inviteRebateCredit, error) {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	updateFields := make(map[string]any, len(updates)+1)
@@ -100,20 +110,21 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
 		Updates(updateFields)
 	if result.Error != nil {
-		return result.Error
+		return nil, result.Error
 	}
-	if result.RowsAffected == 1 {
-		return nil
+	if result.RowsAffected != 1 {
+		var count int64
+		if err := tx.Model(&User{}).Where("id = ?", userId).Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return nil, ErrTopUpQuotaLimitExceeded
 	}
 
-	var count int64
-	if err := tx.Model(&User{}).Where("id = ?", userId).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return ErrTopUpQuotaLimitExceeded
+	// 充值本身已经落库，返现只是它的附带结果，因此这里绝不返回错误。
+	return creditInviteRebateTx(tx, userId, creditedQuota, source, sourceRef), nil
 }
 
 func (topUp *TopUp) Update() error {
@@ -184,6 +195,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	}
 
 	var quotaToAdd int
+	var rebateCredit *inviteRebateCredit
 	topUp := &TopUp{}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
@@ -214,7 +226,8 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		rebateCredit, err = creditTopUpQuota(tx, topUp.UserId, quotaToAdd, InviteRebateSourceEpay, topUp.TradeNo, nil)
+		return err
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -226,6 +239,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		return true, nil
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
+	finalizeInviteRebate(rebateCredit)
 
 	common.SysLog(fmt.Sprintf("易支付充值成功 trade_no=%s user_id=%d quota_to_add=%d money=%.2f", topUp.TradeNo, topUp.UserId, quotaToAdd, topUp.Money))
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
@@ -238,6 +252,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	var quota int
+	var rebateCredit *inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -272,9 +287,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]any{
+		rebateCredit, err = creditTopUpQuota(tx, topUp.UserId, quota, InviteRebateSourceStripe, topUp.TradeNo, map[string]any{
 			"stripe_customer": customerId,
 		})
+		return err
 	})
 
 	if err != nil {
@@ -282,6 +298,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("充值失败，请稍后重试")
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, "stripe topup")
+	finalizeInviteRebate(rebateCredit)
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(quota), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 
@@ -460,6 +477,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var rebateCredit *inviteRebateCredit
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -502,9 +520,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
-		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+		credit, err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, InviteRebateSourceManual, topUp.TradeNo, nil)
+		if err != nil {
 			return err
 		}
+		rebateCredit = credit
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
@@ -518,6 +538,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	// 事务外记录日志，避免阻塞
 	syncCreditUserQuotaCache(userId, quotaToAdd, "manual topup")
+	finalizeInviteRebate(rebateCredit)
 	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
 	return nil
 }
@@ -527,6 +548,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	var quota int
+	var rebateCredit *inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -579,7 +601,8 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		rebateCredit, err = creditTopUpQuota(tx, topUp.UserId, quota, InviteRebateSourceCreem, topUp.TradeNo, updateFields)
+		return err
 	})
 
 	if err != nil {
@@ -587,6 +610,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		return errors.New("充值失败，请稍后重试")
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, "creem topup")
+	finalizeInviteRebate(rebateCredit)
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
 
@@ -599,6 +623,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	var quotaToAdd int
+	var rebateCredit *inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -637,7 +662,8 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		rebateCredit, err = creditTopUpQuota(tx, topUp.UserId, quotaToAdd, InviteRebateSourceWaffo, topUp.TradeNo, nil)
+		return err
 	})
 
 	if err != nil {
@@ -645,6 +671,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		return errors.New("充值失败，请稍后重试")
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
+	finalizeInviteRebate(rebateCredit)
 
 	if quotaToAdd > 0 {
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
@@ -659,6 +686,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	var quotaToAdd int
+	var rebateCredit *inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -697,7 +725,8 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		rebateCredit, err = creditTopUpQuota(tx, topUp.UserId, quotaToAdd, InviteRebateSourceWaffoPancake, topUp.TradeNo, nil)
+		return err
 	})
 
 	if err != nil {
@@ -705,6 +734,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		return errors.New("充值失败，请稍后重试")
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
+	finalizeInviteRebate(rebateCredit)
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))

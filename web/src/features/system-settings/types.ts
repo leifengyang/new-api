@@ -355,6 +355,8 @@ export type BillingSettings = {
   'checkin_setting.enabled': boolean
   'checkin_setting.min_quota': number
   'checkin_setting.max_quota': number
+  'invite_rebate_setting.enabled': boolean
+  'invite_rebate_setting.rate_basis_points': number
 }
 
 export type OperationsSettings = {

@@ -365,9 +365,15 @@ func SearchUsers(c *gin.Context) {
 			status = &parsed
 		}
 	}
+	var memberLevel *int
+	if memberLevelStr := c.Query("member_level"); memberLevelStr != "" {
+		if parsed, err := strconv.Atoi(memberLevelStr); err == nil {
+			memberLevel = &parsed
+		}
+	}
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
-	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOptions)
+	users, total, err := model.SearchUsers(keyword, group, role, status, memberLevel, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOptions)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -514,6 +520,7 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"aff_quota":         user.AffQuota,
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,
+		"member_level":      user.MemberLevel,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
 		"stripe_customer":   user.StripeCustomer,
