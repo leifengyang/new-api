@@ -82,7 +82,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
-  const [memberLevelTarget, setMemberLevelTarget] = useState<number | null>(null)
+  const [memberLevelTarget, setMemberLevelTarget] = useState<number | null>(
+    null
+  )
   const [memberLevelPending, setMemberLevelPending] = useState(false)
 
   const handleEdit = () => {

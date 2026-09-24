@@ -252,9 +252,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
           return (
             <Tooltip>
               <TooltipTrigger
-                render={
-                  <BadgeCell className='-ml-1.5 cursor-help' />
-                }
+                render={<BadgeCell className='-ml-1.5 cursor-help' />}
               >
                 <StatusBadge
                   label={t(levelConfig.labelKey)}
