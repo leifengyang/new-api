@@ -142,6 +142,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		return 0, errors.New("无效的 user id")
 	}
 	redemption := &Redemption{}
+	var rebateCredit *inviteRebateCredit
 
 	keyCol := "`key`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -175,13 +176,21 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("该兑换码已被使用")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		// 兑换码按记录 id 去重：状态位 CAS 已经保证一个码只兑换一次，
+		// 这里的 id 只是给返现一个稳定且唯一的来源标识。
+		credit, creditErr := creditTopUpQuota(tx, userId, redemption.Quota, InviteRebateSourceRedemption, strconv.Itoa(redemption.Id), nil)
+		if creditErr != nil {
+			return creditErr
+		}
+		rebateCredit = credit
+		return nil
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())
 		return 0, ErrRedeemFailed
 	}
 	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
+	finalizeInviteRebate(rebateCredit)
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
 	return redemption.Quota, nil
 }
