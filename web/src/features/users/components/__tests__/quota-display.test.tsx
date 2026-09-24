@@ -274,7 +274,9 @@ async function renderUsersList(emptyInvitation = false) {
             last_login_at: Math.floor(Date.now() / 1000) - 20,
             group: 'default',
             aff_count: emptyInvitation ? 0 : 2,
-            aff_history_quota: emptyInvitation ? 0 : 500000,
+            // 收益列展示的是累计邀请返现（后台按页汇总），750000 显示为 1.5，
+            // 和余额 0.0038、已用 0.0022 不会混淆。
+            invite_rebate_quota: emptyInvitation ? 0 : 750000,
             inviter_id: emptyInvitation ? 0 : 42,
           },
         ],
@@ -327,7 +329,14 @@ it('sends balance sorting to the server and keeps invitation details on two line
     screen.queryByRole('button', { name: 'Total Used' })
   ).not.toBeInTheDocument()
   expect(screen.getByText('Inviter ID: 42')).toBeInTheDocument()
-  expect(screen.getByText(/Invited 2 users · Earnings:/)).toBeInTheDocument()
+  expect(
+    screen.getByText(/Invited 2 users · Invite Rebate:/)
+  ).toBeInTheDocument()
+  expect(
+    within(
+      screen.getByRole('row', { name: /long-user-name-for-table-layout/ })
+    ).getByText('$1.5')
+  ).toBeInTheDocument()
 })
 
 it('shows balance above usage on mobile cards in Chinese', async () => {

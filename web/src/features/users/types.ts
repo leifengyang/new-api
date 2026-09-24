@@ -50,6 +50,8 @@ export const userSchema = z.object({
   aff_count: z.number().optional(),
   aff_quota: z.number().optional(),
   aff_history_quota: z.number().optional(),
+  /** 累计邀请返现，由用户列表接口填充；其它接口返回的用户对象里是 0。 */
+  invite_rebate_quota: z.number().optional(),
   inviter_id: z.number().optional(),
   /** 0 = external user, 1 = internal member. Absent on payloads that omit it. */
   member_level: z.number().optional(),
