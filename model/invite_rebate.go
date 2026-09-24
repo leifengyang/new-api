@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -297,6 +298,7 @@ func ReverseInviteRebate(rebateId int, operatorId int, reason string) (*InviteRe
 type InviteRebateFilter struct {
 	InviterId int
 	InviteeId int
+	Keyword   string
 	Source    string
 	Status    string
 	StartTime int64
@@ -310,6 +312,19 @@ func buildInviteRebateQuery(filter InviteRebateFilter) *gorm.DB {
 	}
 	if filter.InviteeId != 0 {
 		query = query.Where("invitee_id = ?", filter.InviteeId)
+	}
+	if filter.Keyword != "" {
+		// 按用户名查账：管理员手上只有学员名字，没有 id。! 作为 ESCAPE 字符，
+		// 兼容 SQLite / MySQL / PostgreSQL（与 model/log.go 同一约定）。
+		keyword := strings.ReplaceAll(filter.Keyword, "!", "!!")
+		keyword = strings.ReplaceAll(keyword, "_", "!_")
+		pattern := "%" + keyword + "%"
+		// Unscoped：已注销学员留下的历史返现仍要能被搜到，与 GetUsernamesByIds 一致。
+		query = query.Where(
+			"inviter_id IN (?) OR invitee_id IN (?)",
+			DB.Unscoped().Model(&User{}).Select("id").Where("username LIKE ? ESCAPE '!'", pattern),
+			DB.Unscoped().Model(&User{}).Select("id").Where("username LIKE ? ESCAPE '!'", pattern),
+		)
 	}
 	if filter.Source != "" {
 		query = query.Where("source = ?", filter.Source)

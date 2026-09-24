@@ -59,10 +59,17 @@ func setInviteRebateSetting(t *testing.T, enabled bool, rateBasisPoints int) {
 
 func createInviteRebateUser(t *testing.T, db *gorm.DB, id int, role int, memberLevel int, inviterId int) *User {
 	t.Helper()
+	return createNamedInviteRebateUser(t, db, id, fmt.Sprintf("user%d", id), role, memberLevel, inviterId)
+}
+
+// createNamedInviteRebateUser 与 createInviteRebateUser 相同，但指定用户名，
+// 供按名字检索的用例构造可辨认的账号。
+func createNamedInviteRebateUser(t *testing.T, db *gorm.DB, id int, username string, role int, memberLevel int, inviterId int) *User {
+	t.Helper()
 	user := &User{
 		Id:          id,
-		Username:    fmt.Sprintf("user%d", id),
-		DisplayName: fmt.Sprintf("user%d", id),
+		Username:    username,
+		DisplayName: username,
 		Password:    "$2a$10$placeholderplaceholderplaceholderplaceholderplaceholde",
 		Role:        role,
 		Status:      common.UserStatusEnabled,
@@ -574,4 +581,67 @@ func TestGetInviteRebatesFiltersAndPaginates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, total)
 	assert.Empty(t, none)
+}
+
+func TestGetInviteRebatesKeywordMatchesBothSidesByName(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createNamedInviteRebateUser(t, db, 1, "zhangsan", common.RoleCommonUser, MemberLevelInternal, 0)
+	createNamedInviteRebateUser(t, db, 2, "zhang_san", common.RoleCommonUser, MemberLevelNormal, 1)
+	createNamedInviteRebateUser(t, db, 3, "wangXer", common.RoleCommonUser, MemberLevelNormal, 1)
+	createNamedInviteRebateUser(t, db, 4, "lisi", common.RoleCommonUser, MemberLevelInternal, 0)
+	createNamedInviteRebateUser(t, db, 5, "wang_er", common.RoleCommonUser, MemberLevelNormal, 4)
+
+	require.NotNil(t, creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-1"))
+	require.NotNil(t, creditRebateInTx(t, 3, 100000, InviteRebateSourceEpay, "trade-2"))
+	require.NotNil(t, creditRebateInTx(t, 5, 100000, InviteRebateSourceEpay, "trade-3"))
+
+	// 命中邀请人。
+	byInviter, total, err := GetInviteRebates(InviteRebateFilter{Keyword: "lisi"}, 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, byInviter, 1)
+	assert.Equal(t, 5, byInviter[0].InviteeId)
+
+	// 命中下线。
+	byInvitee, total, err := GetInviteRebates(InviteRebateFilter{Keyword: "zhang_san"}, 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, byInvitee, 1)
+	assert.Equal(t, 1, byInvitee[0].InviterId)
+
+	// 关键词里的 _ 是普通字符：未转义时 %wang_er% 会连 wangXer 一起匹配。
+	literal, total, err := GetInviteRebates(InviteRebateFilter{Keyword: "wang_er"}, 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, literal, 1)
+	assert.Equal(t, 4, literal[0].InviterId)
+
+	// 与其它筛选条件叠加时，名字匹配仍受这些条件约束；括号缺失会让 OR 逃出
+	// status 的约束，把未发放的流水一起返回。
+	matched, total, err := GetInviteRebates(InviteRebateFilter{
+		Keyword: "wang",
+		Source:  InviteRebateSourceEpay,
+		Status:  InviteRebateStatusCredited,
+	}, 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, matched, 2)
+
+	_, total, err = GetInviteRebates(InviteRebateFilter{
+		Keyword: "wang",
+		Status:  InviteRebateStatusSkipped,
+	}, 0, 10)
+	require.NoError(t, err)
+	assert.Zero(t, total)
+
+	// 已注销学员的历史返现仍按名字可查，和流水里的用户名展示保持一致。
+	require.NoError(t, db.Where("id = ?", 4).Delete(&User{}).Error)
+	_, total, err = GetInviteRebates(InviteRebateFilter{Keyword: "lisi"}, 0, 10)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+
+	_, total, err = GetInviteRebates(InviteRebateFilter{Keyword: "nobody"}, 0, 10)
+	require.NoError(t, err)
+	assert.Zero(t, total)
 }

@@ -102,8 +102,9 @@ func buildInviteRebateItems(rebates []*model.InviteRebate, maskDownline bool) ([
 
 func parseInviteRebateFilter(c *gin.Context) (model.InviteRebateFilter, error) {
 	filter := model.InviteRebateFilter{
-		Source: c.Query("source"),
-		Status: c.Query("status"),
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+		Source:  c.Query("source"),
+		Status:  c.Query("status"),
 	}
 	for _, field := range []struct {
 		query string
