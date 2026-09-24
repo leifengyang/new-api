@@ -110,10 +110,10 @@ For commercial licensing, please contact support@quantumnous.com
   --app-rev: '2k6e8r7p';
   /* Currently active body font. The font axis swaps this between
    * `--font-sans` and `--font-serif` via `[data-theme-font='...']` blocks
-   * in theme-presets.css. The default resolves to serif (see
+   * in theme-presets.css. The `default` preset resolves to sans (see
    * `PRESET_DEFAULT_FONT`), so the pre-hydration value mirrors it and the
    * body face does not swap once the provider mounts. */
-  --font-body: var(--font-serif);
+  --font-body: var(--font-sans);
   /* Native form controls, scrollbars and the canvas follow the app theme
    * rather than the OS setting. */
   color-scheme: light;

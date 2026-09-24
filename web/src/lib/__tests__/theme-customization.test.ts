@@ -25,17 +25,25 @@ import {
 } from '../theme-customization'
 
 describe('resolveThemeFont', () => {
-  it('resolves the out-of-the-box preference to the editorial serif', () => {
+  it('resolves the out-of-the-box preference to the humanist sans', () => {
     const font = resolveThemeFont(
       DEFAULT_THEME_CUSTOMIZATION.font,
       DEFAULT_THEME_CUSTOMIZATION.preset
     )
 
-    expect(font).toBe('serif')
+    expect(font).toBe('sans')
   })
 
   it('keeps an explicit sans choice on the default preset', () => {
     expect(resolveThemeFont('sans', 'default')).toBe('sans')
+  })
+
+  it('resolves the Anthropic preset to its editorial serif', () => {
+    expect(resolveThemeFont('default', 'anthropic')).toBe('serif')
+  })
+
+  it('keeps an explicit sans choice on the Anthropic preset', () => {
+    expect(resolveThemeFont('sans', 'anthropic')).toBe('sans')
   })
 
   it('keeps an explicit serif choice on a preset that defaults to sans', () => {
