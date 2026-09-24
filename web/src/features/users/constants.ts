@@ -97,6 +97,43 @@ export const getUserRoleOptions = (t: (key: string) => string) => [
 ]
 
 // ============================================================================
+// Member Level Configuration
+// ============================================================================
+// Internal members are the students invited through an administrator's link.
+// They, and only they, earn an invite rebate from the top-ups of the users
+// they invite directly.
+
+export const USER_MEMBER_LEVEL = {
+  EXTERNAL: 0,
+  INTERNAL: 1,
+} as const
+
+export const USER_MEMBER_LEVELS = {
+  [USER_MEMBER_LEVEL.EXTERNAL]: {
+    labelKey: 'External',
+    variant: 'neutral' as const,
+    value: USER_MEMBER_LEVEL.EXTERNAL,
+  },
+  [USER_MEMBER_LEVEL.INTERNAL]: {
+    labelKey: 'Internal Member',
+    variant: 'purple' as const,
+    value: USER_MEMBER_LEVEL.INTERNAL,
+  },
+} as const
+
+export const getUserMemberLevelOptions = (t: (key: string) => string) => [
+  {
+    label: t('Internal Member'),
+    value: String(USER_MEMBER_LEVEL.INTERNAL),
+  },
+  { label: t('External'), value: String(USER_MEMBER_LEVEL.EXTERNAL) },
+]
+
+/** Payloads that omit the level mean the default, which is external. */
+export const getUserMemberLevel = (user: UserType): number =>
+  user.member_level ?? USER_MEMBER_LEVEL.EXTERNAL
+
+// ============================================================================
 // Default Values
 // ============================================================================
 

@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "Taux de commission (%)",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Part de chaque rechargement créditée à l’inviteur. Actuellement {{rate}} ({{basisPoints}} points de base). Réglez sur 0 pour arrêter les versements sans changer qui est membre interne.",
     "Save invite rebate settings": "Enregistrer les paramètres de commission",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Les récompenses d’inviteur et d’invité à l’inscription ont été remplacées par cette commission. Seuls les membres internes en bénéficient, et uniquement sur les rechargements des utilisateurs qu’ils ont invités directement."
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Les récompenses d’inviteur et d’invité à l’inscription ont été remplacées par cette commission. Seuls les membres internes en bénéficient, et uniquement sur les rechargements des utilisateurs qu’ils ont invités directement.",
+    "Member Level": "Niveau de membre",
+    "Internal Member": "Membre interne",
+    "External": "Utilisateur externe",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "Les membres internes perçoivent une commission sur les rechargements des utilisateurs qu’ils ont invités directement.",
+    "Mark as internal member": "Définir comme membre interne",
+    "Mark as external user": "Définir comme utilisateur externe",
+    "Mark {{username}} as an internal member?": "Définir {{username}} comme membre interne ?",
+    "Mark {{username}} as an external user?": "Définir {{username}} comme utilisateur externe ?",
+    "Mark {{count}} users as internal members?": "Définir {{count}} utilisateurs comme membres internes ?",
+    "Mark {{count}} users as external users?": "Définir {{count}} utilisateurs comme utilisateurs externes ?",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "Cet utilisateur percevra une commission sur les rechargements des utilisateurs qu’il a invités directement.",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "Cet utilisateur ne percevra plus de commission. Les commissions déjà versées ne sont pas annulées.",
+    "Marked {{username}} as an internal member": "{{username}} est désormais membre interne",
+    "Marked {{username}} as an external user": "{{username}} est désormais utilisateur externe",
+    "Marked {{count}} users as internal members": "{{count}} utilisateurs sont désormais membres internes",
+    "Marked {{count}} users as external users": "{{count}} utilisateurs sont désormais utilisateurs externes",
+    "Failed to update the member level": "Échec de la mise à jour du niveau de membre"
   }
 }

@@ -28,6 +28,8 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  GraduationCap,
+  UserRoundMinus,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -49,11 +51,18 @@ import {
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
 
-import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
+import {
+  manageUser,
+  resetUserPasskey,
+  resetUserTwoFA,
+  updateUserMemberLevel,
+} from '../api'
 import {
   USER_STATUS,
   USER_ROLE,
+  USER_MEMBER_LEVEL,
   ERROR_MESSAGES,
+  getUserMemberLevel,
   isUserDeleted,
 } from '../constants'
 import { getUserActionMessage } from '../lib'
@@ -73,6 +82,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [memberLevelTarget, setMemberLevelTarget] = useState<number | null>(null)
+  const [memberLevelPending, setMemberLevelPending] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -130,9 +141,37 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     }
   }
 
+  const handleMemberLevel = async (level: number) => {
+    setMemberLevelPending(true)
+    try {
+      const result = await updateUserMemberLevel(user.id, level)
+      if (result.success) {
+        toast.success(
+          level === USER_MEMBER_LEVEL.INTERNAL
+            ? t('Marked {{username}} as an internal member', {
+                username: user.username,
+              })
+            : t('Marked {{username}} as an external user', {
+                username: user.username,
+              })
+        )
+        triggerRefresh()
+      } else {
+        handleServerError(result, t('Failed to update the member level'))
+      }
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+    } finally {
+      setMemberLevelPending(false)
+      setMemberLevelTarget(null)
+    }
+  }
+
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
   const isRoot = user.role === USER_ROLE.ROOT
+  const isInternalMember =
+    getUserMemberLevel(user) === USER_MEMBER_LEVEL.INTERNAL
 
   if (isUserDeleted(user)) {
     return null
@@ -193,6 +232,34 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             {t('Promote')}
             <DropdownMenuShortcut>
               <ArrowUp size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+
+        {/* Only internal members earn an invite rebate, so this is how an
+            existing student is promoted into the programme (or taken out). */}
+        {isInternalMember ? (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setMemberLevelTarget(USER_MEMBER_LEVEL.EXTERNAL)
+            }}
+          >
+            {t('Mark as external user')}
+            <DropdownMenuShortcut>
+              <UserRoundMinus size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setMemberLevelTarget(USER_MEMBER_LEVEL.INTERNAL)
+            }}
+          >
+            {t('Mark as internal member')}
+            <DropdownMenuShortcut>
+              <GraduationCap size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
@@ -273,6 +340,38 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         )}
         confirmText={t('Reset Passkey')}
         handleConfirm={handleResetPasskey}
+      />
+
+      <ConfirmDialog
+        open={memberLevelTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setMemberLevelTarget(null)
+        }}
+        title={
+          memberLevelTarget === USER_MEMBER_LEVEL.INTERNAL
+            ? t('Mark {{username}} as an internal member?', {
+                username: user.username,
+              })
+            : t('Mark {{username}} as an external user?', {
+                username: user.username,
+              })
+        }
+        desc={
+          memberLevelTarget === USER_MEMBER_LEVEL.INTERNAL
+            ? t(
+                'They earn an invite rebate from the top-ups of the users they invite directly.'
+              )
+            : t(
+                'They stop earning an invite rebate. Rebates already credited are not reversed.'
+              )
+        }
+        confirmText={memberLevelPending ? t('Saving...') : t('Confirm')}
+        isLoading={memberLevelPending}
+        handleConfirm={() => {
+          if (memberLevelTarget !== null && !memberLevelPending) {
+            void handleMemberLevel(memberLevelTarget)
+          }
+        }}
       />
 
       <ConfirmDialog

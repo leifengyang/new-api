@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "Rebate rate (%)",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.",
     "Save invite rebate settings": "Save invite rebate settings",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly."
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.",
+    "Member Level": "Member Level",
+    "Internal Member": "Internal Member",
+    "External": "External",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "Internal members earn an invite rebate from the top-ups of the users they invite directly.",
+    "Mark as internal member": "Mark as internal member",
+    "Mark as external user": "Mark as external user",
+    "Mark {{username}} as an internal member?": "Mark {{username}} as an internal member?",
+    "Mark {{username}} as an external user?": "Mark {{username}} as an external user?",
+    "Mark {{count}} users as internal members?": "Mark {{count}} users as internal members?",
+    "Mark {{count}} users as external users?": "Mark {{count}} users as external users?",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "They earn an invite rebate from the top-ups of the users they invite directly.",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "They stop earning an invite rebate. Rebates already credited are not reversed.",
+    "Marked {{username}} as an internal member": "Marked {{username}} as an internal member",
+    "Marked {{username}} as an external user": "Marked {{username}} as an external user",
+    "Marked {{count}} users as internal members": "Marked {{count}} users as internal members",
+    "Marked {{count}} users as external users": "Marked {{count}} users as external users",
+    "Failed to update the member level": "Failed to update the member level"
   }
 }

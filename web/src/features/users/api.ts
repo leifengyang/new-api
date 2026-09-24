@@ -65,6 +65,7 @@ export async function searchUsers(
     group = '',
     role = '',
     status = '',
+    member_level = '',
     p = 1,
     page_size = 10,
     sort_by,
@@ -75,6 +76,7 @@ export async function searchUsers(
   queryParams.set('group', group)
   if (role) queryParams.set('role', role)
   if (status) queryParams.set('status', status)
+  if (member_level) queryParams.set('member_level', member_level)
   queryParams.set('p', String(p))
   queryParams.set('page_size', String(page_size))
   if (sort_by) queryParams.set('sort_by', sort_by)
@@ -127,6 +129,38 @@ export async function manageUser(
   action: ManageUserAction
 ): Promise<ApiResponse<Partial<User>>> {
   const res = await api.post('/api/user/manage', { id, action })
+  return res.data
+}
+
+/**
+ * Set one user's member level (internal member vs external user).
+ *
+ * The level decides who earns an invite rebate, so it has its own endpoint
+ * instead of riding along with the generic user update.
+ */
+export async function updateUserMemberLevel(
+  id: number,
+  memberLevel: number
+): Promise<ApiResponse> {
+  const res = await api.put('/api/user/member_level', {
+    id,
+    member_level: memberLevel,
+  })
+  return res.data
+}
+
+/**
+ * Set the member level for many users at once, for migrating existing
+ * students. Returns how many rows the server actually updated.
+ */
+export async function updateUsersMemberLevelBatch(
+  ids: number[],
+  memberLevel: number
+): Promise<ApiResponse<number>> {
+  const res = await api.post('/api/user/member_level/batch', {
+    ids,
+    member_level: memberLevel,
+  })
   return res.data
 }
 

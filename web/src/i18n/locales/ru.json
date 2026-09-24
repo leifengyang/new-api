@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "Ставка ребейта (%)",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Доля каждого пополнения, начисляемая пригласившему. Сейчас {{rate}} ({{basisPoints}} базисных пунктов). Установите 0, чтобы прекратить выплаты, не меняя состав внутренних участников.",
     "Save invite rebate settings": "Сохранить настройки ребейта",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Вознаграждения пригласившему и приглашённому при регистрации заменены этим ребейтом. Его получают только внутренние участники и только с пополнений напрямую приглашённых ими пользователей."
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Вознаграждения пригласившему и приглашённому при регистрации заменены этим ребейтом. Его получают только внутренние участники и только с пополнений напрямую приглашённых ими пользователей.",
+    "Member Level": "Уровень участника",
+    "Internal Member": "Внутренний участник",
+    "External": "Внешний пользователь",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "Внутренние участники получают ребейт с пополнений пользователей, которых они пригласили напрямую.",
+    "Mark as internal member": "Сделать внутренним участником",
+    "Mark as external user": "Сделать внешним пользователем",
+    "Mark {{username}} as an internal member?": "Сделать {{username}} внутренним участником?",
+    "Mark {{username}} as an external user?": "Сделать {{username}} внешним пользователем?",
+    "Mark {{count}} users as internal members?": "Сделать {{count}} пользователей внутренними участниками?",
+    "Mark {{count}} users as external users?": "Сделать {{count}} пользователей внешними пользователями?",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "Этот пользователь будет получать ребейт с пополнений пользователей, которых он пригласил напрямую.",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "Этот пользователь перестанет получать ребейт. Уже начисленные ребейты не отменяются.",
+    "Marked {{username}} as an internal member": "{{username}} стал внутренним участником",
+    "Marked {{username}} as an external user": "{{username}} стал внешним пользователем",
+    "Marked {{count}} users as internal members": "{{count}} пользователей стали внутренними участниками",
+    "Marked {{count}} users as external users": "{{count}} пользователей стали внешними пользователями",
+    "Failed to update the member level": "Не удалось обновить уровень участника"
   }
 }

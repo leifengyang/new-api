@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "Tỷ lệ hoàn tiền (%)",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "Tỷ lệ mỗi lần nạp được cộng cho người mời. Hiện tại {{rate}} ({{basisPoints}} điểm cơ bản). Đặt 0 để ngừng chi trả mà không thay đổi ai là thành viên nội bộ.",
     "Save invite rebate settings": "Lưu cài đặt hoàn tiền mời",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Phần thưởng cho người mời và người được mời khi đăng ký đã được thay bằng khoản hoàn tiền này. Chỉ thành viên nội bộ mới nhận được, và chỉ từ các lần nạp của những người họ mời trực tiếp."
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "Phần thưởng cho người mời và người được mời khi đăng ký đã được thay bằng khoản hoàn tiền này. Chỉ thành viên nội bộ mới nhận được, và chỉ từ các lần nạp của những người họ mời trực tiếp.",
+    "Member Level": "Cấp thành viên",
+    "Internal Member": "Thành viên nội bộ",
+    "External": "Người dùng bên ngoài",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "Thành viên nội bộ nhận hoàn tiền từ các lần nạp của những người họ mời trực tiếp.",
+    "Mark as internal member": "Đặt làm thành viên nội bộ",
+    "Mark as external user": "Đặt làm người dùng bên ngoài",
+    "Mark {{username}} as an internal member?": "Đặt {{username}} làm thành viên nội bộ?",
+    "Mark {{username}} as an external user?": "Đặt {{username}} làm người dùng bên ngoài?",
+    "Mark {{count}} users as internal members?": "Đặt {{count}} người dùng làm thành viên nội bộ?",
+    "Mark {{count}} users as external users?": "Đặt {{count}} người dùng làm người dùng bên ngoài?",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "Người dùng này sẽ nhận hoàn tiền từ các lần nạp của những người họ mời trực tiếp.",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "Người dùng này sẽ không còn nhận hoàn tiền. Các khoản đã cộng sẽ không bị thu hồi.",
+    "Marked {{username}} as an internal member": "Đã đặt {{username}} làm thành viên nội bộ",
+    "Marked {{username}} as an external user": "Đã đặt {{username}} làm người dùng bên ngoài",
+    "Marked {{count}} users as internal members": "Đã đặt {{count}} người dùng làm thành viên nội bộ",
+    "Marked {{count}} users as external users": "Đã đặt {{count}} người dùng làm người dùng bên ngoài",
+    "Failed to update the member level": "Cập nhật cấp thành viên thất bại"
   }
 }

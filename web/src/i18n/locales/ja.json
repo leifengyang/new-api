@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "リベート率（%）",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "各チャージのうち招待者に付与する割合。現在は {{rate}}（{{basisPoints}} ベーシスポイント）。0 にすると、内部メンバーの対象を変えずに付与を停止できます。",
     "Save invite rebate settings": "招待リベート設定を保存",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "登録時の招待者・被招待者への報酬は、このリベートに置き換えられました。リベートを受け取れるのは内部メンバーだけで、しかも自分が直接招待したユーザーのチャージ分に限られます。"
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "登録時の招待者・被招待者への報酬は、このリベートに置き換えられました。リベートを受け取れるのは内部メンバーだけで、しかも自分が直接招待したユーザーのチャージ分に限られます。",
+    "Member Level": "メンバー等級",
+    "Internal Member": "内部メンバー",
+    "External": "外部ユーザー",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "内部メンバーは、自分が直接招待したユーザーのチャージからリベートを受け取れます。",
+    "Mark as internal member": "内部メンバーに設定",
+    "Mark as external user": "外部ユーザーに設定",
+    "Mark {{username}} as an internal member?": "{{username}} を内部メンバーに設定しますか？",
+    "Mark {{username}} as an external user?": "{{username}} を外部ユーザーに設定しますか？",
+    "Mark {{count}} users as internal members?": "{{count}} 人のユーザーを内部メンバーに設定しますか？",
+    "Mark {{count}} users as external users?": "{{count}} 人のユーザーを外部ユーザーに設定しますか？",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "このユーザーは、自分が直接招待したユーザーのチャージからリベートを受け取れます。",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "このユーザーはリベートを受け取れなくなります。すでに付与されたリベートは取り消されません。",
+    "Marked {{username}} as an internal member": "{{username}} を内部メンバーに設定しました",
+    "Marked {{username}} as an external user": "{{username}} を外部ユーザーに設定しました",
+    "Marked {{count}} users as internal members": "{{count}} 人のユーザーを内部メンバーに設定しました",
+    "Marked {{count}} users as external users": "{{count}} 人のユーザーを外部ユーザーに設定しました",
+    "Failed to update the member level": "メンバー等級の更新に失敗しました"
   }
 }

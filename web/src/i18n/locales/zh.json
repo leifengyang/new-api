@@ -6798,6 +6798,23 @@
     "Rebate rate (%)": "返现比例（%）",
     "Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.": "每笔充值返给邀请人的比例。当前为 {{rate}}（{{basisPoints}} 个基点）。设为 0 可停止返现，且不改变谁是内部会员。",
     "Save invite rebate settings": "保存邀请返现设置",
-    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "注册时的邀请人与被邀请人奖励已被本返现取代。只有内部会员可获得返现，且仅来自其直接邀请用户的充值。"
+    "The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.": "注册时的邀请人与被邀请人奖励已被本返现取代。只有内部会员可获得返现，且仅来自其直接邀请用户的充值。",
+    "Member Level": "会员等级",
+    "Internal Member": "内部会员",
+    "External": "外部用户",
+    "Internal members earn an invite rebate from the top-ups of the users they invite directly.": "内部会员可从其直接邀请的用户的充值中获得返现。",
+    "Mark as internal member": "设为内部会员",
+    "Mark as external user": "设为外部用户",
+    "Mark {{username}} as an internal member?": "将 {{username}} 设为内部会员？",
+    "Mark {{username}} as an external user?": "将 {{username}} 设为外部用户？",
+    "Mark {{count}} users as internal members?": "将 {{count}} 个用户设为内部会员？",
+    "Mark {{count}} users as external users?": "将 {{count}} 个用户设为外部用户？",
+    "They earn an invite rebate from the top-ups of the users they invite directly.": "该用户可从其直接邀请的用户的充值中获得返现。",
+    "They stop earning an invite rebate. Rebates already credited are not reversed.": "该用户将不再获得返现。已发放的返现不会被追回。",
+    "Marked {{username}} as an internal member": "已将 {{username}} 设为内部会员",
+    "Marked {{username}} as an external user": "已将 {{username}} 设为外部用户",
+    "Marked {{count}} users as internal members": "已将 {{count}} 个用户设为内部会员",
+    "Marked {{count}} users as external users": "已将 {{count}} 个用户设为外部用户",
+    "Failed to update the member level": "会员等级更新失败"
   }
 }
