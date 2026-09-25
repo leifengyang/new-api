@@ -48,11 +48,37 @@ import {
   isTimingLogType,
   getLogTypeConfig,
 } from '../../lib/utils'
+import type { LogOtherData } from '../../types'
 import { DetailsCell } from '../details-cell'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
+
+function formatRatioCompact(ratio: number | undefined): string {
+  if (ratio == null || !Number.isFinite(ratio)) return '-'
+  return ratio % 1 === 0
+    ? String(ratio)
+    : ratio.toFixed(4).replace(/\.?0+$/, '')
+}
+
+function getGroupRatio(other: LogOtherData | null): number | null {
+  const userGroupRatio = other?.user_group_ratio
+  if (
+    userGroupRatio != null &&
+    userGroupRatio !== -1 &&
+    Number.isFinite(userGroupRatio)
+  ) {
+    return userGroupRatio
+  }
+
+  const groupRatio = other?.group_ratio
+  if (groupRatio != null && groupRatio !== 1 && Number.isFinite(groupRatio)) {
+    return groupRatio
+  }
+
+  return null
+}
 
 export function useCommonLogsColumns(
   isAdmin: boolean,
