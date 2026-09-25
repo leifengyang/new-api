@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 /**
  * The backend stores the invite rebate rate as integer basis points
  * (`invite_rebate_setting.rate_basis_points`, 1000 = 10%, 10000 = 100%) so the
