@@ -170,10 +170,74 @@ function renderSelectedRows(
   )
 }
 
-it('deletes every selected user after confirmation', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValue({ data: { success: true, data: 2 } })
+// Deleting accounts is gated by the shared step-up verification: the operator
+// confirms the selection, passes an identity check, and only the returned proof
+// authorizes the batch request. Both endpoints are mocked so every test below
+// drives that real flow through the shared verification dialog.
+function mockDeletionEndpoints(options?: {
+  verifyResult?: { success: boolean; message?: string; code?: string }
+  deleteResult?: { success: boolean; message?: string; data?: number }
+}) {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/verify/methods') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'user.delete_batch',
+            methods: [{ method: 'password', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }
+    }
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  let proofCount = 0
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => {
+    if (url === '/api/verify') {
+      if (options?.verifyResult) return { data: options.verifyResult }
+      proofCount += 1
+      return {
+        data: {
+          success: true,
+          data: {
+            proof_token: `batch-delete-proof-${proofCount}`,
+            scope: 'user.delete_batch',
+            method: 'password',
+            expires_at: Math.floor(Date.now() / 1000) + 60,
+          },
+        },
+      }
+    }
+    if (url === '/api/user/batch') {
+      return { data: options?.deleteResult ?? { success: true, data: 2 } }
+    }
+    throw new Error(`Unexpected POST ${url}`)
+  })
+  return {
+    get,
+    post,
+    batchCalls: () =>
+      post.mock.calls.filter(([url]) => url === '/api/user/batch'),
+  }
+}
+
+async function passIdentityCheck(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'operator-password'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+}
+
+function confirmDialog() {
+  return screen.findByRole('alertdialog', { name: 'Delete 2 users?' })
+}
+
+it('deletes the selection only after the identity check passes', async () => {
+  const { post, batchCalls } = mockDeletionEndpoints()
   const user = userEvent.setup()
   renderSelectedRows(
     [commonUser, secondCommonUser],
@@ -183,15 +247,34 @@ it('deletes every selected user after confirmation', async () => {
   await user.click(
     screen.getByRole('button', { name: 'Delete selected users' })
   )
-  const dialog = await screen.findByRole('alertdialog')
-  expect(dialog).toHaveAccessibleName('Delete 2 users?')
-
+  const dialog = await confirmDialog()
   await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
+  // The confirmation alone authorizes nothing, and the check is bound to the
+  // exact ids the operator selected.
+  expect(batchCalls()).toHaveLength(0)
+  expect(
+    await screen.findByRole('dialog', { name: 'Verify to delete 2 users' })
+  ).toBeInTheDocument()
+  await passIdentityCheck(user)
+  expect(post).toHaveBeenCalledWith(
+    '/api/verify',
+    expect.objectContaining({
+      method: 'password',
+      scope: 'user.delete_batch',
+      context: { user_ids: [commonUser.id, secondCommonUser.id] },
+    }),
+    expect.anything()
+  )
+
   await waitFor(() =>
-    expect(post).toHaveBeenCalledWith('/api/user/batch', {
-      ids: [commonUser.id, secondCommonUser.id],
-    })
+    expect(post).toHaveBeenCalledWith(
+      '/api/user/batch',
+      { ids: [commonUser.id, secondCommonUser.id] },
+      expect.objectContaining({
+        headers: { 'X-Security-Proof': 'batch-delete-proof-1' },
+      })
+    )
   )
   // The deleted rows leave the selection, which empties the bulk toolbar.
   await waitFor(() =>
@@ -199,10 +282,10 @@ it('deletes every selected user after confirmation', async () => {
   )
 })
 
-it('keeps the selection and offers a retry when the server refuses', async () => {
-  const post = vi
-    .spyOn(api, 'post')
-    .mockResolvedValue({ data: { success: false, message: 'refused' } })
+it('deletes nothing when the identity check fails or is cancelled', async () => {
+  const { batchCalls } = mockDeletionEndpoints({
+    verifyResult: { success: false, message: 'Wrong password' },
+  })
   const user = userEvent.setup()
   renderSelectedRows(
     [commonUser, secondCommonUser],
@@ -212,19 +295,62 @@ it('keeps the selection and offers a retry when the server refuses', async () =>
   await user.click(
     screen.getByRole('button', { name: 'Delete selected users' })
   )
-  const dialog = await screen.findByRole('alertdialog')
+  const dialog = await confirmDialog()
   await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await passIdentityCheck(user)
+
+  // A rejected verification keeps the prompt open and never reaches the delete
+  // endpoint, even though the operator had already confirmed the selection.
+  expect(await screen.findByRole('alert')).toHaveTextContent('Wrong password')
+  expect(batchCalls()).toHaveLength(0)
+  await user.click(
+    within(
+      screen.getByRole('dialog', { name: 'Verify to delete 2 users' })
+    ).getByRole('button', { name: 'Cancel' })
+  )
+
+  // Cancelling drops the prompt without deleting, and the confirmation comes
+  // back on the same selection.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Verify to delete 2 users' })
+    ).not.toBeInTheDocument()
+  )
+  expect(batchCalls()).toHaveLength(0)
+  expect(await confirmDialog()).toBeInTheDocument()
+  expect(screen.getByLabelText('2 selected')).toBeInTheDocument()
+})
+
+it('keeps the selection and offers a retry when the server refuses', async () => {
+  const { batchCalls } = mockDeletionEndpoints({
+    deleteResult: { success: false, message: 'refused' },
+  })
+  const user = userEvent.setup()
+  renderSelectedRows(
+    [commonUser, secondCommonUser],
+    [commonUser.id, secondCommonUser.id]
+  )
+
+  await user.click(
+    screen.getByRole('button', { name: 'Delete selected users' })
+  )
+  const dialog = await confirmDialog()
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await passIdentityCheck(user)
 
   // A refusal keeps the dialog open on the same selection so the operator can
-  // simply confirm again; nothing was deleted, so nothing may be dropped.
-  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
-  expect(screen.getByRole('alertdialog')).toHaveAccessibleName(
-    'Delete 2 users?'
+  // simply confirm again; nothing was deleted, so nothing may be dropped. The
+  // proof was already spent, so the second attempt asks for a fresh one.
+  await waitFor(() => expect(batchCalls()).toHaveLength(1))
+  await user.click(
+    within(await confirmDialog()).getByRole('button', { name: 'Delete' })
   )
-  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
-  await waitFor(() => expect(post).toHaveBeenCalledTimes(2))
+  await passIdentityCheck(user)
+  await waitFor(() => expect(batchCalls()).toHaveLength(2))
 
-  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await user.click(
+    within(await confirmDialog()).getByRole('button', { name: 'Cancel' })
+  )
   await waitFor(() =>
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   )

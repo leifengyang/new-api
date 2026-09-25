@@ -62,6 +62,13 @@ func RequireSecurityProof(c *gin.Context, operation service.VerificationOperatio
 			securityProofError(c, "SECURITY_PROOF_CONSUMED", "This verification has already been used. Please verify again.")
 		case errors.Is(err, service.ErrProofContext):
 			securityProofError(c, "SECURITY_PROOF_CONTEXT_MISMATCH", "Verification does not match this action's details. Please verify again.")
+		case errors.Is(err, service.ErrVerificationContextInvalid):
+			// The caller's own action details are malformed, so this is a client
+			// error rather than an internal failure. Same contract as the
+			// channel key middleware's own context check.
+			c.Set("security_error_code", "SECURITY_CONTEXT_INVALID")
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "code": "SECURITY_CONTEXT_INVALID", "message": service.ErrVerificationContextInvalid.Error()})
+			return nil
 		case errors.Is(err, service.ErrVerificationForbidden):
 			securityProofError(c, "SECURITY_ACTION_FORBIDDEN", service.ErrVerificationForbidden.Error())
 		case errors.Is(err, service.ErrAuthTokenInvalid), errors.Is(err, service.ErrLoginSessionInvalid), errors.Is(err, service.ErrLoginSessionRevoked), errors.Is(err, model.ErrUserSessionInactive):

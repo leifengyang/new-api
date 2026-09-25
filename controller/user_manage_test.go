@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -198,15 +199,57 @@ func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
 }
 
-func performDeleteUserBatchRequest(t *testing.T, operatorRole int, body string) *httptest.ResponseRecorder {
+// setupBatchDeleteOperator creates the acting administrator with a live session,
+// which is what the step-up verification validates the proof against.
+func setupBatchDeleteOperator(t *testing.T, db *gorm.DB, role int) (model.User, service.AuthIdentity) {
+	t.Helper()
+	previousSecret := common.SessionSecret
+	common.SessionSecret = "batch-delete-test-secret"
+	t.Cleanup(func() { common.SessionSecret = previousSecret })
+	password, err := common.Password2Hash("operator-password")
+	require.NoError(t, err)
+	operator := model.User{
+		Id: 9999, Username: "root-operator", Password: password, Role: role,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+		AffCode: "batch-operator-aff",
+	}
+	require.NoError(t, db.Create(&operator).Error)
+	require.NoError(t, model.PublishUserAuthCache(operator.Id))
+	bundle, err := service.CreateLoginSession(operator.Id, "password", "127.0.0.1", "batch-delete-test")
+	require.NoError(t, err)
+	identity, err := service.ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	return operator, identity
+}
+
+func issueBatchDeleteProof(t *testing.T, identity service.AuthIdentity, ids []int) string {
+	t.Helper()
+	context, err := common.Marshal(service.UserBatchDeleteContext{UserIDs: ids})
+	require.NoError(t, err)
+	binding, err := service.BindVerificationOperation(service.VerificationOperation{
+		Scope: service.VerificationScopeUserBatchDelete, Context: context,
+	})
+	require.NoError(t, err)
+	proof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, binding)
+	require.NoError(t, err)
+	return proof
+}
+
+func performDeleteUserBatchRequest(t *testing.T, identity service.AuthIdentity, role int, body, proof string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/batch", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Set("id", 9999)
-	c.Set("role", operatorRole)
+	if proof != "" {
+		c.Request.Header.Set("X-Security-Proof", proof)
+	}
+	c.Set("id", identity.UserID)
+	c.Set("role", role)
+	c.Set("session_id", identity.SessionID)
+	c.Set("auth_version", identity.UserAuthVersion)
+	c.Set("session_version", identity.SessionVersion)
 	c.Set("username", "root-operator")
 	c.Set(common.RequestIdKey, "batch-delete-test-request")
 	DeleteUserBatch(c)
@@ -220,9 +263,15 @@ func TestDeleteUserBatchEnforcesRoleAndDeletesAtomically(t *testing.T) {
 		targets       []model.User
 		insertMissing bool
 		duplicateIds  bool
-		wantSuccess   bool
-		wantDeleted   int64
-		wantMessage   string
+		// proof selects a request that must be refused before the model runs:
+		// "missing" sends none, "other-ids" sends one bound to another selection,
+		// "junk" sends an unusable one so the malformed selection is reached.
+		proof       string
+		wantCode    string
+		wantStatus  int
+		wantSuccess bool
+		wantDeleted int64
+		wantMessage string
 	}{
 		{
 			name: "root deletes common users", operatorRole: common.RoleRootUser,
@@ -263,14 +312,30 @@ func TestDeleteUserBatchEnforcesRoleAndDeletesAtomically(t *testing.T) {
 			wantMessage:   i18n.MsgUserNotExists,
 		},
 		{
+			// An empty selection cannot be bound to a proof at all, so it is
+			// rejected as malformed action details before the model is reached.
 			name: "empty selection is refused", operatorRole: common.RoleRootUser,
-			wantMessage: i18n.MsgInvalidParams,
+			proof:      "junk",
+			wantCode:   "SECURITY_CONTEXT_INVALID",
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "duplicate ids are deleted once", operatorRole: common.RoleRootUser,
 			targets:      []model.User{{Username: "batch-duplicate", Role: common.RoleCommonUser}},
 			duplicateIds: true,
 			wantSuccess:  true, wantDeleted: 1,
+		},
+		{
+			name: "the request is refused without a proof", operatorRole: common.RoleRootUser,
+			targets:  []model.User{{Username: "batch-no-proof", Role: common.RoleCommonUser}},
+			proof:    "missing",
+			wantCode: "SECURITY_PROOF_REQUIRED",
+		},
+		{
+			name: "a proof for another selection is refused", operatorRole: common.RoleRootUser,
+			targets:  []model.User{{Username: "batch-other-proof", Role: common.RoleCommonUser}},
+			proof:    "other-ids",
+			wantCode: "SECURITY_PROOF_CONTEXT_MISMATCH",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -294,15 +359,38 @@ func TestDeleteUserBatchEnforcesRoleAndDeletesAtomically(t *testing.T) {
 				ids = append(ids, 404)
 			}
 
+			_, identity := setupBatchDeleteOperator(t, db, tc.operatorRole)
+			// The empty selection cannot be bound to a proof at all, so only the
+			// cases that carry a usable one mint it here.
+			var proof string
+			switch tc.proof {
+			case "missing":
+			case "other-ids":
+				proof = issueBatchDeleteProof(t, identity, []int{999998})
+			case "junk":
+				proof = "not-a-proof"
+			default:
+				proof = issueBatchDeleteProof(t, identity, ids)
+			}
+
 			body, err := common.Marshal(map[string]any{"ids": ids})
 			require.NoError(t, err)
-			recorder := performDeleteUserBatchRequest(t, tc.operatorRole, string(body))
-			assert.Equal(t, http.StatusOK, recorder.Code)
-			require.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
-			if tc.wantSuccess {
-				assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"data":%d`, tc.wantDeleted))
+			recorder := performDeleteUserBatchRequest(t, identity, tc.operatorRole, string(body), proof)
+			if tc.wantCode != "" {
+				status := tc.wantStatus
+				if status == 0 {
+					status = http.StatusForbidden
+				}
+				assert.Equal(t, status, recorder.Code)
+				assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"code":"%s"`, tc.wantCode))
 			} else {
-				assert.Contains(t, recorder.Body.String(), i18n.Translate("en", tc.wantMessage))
+				assert.Equal(t, http.StatusOK, recorder.Code)
+				require.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
+				if tc.wantSuccess {
+					assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"data":%d`, tc.wantDeleted))
+				} else {
+					assert.Contains(t, recorder.Body.String(), i18n.Translate("en", tc.wantMessage))
+				}
 			}
 
 			for _, target := range tc.targets {
@@ -331,7 +419,9 @@ func TestDeleteUserBatchRemovesAuthenticationDataAndAudits(t *testing.T) {
 		LastActiveAt: now, ExpiresAt: now + 3600,
 	}).Error)
 
-	recorder := performDeleteUserBatchRequest(t, common.RoleRootUser, fmt.Sprintf(`{"ids":[%d]}`, user.Id))
+	_, identity := setupBatchDeleteOperator(t, db, common.RoleRootUser)
+	proof := issueBatchDeleteProof(t, identity, []int{user.Id})
+	recorder := performDeleteUserBatchRequest(t, identity, common.RoleRootUser, fmt.Sprintf(`{"ids":[%d]}`, user.Id), proof)
 	assert.Contains(t, recorder.Body.String(), `"success":true`)
 
 	for _, record := range []any{&model.Token{}, &model.UserSession{}} {
@@ -350,6 +440,145 @@ func TestDeleteUserBatchRemovesAuthenticationDataAndAudits(t *testing.T) {
 	assert.Contains(t, string(params), `"count":1`)
 	assert.Contains(t, string(params), `"requested":1`)
 	assert.NotContains(t, string(params), user.Username, "the audit must not leak the deleted account name")
+}
+
+// The proof is what stands in for the operator's password, so it has to be
+// worth exactly one batch of exactly the accounts it was issued for.
+func TestDeleteUserBatchProofIsSingleUseAndScopeBound(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	first := model.User{Username: "batch-proof-first", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "batch-proof-first-aff"}
+	second := model.User{Username: "batch-proof-second", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "batch-proof-second-aff"}
+	require.NoError(t, db.Create(&first).Error)
+	require.NoError(t, db.Create(&second).Error)
+	_, identity := setupBatchDeleteOperator(t, db, common.RoleRootUser)
+
+	// stillPresent is what tells a refused batch from an executed one; the row
+	// is hard deleted, so unscoped lookups see exactly the same thing.
+	stillPresent := func(id int) bool {
+		var found model.User
+		return db.Unscoped().First(&found, id).Error == nil
+	}
+
+	firstBody, err := common.Marshal(map[string]any{"ids": []int{first.Id}})
+	require.NoError(t, err)
+
+	// A proof minted for another sensitive action must not be accepted here.
+	otherBinding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeAccountDelete})
+	require.NoError(t, err)
+	otherProof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, otherBinding)
+	require.NoError(t, err)
+	recorder := performDeleteUserBatchRequest(t, identity, common.RoleRootUser, string(firstBody), otherProof)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"SECURITY_PROOF_SCOPE_MISMATCH"`)
+	assert.True(t, stillPresent(first.Id), "a proof for another scope must delete nothing")
+
+	proof := issueBatchDeleteProof(t, identity, []int{first.Id})
+	recorder = performDeleteUserBatchRequest(t, identity, common.RoleRootUser, string(firstBody), proof)
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	assert.False(t, stillPresent(first.Id), "the authorized batch must remove the row")
+
+	// Replaying the same proof is refused, and it cannot be redirected at
+	// another selection either.
+	recorder = performDeleteUserBatchRequest(t, identity, common.RoleRootUser, string(firstBody), proof)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"SECURITY_PROOF_CONSUMED"`)
+	secondBody, err := common.Marshal(map[string]any{"ids": []int{second.Id}})
+	require.NoError(t, err)
+	recorder = performDeleteUserBatchRequest(t, identity, common.RoleRootUser, string(secondBody), proof)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"SECURITY_PROOF_CONTEXT_MISMATCH"`)
+	assert.True(t, stillPresent(second.Id), "a spent proof must not delete another selection")
+}
+
+func TestDeleteUserBatchVerificationRequirements(t *testing.T) {
+	t.Run("a non-admin cannot verify for the batch delete", func(t *testing.T) {
+		db := setupManageUserTestDB(t)
+		target := model.User{Username: "batch-non-admin-target", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "batch-non-admin-aff"}
+		require.NoError(t, db.Create(&target).Error)
+		_, identity := setupBatchDeleteOperator(t, db, common.RoleCommonUser)
+
+		// The scope is refused before a method is chosen, so a common account
+		// cannot obtain a proof for an admin-only endpoint.
+		_, err := service.GetVerificationRequirements(identity, service.VerificationScopeUserBatchDelete)
+		assert.ErrorIs(t, err, service.ErrVerificationForbidden)
+
+		body, err := common.Marshal(map[string]any{"ids": []int{target.Id}})
+		require.NoError(t, err)
+		proof := issueBatchDeleteProof(t, identity, []int{target.Id})
+		recorder := performDeleteUserBatchRequest(t, identity, common.RoleCommonUser, string(body), proof)
+		assert.Equal(t, http.StatusForbidden, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), `"code":"SECURITY_ACTION_FORBIDDEN"`)
+		var kept model.User
+		require.NoError(t, db.First(&kept, target.Id).Error)
+	})
+
+	t.Run("the account password is the fallback factor", func(t *testing.T) {
+		db := setupManageUserTestDB(t)
+		_, identity := setupBatchDeleteOperator(t, db, common.RoleAdminUser)
+		requirements, err := service.GetVerificationRequirements(identity, service.VerificationScopeUserBatchDelete)
+		require.NoError(t, err)
+		assert.Equal(t, []service.VerificationMethodOption{{Method: service.VerificationMethodPassword, Available: true}}, requirements.Methods)
+	})
+
+	t.Run("an enrolled second factor replaces the password", func(t *testing.T) {
+		db := setupManageUserTestDB(t)
+		operator, identity := setupBatchDeleteOperator(t, db, common.RoleAdminUser)
+		require.NoError(t, db.Create(&model.TwoFA{UserId: operator.Id, Secret: "JBSWY3DPEHPK3PXP", IsEnabled: true}).Error)
+
+		requirements, err := service.GetVerificationRequirements(identity, service.VerificationScopeUserBatchDelete)
+		require.NoError(t, err)
+		assert.Equal(t, []service.VerificationMethodOption{{Method: service.VerificationMethodTwoFA, Available: true}}, requirements.Methods)
+		// Deleting accounts is highly sensitive, so the enrolled factor is
+		// required rather than offered alongside a password that may be weaker.
+		_, err = service.RequireVerificationMethod(identity, service.VerificationScopeUserBatchDelete, service.VerificationMethodPassword)
+		assert.ErrorIs(t, err, service.ErrProofMethod)
+	})
+
+	t.Run("a disabled password login removes the password method", func(t *testing.T) {
+		db := setupManageUserTestDB(t)
+		_, identity := setupBatchDeleteOperator(t, db, common.RoleAdminUser)
+		previous := common.PasswordLoginEnabled
+		common.PasswordLoginEnabled = false
+		t.Cleanup(func() { common.PasswordLoginEnabled = previous })
+
+		requirements, err := service.GetVerificationRequirements(identity, service.VerificationScopeUserBatchDelete)
+		require.NoError(t, err)
+		require.Len(t, requirements.Methods, 1)
+		assert.Equal(t, service.VerificationMethodPassword, requirements.Methods[0].Method)
+		assert.False(t, requirements.Methods[0].Available)
+		assert.Equal(t, "Password authentication is disabled.", requirements.Methods[0].Reason)
+	})
+
+	t.Run("the selection is normalized and bounded", func(t *testing.T) {
+		setupManageUserTestDB(t)
+		bind := func(ids []int) (service.VerificationBinding, error) {
+			context, err := common.Marshal(service.UserBatchDeleteContext{UserIDs: ids})
+			require.NoError(t, err)
+			return service.BindVerificationOperation(service.VerificationOperation{
+				Scope: service.VerificationScopeUserBatchDelete, Context: context,
+			})
+		}
+
+		// The order and any duplicates the client sends must not change what the
+		// proof is bound to, or a verification and its delete request would hash
+		// differently for the same selection.
+		withDuplicates, err := bind([]int{4, 3, 4})
+		require.NoError(t, err)
+		sorted, err := bind([]int{3, 4})
+		require.NoError(t, err)
+		assert.Equal(t, sorted.ContextHash, withDuplicates.ContextHash)
+
+		_, err = bind(nil)
+		assert.ErrorIs(t, err, service.ErrVerificationContextInvalid)
+		_, err = bind([]int{0})
+		assert.ErrorIs(t, err, service.ErrVerificationContextInvalid)
+		overCap := make([]int, 0, model.MaxBatchDeleteUsers+1)
+		for id := range model.MaxBatchDeleteUsers + 1 {
+			overCap = append(overCap, id+1)
+		}
+		_, err = bind(overCap)
+		assert.ErrorIs(t, err, service.ErrVerificationContextInvalid)
+	})
 }
 
 func createQuotaTestOperator(t *testing.T, db *gorm.DB, role int) model.User {
