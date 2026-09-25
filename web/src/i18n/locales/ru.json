@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "Каждое пополнение приглашённого вами пользователя добавляет сюда ребейт.",
     "Your rebates appear here after someone you invited tops up.": "Ребейты появятся здесь, когда приглашённый вами пользователь пополнит баланс.",
     "You earn {{rate}} of every top-up made by the members you invited.": "Вы получаете {{rate}} от каждого пополнения приглашённых вами пользователей.",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "Вы получаете {{rate}} с первого пополнения каждого приглашённого вами пользователя. Внутренние участники получают его с каждого пополнения.",
+"You earn {{rate}} of the first top-up made by each user you invite.": "Вы получаете {{rate}} с первого пополнения каждого приглашённого вами пользователя.",
     "Invite rebates are currently disabled.": "Реферальные ребейты сейчас отключены.",
     "Administrators do not earn invite rebates.": "Администраторы не получают реферальные ребейты.",
     "Rebates": "Количество ребейтов"

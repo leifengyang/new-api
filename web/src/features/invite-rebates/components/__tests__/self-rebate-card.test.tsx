@@ -173,7 +173,7 @@ it('summarises the rebates of an internal member and lists the masked downline',
   })
 })
 
-it('tells an external member they only earn on each invitee first top-up', async () => {
+it('tells an external member only their own rule, never the internal one', async () => {
   renderCard(
     makeSelfData({
       member_level: EXTERNAL,
@@ -184,10 +184,12 @@ it('tells an external member they only earn on each invitee first top-up', async
 
   expect(
     await screen.findByText(
-      'You earn 10% of the first top-up made by each member you invite. Internal members earn it on every top-up.'
+      'You earn 10% of the first top-up made by each user you invite.'
     )
   ).toBeInTheDocument()
   expect(screen.queryByText('Internal Member')).not.toBeInTheDocument()
+  // 外部用户不该知道内部会员每笔充值都返。
+  expect(screen.queryByText(/internal members? earn/i)).toBeNull()
   // 没有明细可看时不显示入口。
   expect(screen.queryByRole('button', { name: 'Details' })).toBeNull()
 })
