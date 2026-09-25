@@ -31,6 +31,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData } from '../../types'
 import { useCommonLogsColumns } from '../columns/common-logs-columns'
+import { UsageLogsProvider } from '../usage-logs-provider'
 import { expandTechnicalDetails } from './dialog-helpers'
 
 vi.mock('@lobehub/icons', () => ({}))
@@ -79,7 +80,7 @@ function makeLog(
   }
 }
 
-function LogRow(props: { log: UsageLog; isAdmin: boolean }) {
+function LogRow(props: { log: UsageLog; isAdmin: boolean; column?: string }) {
   const table = useReactTable({
     data: [props.log],
     columns: useCommonLogsColumns(props.isAdmin, false),
@@ -88,7 +89,7 @@ function LogRow(props: { log: UsageLog; isAdmin: boolean }) {
   const cell = table
     .getRowModel()
     .rows[0].getAllCells()
-    .find((item) => item.column.id === 'content')
+    .find((item) => item.column.id === (props.column ?? 'content'))
   if (!cell) throw new Error('The log must have a content column')
   return flexRender(cell.column.columnDef.cell, cell.getContext())
 }
@@ -137,6 +138,22 @@ async function openDialog(log: UsageLog, isAdmin = true) {
   fireEvent.click(renderRow(log, isAdmin))
   return within(await screen.findByRole('dialog'))
 }
+
+test.each([
+  { other: { user_group_ratio: 0.75, group_ratio: 2 }, expected: '0.75x' },
+  { other: { user_group_ratio: -1, group_ratio: 1.25 }, expected: '1.25x' },
+])(
+  'the token column retains the recorded group multiplier $expected',
+  ({ other, expected }) => {
+    render(
+      <UsageLogsProvider>
+        <LogRow log={makeLog(other)} isAdmin={false} column='token_name' />
+      </UsageLogsProvider>,
+      { wrapper }
+    )
+    expect(screen.getByText(expected)).toBeVisible()
+  }
+)
 
 test('the details cell is a button that opens the dialog', async () => {
   const dialog = await openDialog(makeLog({ model_price: 0.25 }, 125000))
