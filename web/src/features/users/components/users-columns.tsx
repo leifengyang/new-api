@@ -40,12 +40,13 @@ import {
   USER_STATUS,
   USER_STATUSES,
   USER_ROLES,
-  USER_MEMBER_LEVELS,
+  USER_MEMBER_LEVEL,
   getUserMemberLevel,
   isUserDeleted,
 } from '../constants'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
+import { MemberLevelBadge } from './member-level-badge'
 import { UserQuotaCell } from './user-quota-cell'
 
 export function useUsersColumns(): ColumnDef<User>[] {
@@ -242,11 +243,15 @@ export function useUsersColumns(): ColumnDef<User>[] {
         header: t('Member Level'),
         cell: ({ row }) => {
           const level = getUserMemberLevel(row.original)
-          const levelConfig =
-            USER_MEMBER_LEVELS[level as keyof typeof USER_MEMBER_LEVELS]
 
-          if (!levelConfig) {
-            return null
+          // 说明文案只讲内部学员能拿返现，对外部用户显示是误导；外部（以及后端
+          // 还没定义的新等级）只渲染徽章本身。
+          if (level !== USER_MEMBER_LEVEL.INTERNAL) {
+            return (
+              <BadgeCell>
+                <MemberLevelBadge level={level} />
+              </BadgeCell>
+            )
           }
 
           return (
@@ -254,12 +259,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
               <TooltipTrigger
                 render={<BadgeCell className='-ml-1.5 cursor-help' />}
               >
-                <StatusBadge
-                  label={t(levelConfig.labelKey)}
-                  variant={levelConfig.variant}
-                  copyable={false}
-                  className='font-normal'
-                />
+                <MemberLevelBadge level={level} />
               </TooltipTrigger>
               <TooltipContent>
                 <p className='text-xs'>

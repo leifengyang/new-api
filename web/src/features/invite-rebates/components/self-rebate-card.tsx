@@ -21,17 +21,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
-import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatInviteRebatePercent } from '@/features/system-settings/general/invite-rebate-rate'
-import {
-  USER_MEMBER_LEVEL,
-  USER_MEMBER_LEVELS,
-} from '@/features/users/constants'
+import { MemberLevelBadge } from '@/features/users/components/member-level-badge'
+import { USER_MEMBER_LEVEL } from '@/features/users/constants'
 import { formatQuota } from '@/lib/format'
 
 import { useSelfInviteRebates } from '../hooks/use-self-invite-rebates'
@@ -108,15 +105,9 @@ export function SelfRebateCard({
                 {t('Invite Rebates')}
               </h3>
               {isInternal && (
-                <StatusBadge
-                  label={t(
-                    USER_MEMBER_LEVELS[USER_MEMBER_LEVEL.INTERNAL].labelKey
-                  )}
-                  variant={
-                    USER_MEMBER_LEVELS[USER_MEMBER_LEVEL.INTERNAL].variant
-                  }
-                  copyable={false}
-                  className='shrink-0 font-normal'
+                <MemberLevelBadge
+                  level={USER_MEMBER_LEVEL.INTERNAL}
+                  className='shrink-0'
                 />
               )}
             </div>
