@@ -164,75 +164,82 @@ describe('Image captcha', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled()
   })
 
-  it.each(['login', 'register'] as const)(
-    'sends %s captcha in JSON and replaces it after rejection',
-    async (purpose) => {
-      const { post } = setupNetwork()
-      const user = userEvent.setup()
-      renderAuth(purpose === 'login' ? <UserAuthForm /> : <SignUpForm />)
-      const input = await screen.findByLabelText('Image captcha code')
-      await waitFor(() => expect(input).toBeEnabled())
-      await user.type(
-        screen.getByPlaceholderText(
-          purpose === 'login'
-            ? 'Enter your username or email'
-            : 'Enter your username'
-        ),
-        'captcha-user'
+  it('sends the login captcha in JSON and replaces it after rejection', async () => {
+    const { post } = setupNetwork()
+    const user = userEvent.setup()
+    renderAuth(<UserAuthForm />)
+    const input = await screen.findByLabelText('Image captcha code')
+    await waitFor(() => expect(input).toBeEnabled())
+    await user.type(
+      screen.getByPlaceholderText('Enter your username or email'),
+      'captcha-user'
+    )
+    await user.type(
+      screen.getByLabelText('Password', { exact: true }),
+      'Example-password-2026'
+    )
+    const submit = screen.getByRole('button', { name: 'Sign in' })
+    expect(submit).toBeDisabled()
+    await user.type(input, '123456')
+    await user.click(submit)
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        expect.stringContaining('/api/user/login'),
+        expect.objectContaining({
+          captcha_id: 'challenge-1',
+          captcha_code: '123456',
+        }),
+        expect.objectContaining({
+          skipAuthRefresh: true,
+        })
       )
-      await user.type(
-        screen.getByLabelText('Password', { exact: true }),
-        'Example-password-2026'
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Image captcha code')).toHaveValue('')
+    )
+    expect(submit).toBeDisabled()
+    await waitFor(() =>
+      expect(screen.getByLabelText('Image captcha code')).toBeEnabled()
+    )
+    await user.type(screen.getByLabelText('Image captcha code'), '654321')
+    await user.click(submit)
+    await waitFor(() =>
+      expect(post).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          captcha_id: 'challenge-2',
+          captcha_code: '654321',
+        }),
+        expect.any(Object)
       )
-      if (purpose === 'register') {
-        await user.type(
-          screen.getByPlaceholderText('Confirm password'),
-          'Example-password-2026'
-        )
-      }
-      const submit = screen.getByRole('button', {
-        name: purpose === 'login' ? 'Sign in' : 'Create account',
-      })
-      // Submit stays clickable so a blocked attempt can name what is missing.
-      expect(submit).toBeEnabled()
-      await user.click(submit)
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Enter the 6-digit code from the image'
-      )
-      expect(post).not.toHaveBeenCalled()
-      await user.type(input, '123456')
-      await user.click(submit)
-      await waitFor(() =>
-        expect(post).toHaveBeenCalledWith(
-          expect.stringContaining(`/api/user/${purpose}`),
-          expect.objectContaining({
-            captcha_id: 'challenge-1',
-            captcha_code: '123456',
-          }),
-          expect.objectContaining({
-            skipAuthRefresh: true,
-          })
-        )
-      )
-      await waitFor(() =>
-        expect(screen.getByLabelText('Image captcha code')).toHaveValue('')
-      )
-      expect(submit).toBeEnabled()
-      await waitFor(() =>
-        expect(screen.getByLabelText('Image captcha code')).toBeEnabled()
-      )
-      await user.type(screen.getByLabelText('Image captcha code'), '654321')
-      await user.click(submit)
-      await waitFor(() =>
-        expect(post).toHaveBeenLastCalledWith(
-          expect.any(String),
-          expect.objectContaining({
-            captcha_id: 'challenge-2',
-            captcha_code: '654321',
-          }),
-          expect.any(Object)
-        )
-      )
-    }
-  )
+    )
+  })
+
+  it('registers without requesting or sending an image captcha', async () => {
+    const { get, post } = setupNetwork()
+    const user = userEvent.setup()
+    renderAuth(<SignUpForm />)
+    await user.type(
+      await screen.findByPlaceholderText('Enter your username'),
+      'captcha-user'
+    )
+    await user.type(
+      screen.getByLabelText('Password', { exact: true }),
+      'Example-password-2026'
+    )
+    await user.type(
+      screen.getByPlaceholderText('Confirm password'),
+      'Example-password-2026'
+    )
+    expect(screen.queryByLabelText('Image captcha code')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+    await waitFor(() => expect(post).toHaveBeenCalled())
+    const [url, body] = post.mock.calls[0]
+    expect(url).toContain('/api/user/register')
+    expect(body).not.toHaveProperty('captcha_id')
+    expect(body).not.toHaveProperty('captcha_code')
+    expect(
+      get.mock.calls.filter(([requestUrl]) => requestUrl === '/api/captcha')
+    ).toHaveLength(0)
+  })
 })
