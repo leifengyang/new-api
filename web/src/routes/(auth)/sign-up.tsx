@@ -19,16 +19,23 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { SignUp } from '@/features/auth/sign-up'
+import { statusQueryOptions } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/(auth)/sign-up')({
   component: SignUp,
-  beforeLoad: async () => {
+  beforeLoad: async ({ context }) => {
     const { auth } = useAuthStore.getState()
 
     // 如果已经有用户信息，说明已登录，注册页对其无意义，跳转到 dashboard
     if (auth.user) {
       throw redirect({ to: '/dashboard' })
     }
+
+    // 仅邀请注册的准入要看最新开关：本地快照可能是功能上线前的旧值，拿旧值渲染会
+    // 先闪出注册表单。读取失败时保持本地快照的判断，服务端仍会独立校验邀请码。
+    await context.queryClient
+      .fetchQuery({ ...statusQueryOptions, meta: { errorToast: false } })
+      .catch(() => null)
   },
 })

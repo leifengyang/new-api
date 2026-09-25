@@ -229,6 +229,13 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	// 邀请制准入放在读取其余字段之前：拿不到有效邀请码的人不该有机会试探用户名是否
+	// 存在，也不该白白触发邮箱验证码校验。
+	inviterId, err := model.ResolveRegistrationInviter(user.AffCode)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserInvitationRequired)
+		return
+	}
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeEmail(user.Email)
 	if user.Username == "" {
@@ -271,8 +278,7 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	// inviterId 已在函数开头解析并做过邀请制准入，这里直接沿用。
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,

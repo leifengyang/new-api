@@ -69,6 +69,7 @@ var WeChatAuthEnabled = false
 var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
+var InviteOnlyRegistrationEnabled = false // 仅邀请注册：自助注册必须携带有效邀请码，由 RegisterEnabled 总开关兜底
 
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制

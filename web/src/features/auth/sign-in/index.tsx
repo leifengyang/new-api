@@ -23,12 +23,15 @@ import { useStatus } from '@/hooks/use-status'
 
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
+import { isRegistrationOpen } from '../lib/invitation'
 import { UserAuthForm } from './components/user-auth-form'
 
 export function SignIn() {
   const { t } = useTranslation()
   const { redirect } = useSearch({ from: '/(auth)/sign-in' })
   const { status } = useStatus()
+  // 仅邀请注册开启时，邀请链接本身才是入口：没有邀请凭证的访问不引导到注册页。
+  const showSignUpLink = isRegistrationOpen(status)
 
   return (
     <AuthLayout>
@@ -38,7 +41,8 @@ export function SignIn() {
             {t('Sign in')}
           </h2>
           {!status?.self_use_mode_enabled &&
-            status?.register_enabled !== false && (
+            status?.register_enabled !== false &&
+            showSignUpLink && (
               <p className='text-muted-foreground text-left text-sm sm:text-base'>
                 {t("Don't have an account?")}{' '}
                 <Link
