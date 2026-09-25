@@ -238,8 +238,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
         )}
 
-        {/* Only internal members earn an invite rebate, so this is how an
-            existing student is promoted into the programme (or taken out). */}
+        {/* Internal members earn a rebate on every top-up of the users they
+            invited, external users only on an invitee's first one, so this is
+            how a user is moved between the two. */}
         {isInternalMember ? (
           <DropdownMenuItem
             onSelect={(event) => {
@@ -364,7 +365,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 'They earn an invite rebate from the top-ups of the users they invite directly.'
               )
             : t(
-                'They stop earning an invite rebate. Rebates already credited are not reversed.'
+                'They keep earning an invite rebate, but only on the first top-up made by each user they invite. Rebates already credited are not reversed.'
               )
         }
         confirmText={memberLevelPending ? t('Saving...') : t('Confirm')}

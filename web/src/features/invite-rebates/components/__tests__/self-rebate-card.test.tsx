@@ -139,6 +139,12 @@ it('summarises the rebates of an internal member and lists the masked downline',
   const user = userEvent.setup()
 
   expect(await screen.findByText('Internal Member')).toBeInTheDocument()
+  // 内部学员的每笔充值都返，与外部学员的首充口径区分开。
+  expect(
+    screen.getByText(
+      'You earn 10% of every top-up made by the members you invited.'
+    )
+  ).toBeInTheDocument()
   // 累计返现、返现笔数、邀请人数。
   expect(screen.getByText('Total Earned')).toBeInTheDocument()
   expect(screen.getByText('Rebates').nextElementSibling).toHaveTextContent('1')
@@ -167,7 +173,26 @@ it('summarises the rebates of an internal member and lists the masked downline',
   })
 })
 
-it('tells an external member why no rebate is credited', async () => {
+it('tells an external member they only earn on each invitee first top-up', async () => {
+  renderCard(
+    makeSelfData({
+      member_level: EXTERNAL,
+      summary: { total_quota: 0, reversed_quota: 0, rebate_count: 0 },
+      page: { items: [], total: 0, page: 1, page_size: 20 },
+    })
+  )
+
+  expect(
+    await screen.findByText(
+      'You earn 10% of the first top-up made by each member you invite. Internal members earn it on every top-up.'
+    )
+  ).toBeInTheDocument()
+  expect(screen.queryByText('Internal Member')).not.toBeInTheDocument()
+  // 没有明细可看时不显示入口。
+  expect(screen.queryByRole('button', { name: 'Details' })).toBeNull()
+})
+
+it('tells an administrator no top-up of theirs earns a rebate', async () => {
   renderCard(
     makeSelfData({
       member_level: EXTERNAL,
@@ -178,20 +203,14 @@ it('tells an external member why no rebate is credited', async () => {
   )
 
   expect(
-    await screen.findByText(
-      'Only internal members earn rebates. Ask an administrator to upgrade your account.'
-    )
+    await screen.findByText('Administrators do not earn invite rebates.')
   ).toBeInTheDocument()
-  expect(screen.queryByText('Internal Member')).not.toBeInTheDocument()
-  // 没有明细可看时不显示入口。
-  expect(screen.queryByRole('button', { name: 'Details' })).toBeNull()
 })
 
-it('reports a switched-off programme instead of a zero rebate rate', async () => {
+it('reports a switched-off programme instead of the rate of an eligible member', async () => {
   renderCard(
     makeSelfData({
       rebate_enabled: false,
-      rebate_available: false,
       summary: { total_quota: 0, reversed_quota: 0, rebate_count: 0 },
       page: { items: [], total: 0, page: 1, page_size: 20 },
     })

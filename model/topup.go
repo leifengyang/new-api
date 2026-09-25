@@ -123,8 +123,12 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string,
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
 
+	// 首充打点在余额更新之后：只有这一笔真的入账了，它才算这个用户的首充。
+	// 先打点的话，一笔因为钱包上限而失败的充值会把首充名额白白占掉。
+	firstTopUp := stampFirstTopUpTx(tx, userId)
+
 	// 充值本身已经落库，返现只是它的附带结果，因此这里绝不返回错误。
-	return creditInviteRebateTx(tx, userId, creditedQuota, source, sourceRef), nil
+	return creditInviteRebateTx(tx, userId, creditedQuota, source, sourceRef, firstTopUp), nil
 }
 
 func (topUp *TopUp) Update() error {

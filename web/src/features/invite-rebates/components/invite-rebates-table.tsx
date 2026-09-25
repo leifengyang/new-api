@@ -134,7 +134,7 @@ export function InviteRebatesTable() {
       isFetching={isFetching}
       emptyTitle={t('No Invite Rebates Found')}
       emptyDescription={t(
-        'No invite rebates yet. Rebates appear here once an internal member they invited tops up.'
+        'No invite rebates yet. Rebates appear here once an invited user tops up.'
       )}
       skeletonKeyPrefix='invite-rebates-skeleton'
       applyHeaderSize

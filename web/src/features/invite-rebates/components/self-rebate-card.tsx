@@ -78,7 +78,7 @@ export function SelfRebateCard({
   const rate = data?.rate_basis_points ?? 0
   const rebateCount = summary?.rebate_count ?? 0
 
-  // 总开关、内部身份、以及「有身份也没返现」要分开讲，否则学员只看到一串 0
+  // 总开关、管理员不参与、内部与外部两种返现口径要分开讲，否则用户只看到一串 0
   // 却不知道卡在哪一步。
   let note = t(
     'You earn {{rate}} of every top-up made by the members you invited.',
@@ -87,8 +87,11 @@ export function SelfRebateCard({
   if (!data?.rebate_enabled) {
     note = t('Invite rebates are currently disabled.')
   } else if (!canEarn) {
+    note = t('Administrators do not earn invite rebates.')
+  } else if (!isInternal) {
     note = t(
-      'Only internal members earn rebates. Ask an administrator to upgrade your account.'
+      'You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.',
+      { rate: formatInviteRebatePercent(rate) }
     )
   }
 

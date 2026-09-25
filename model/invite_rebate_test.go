@@ -83,11 +83,19 @@ func createNamedInviteRebateUser(t *testing.T, db *gorm.DB, id int, username str
 	return user
 }
 
+// creditRebateInTx 模拟被邀请人的首次充值带来的返现尝试。
 func creditRebateInTx(t *testing.T, inviteeId int, baseQuota int, source string, sourceRef string) *inviteRebateCredit {
+	t.Helper()
+	return creditRebateInTxFor(t, inviteeId, baseQuota, source, sourceRef, true)
+}
+
+// creditRebateInTxFor 显式指定这次充值是不是被邀请人的首充。外部邀请人只在这上面
+// 拿得到返现，内部学员不看这个标记。
+func creditRebateInTxFor(t *testing.T, inviteeId int, baseQuota int, source string, sourceRef string, firstTopUp bool) *inviteRebateCredit {
 	t.Helper()
 	var credit *inviteRebateCredit
 	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
-		credit = creditInviteRebateTx(tx, inviteeId, baseQuota, source, sourceRef)
+		credit = creditInviteRebateTx(tx, inviteeId, baseQuota, source, sourceRef, firstTopUp)
 		return nil
 	}))
 	return credit
@@ -190,7 +198,6 @@ func TestCreditInviteRebateSkipsIneligibleInviters(t *testing.T) {
 		inviterRole  int
 		inviterLevel int
 	}{
-		{name: "外部用户不拿返现", inviterRole: common.RoleCommonUser, inviterLevel: MemberLevelNormal},
 		{name: "管理员不拿返现", inviterRole: common.RoleAdminUser, inviterLevel: MemberLevelInternal},
 		{name: "根用户不拿返现", inviterRole: common.RoleRootUser, inviterLevel: MemberLevelInternal},
 	}
@@ -202,6 +209,7 @@ func TestCreditInviteRebateSkipsIneligibleInviters(t *testing.T) {
 			createInviteRebateUser(t, db, 1, tc.inviterRole, tc.inviterLevel, 0)
 			createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
 
+			// 首充也拿不到：这两种身份与下线充了多少无关，永远不参与返现。
 			credit := creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-1")
 			assert.Nil(t, credit)
 			requireQuota(t, db, 1, 0)
@@ -211,6 +219,84 @@ func TestCreditInviteRebateSkipsIneligibleInviters(t *testing.T) {
 			assert.Zero(t, count)
 		})
 	}
+}
+
+// 外部邀请人只在下线的首充上拿一次返现，之后的充值不再发钱、也不留流水。
+func TestCreditInviteRebatePaysExternalInviterOnFirstTopUpOnly(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+
+	first := creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-1")
+	require.NotNil(t, first)
+	assert.Equal(t, 10000, first.Quota)
+	requireQuota(t, db, 1, 10000)
+
+	// 换来源、换单号都不行：口径是「下线的首充」，不是「每个来源各一次」。
+	assert.Nil(t, creditRebateInTxFor(t, 2, 200000, InviteRebateSourceEpay, "trade-2", false))
+	assert.Nil(t, creditRebateInTxFor(t, 2, 200000, InviteRebateSourceStripe, "trade-3", false))
+	requireQuota(t, db, 1, 10000)
+
+	var count int64
+	require.NoError(t, db.Model(&InviteRebate{}).Count(&count).Error)
+	assert.EqualValues(t, 1, count)
+}
+
+// 内部学员不受首充标记影响：下线的第二笔充值照返。
+func TestCreditInviteRebatePaysInternalInviterOnEveryTopUp(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+
+	require.NotNil(t, creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-1"))
+	require.NotNil(t, creditRebateInTxFor(t, 2, 200000, InviteRebateSourceEpay, "trade-2", false))
+	requireQuota(t, db, 1, 30000)
+}
+
+// 首充标记由充值漏斗自己维护：它只在充值真的入账之后才落，且外部邀请人的返现
+// 在真实充值路径上只发一次。
+func TestCreditTopUpQuotaStampsFirstTopUpOnce(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+
+	creditTopUp := func(sourceRef string) (*inviteRebateCredit, error) {
+		var credit *inviteRebateCredit
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			var err error
+			credit, err = creditTopUpQuota(tx, 2, 100000, InviteRebateSourceEpay, sourceRef, nil)
+			return err
+		})
+		return credit, err
+	}
+	readStamp := func() int64 {
+		var user User
+		require.NoError(t, db.Select("first_topup_at").First(&user, 2).Error)
+		return user.FirstTopUpAt
+	}
+
+	// 钱包触顶的那次充值没有入账，因此不能占掉首充名额。
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 2).Update("quota", common.MaxWalletQuota).Error)
+	_, err := creditTopUp("trade-failed")
+	require.ErrorIs(t, err, ErrTopUpQuotaLimitExceeded)
+	assert.Zero(t, readStamp(), "没入账的充值不能占掉首充名额")
+
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 2).Update("quota", 0).Error)
+	first, err := creditTopUp("trade-1")
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.NotZero(t, readStamp(), "首充成功后必须留下时间戳")
+
+	// 后续充值既不发返现，也不许改写已经记下的首充时间。
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 2).Update("first_topup_at", 111).Error)
+	second, err := creditTopUp("trade-2")
+	require.NoError(t, err)
+	assert.Nil(t, second)
+	assert.EqualValues(t, 111, readStamp())
+	requireQuota(t, db, 1, 10000)
 }
 
 func TestCreditInviteRebateSkipsWhenDisabledOrRateZero(t *testing.T) {
@@ -797,6 +883,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 			t.Run("member_level_column_and_indexes", func(t *testing.T) {
 				assert.True(t, db.Migrator().HasTable(&InviteRebate{}))
 				assert.True(t, db.Migrator().HasColumn(&User{}, "member_level"))
+				assert.True(t, db.Migrator().HasColumn(&User{}, "first_topup_at"))
 				assert.True(t, db.Migrator().HasIndex(&InviteRebate{}, "idx_invite_rebate_source"))
 
 				// 重启不能再产生 schema 变更。member_level 用 int + default:0 而不是
@@ -826,7 +913,8 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 							Update("quota", gorm.Expr("quota + ?", 1000)).Error; err != nil {
 							return err
 						}
-						credit = creditInviteRebateTx(tx, 2, 100000, InviteRebateSourceEpay, "trade-dup")
+						// 邀请人是内部学员，与首充标记无关。
+						credit = creditInviteRebateTx(tx, 2, 100000, InviteRebateSourceEpay, "trade-dup", false)
 						return nil
 					}), "第 %d 次充值所在的事务必须能提交", attempt+1)
 					if attempt == 0 {
@@ -841,6 +929,44 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				requireQuota(t, db, 1, 10000)
 				var count int64
 				require.NoError(t, db.Model(&InviteRebate{}).Count(&count).Error)
+				assert.EqualValues(t, 1, count)
+			})
+
+			// 外部邀请人只在下线首充上拿返现，判定完全依赖首充打点的 CAS 结果
+			// （first_topup_at = 0 → 时间戳）。这是 RowsAffected 的语义差异：MySQL
+			// 返回被改变的行数，PostgreSQL 返回被匹配的行数，三库必须给出同一个答案。
+			t.Run("first_top_up_stamp_is_cas", func(t *testing.T) {
+				createInviteRebateUser(t, db, 61, common.RoleCommonUser, MemberLevelNormal, 0)
+				createInviteRebateUser(t, db, 62, common.RoleCommonUser, MemberLevelNormal, 61)
+
+				topUp := func(sourceRef string) *inviteRebateCredit {
+					t.Helper()
+					var credit *inviteRebateCredit
+					require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+						var err error
+						credit, err = creditTopUpQuota(tx, 62, 100000, InviteRebateSourceEpay, sourceRef, nil)
+						return err
+					}))
+					return credit
+				}
+				readStamp := func() int64 {
+					var user User
+					require.NoError(t, db.Select("first_topup_at").First(&user, 62).Error)
+					return user.FirstTopUpAt
+				}
+
+				require.NotNil(t, topUp("trade-first"))
+				firstStamp := readStamp()
+				assert.NotZero(t, firstStamp, "首充成功后必须留下时间戳")
+
+				// 第二笔：CAS 匹配不到行，外部邀请人拿不到第二份返现，时间戳也不许被改写。
+				assert.Nil(t, topUp("trade-second"))
+				assert.Equal(t, firstStamp, readStamp())
+
+				requireQuota(t, db, 61, 10000)
+				var count int64
+				require.NoError(t, db.Model(&InviteRebate{}).
+					Where("invitee_id = ?", 62).Count(&count).Error)
 				assert.EqualValues(t, 1, count)
 			})
 
