@@ -150,7 +150,7 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
                 'They earn an invite rebate from the top-ups of the users they invite directly.'
               )
             : t(
-                'They stop earning an invite rebate. Rebates already credited are not reversed.'
+                'They keep earning an invite rebate, but only on the first top-up made by each user they invite. Rebates already credited are not reversed.'
               )
         }
         confirmText={levelUpdate.isPending ? t('Saving...') : t('Confirm')}

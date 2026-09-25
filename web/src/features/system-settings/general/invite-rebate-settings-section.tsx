@@ -120,7 +120,7 @@ export function InviteRebateSettingsSection(
       <Alert>
         <AlertDescription>
           {t(
-            'The registration-time inviter and invitee rewards were replaced by this rebate. Only internal members earn it, and only from the top-ups of the users they invited directly.'
+            'The registration-time inviter and invitee rewards were replaced by this rebate. Internal members earn it from every top-up of the users they invited directly; external users earn it once, from the first top-up of each user they invite.'
           )}
         </AlertDescription>
       </Alert>
@@ -175,7 +175,7 @@ export function InviteRebateSettingsSection(
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Share of each top-up credited to the inviter. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.',
+                      'Share of a top-up credited to the inviter: every top-up for internal members, only the first one for external users. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.',
                       {
                         rate: formatInviteRebatePercent(
                           percentToBasisPoints(ratePercent)

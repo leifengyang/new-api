@@ -118,7 +118,8 @@ type User struct {
 	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
 	InviteRebateQuota    int                        `json:"invite_rebate_quota" gorm:"-:all"`                               // 累计邀请返现，仅用户列表按页填充
 	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	MemberLevel          int                        `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
+	MemberLevel          int                        `json:"member_level" gorm:"type:int;default:0;column:member_level"`        // 0=普通(外部) 1=内部学员
+	FirstTopUpAt         int64                      `json:"first_topup_at" gorm:"type:bigint;default:0;column:first_topup_at"` // 首次充值成功的时间戳，0 表示尚未充值
 	DeletedAt            gorm.DeletedAt             `gorm:"index"`
 	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting              string                     `json:"setting" gorm:"type:text;column:setting"`

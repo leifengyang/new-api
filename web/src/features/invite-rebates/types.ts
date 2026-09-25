@@ -105,7 +105,11 @@ export interface SelfInviteRebatesData {
   /** Whether the administrator has the rebate programme switched on. */
   rebate_enabled: boolean
   member_level: number
-  /** Internal members and only internal members earn a rebate. */
+  /**
+   * Whether this member takes part in the programme at all. Only
+   * administrators are excluded; an external user still earns a rebate, just
+   * only on each invitee's first top-up.
+   */
   rebate_available: boolean
 }
 

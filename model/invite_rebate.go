@@ -33,11 +33,16 @@ const (
 // inviteRebateSavePoint 圈住一次返现尝试。理由见 creditInviteRebateTx。
 const inviteRebateSavePoint = "invite_rebate_attempt"
 
-// discardInviteRebateAttempt 放弃本次返现，并把外层充值事务救回可提交状态。
+// firstTopUpSavePoint 圈住首充打点这一次写入。理由与返现相同：PostgreSQL 上一条
+// 失败语句会把整个事务置为 aborted，此后连 COMMIT 都会变成 ROLLBACK。首充标记
+// 只是返现规则的依据，绝不能把付款人的充值一起带走。
+const firstTopUpSavePoint = "first_topup_stamp"
+
+// rollbackToSavepoint 放弃保存点内的写入，并把外层充值事务救回可提交状态。
 // 只能在保存点已经开好之后调用。
-func discardInviteRebateAttempt(tx *gorm.DB) {
-	if err := tx.RollbackTo(inviteRebateSavePoint).Error; err != nil {
-		common.SysError(fmt.Sprintf("invite rebate: failed to roll back to savepoint: %s", err.Error()))
+func rollbackToSavepoint(tx *gorm.DB, name string) {
+	if err := tx.RollbackTo(name).Error; err != nil {
+		common.SysError(fmt.Sprintf("invite rebate: failed to roll back to savepoint %s: %s", name, err.Error()))
 	}
 }
 
@@ -93,7 +98,36 @@ type inviteRebateCredit struct {
 	Quota           int
 }
 
+// stampFirstTopUpTx 判定本次充值是不是该用户的第一笔成功充值，并把首充时间记到
+// user 上。返回值就是 creditInviteRebateTx 里外部邀请人拿不拿得到返现的依据。
+//
+// 用 CAS（first_topup_at = 0 → 当前时间）而不是「先读后写」：并发回调下只有一个
+// 事务能把它从 0 翻过去，外部邀请人的首充返现因此不会发两次。打点在充值入账之后、
+// 同一个事务里，事务回滚会连同标记一起撤销，所以被回滚的充值不算首充。
+//
+// 打点失败只意味着外部邀请人拿不到这笔首充返现，因此这里不返回错误；但它仍然
+// 自带保存点——失败的语句不能把付款人的充值事务一起拖下水。
+func stampFirstTopUpTx(tx *gorm.DB, userId int) bool {
+	if err := tx.SavePoint(firstTopUpSavePoint).Error; err != nil {
+		common.SysError(fmt.Sprintf("invite rebate: failed to open savepoint for first top-up of user %d: %s", userId, err.Error()))
+		return false
+	}
+	result := tx.Model(&User{}).
+		Where("id = ? AND first_topup_at = 0", userId).
+		Update("first_topup_at", common.GetTimestamp())
+	if result.Error != nil {
+		common.SysError(fmt.Sprintf("invite rebate: failed to stamp first top-up of user %d: %s", userId, result.Error.Error()))
+		rollbackToSavepoint(tx, firstTopUpSavePoint)
+		return false
+	}
+	return result.RowsAffected == 1
+}
+
 // creditInviteRebateTx 在充值事务内给邀请人发放返现。
+//
+// firstTopUp 是本次充值是否为被邀请人的首充，由 stampFirstTopUpTx 在同一个事务里
+// 判定。内部学员按每笔充值返现；外部用户只在下线的首充上拿一次，那是拉新的一次性
+// 奖励，不是可持续的分润。
 //
 // 它刻意不返回错误：返现是充值的附带结果，任何失败（邀请人不存在、钱包触顶、
 // 流水写入失败）都只能影响返现本身，绝不能让付款人的充值失败。无法入账的
@@ -105,7 +139,7 @@ type inviteRebateCredit struct {
 // 话，付款人的充值会被这笔返现一起回滚（钱收了、额度没到）。SQLite / MySQL 的
 // 失败语句不会污染事务，保存点在那里只是多一次往返；三个库走同一条路径，行为
 // 不随方言分叉。
-func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string) *inviteRebateCredit {
+func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string, firstTopUp bool) *inviteRebateCredit {
 	setting := operation_setting.GetInviteRebateSetting()
 	if !setting.Enabled || setting.RateBasisPoints <= 0 || baseQuota <= 0 || sourceRef == "" {
 		return nil
@@ -125,9 +159,14 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 		common.SysError(fmt.Sprintf("invite rebate: inviter %d of user %d not found: %s", invitee.InviterId, inviteeId, err.Error()))
 		return nil
 	}
-	// 只有内部学员能拿返现。管理员不参与：管理员名下的用户充值属于自己的
-	// 业务收入，再返到管理账号只是同一个人内部的账目搬运。
-	if inviter.MemberLevel != MemberLevelInternal || inviter.Role >= common.RoleAdminUser {
+	// 管理员不参与：管理员名下的用户充值属于自己的业务收入，再返到管理账号
+	// 只是同一个人内部的账目搬运。
+	if inviter.Role >= common.RoleAdminUser {
+		return nil
+	}
+	// 内部学员每笔充值都能返；外部用户只在下线的首充上返一次。判定放在身份
+	// 判定之后，是为了让内部学员的每笔充值都不必经过首充这一关。
+	if inviter.MemberLevel != MemberLevelInternal && !firstTopUp {
 		return nil
 	}
 
@@ -173,14 +212,14 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	// 插入失败即代表这笔来源已经发过（或返现侧本身出问题），直接放弃。
 	if err := tx.Create(&record).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: failed to record rebate for %s/%s: %s", source, sourceRef, err.Error()))
-		discardInviteRebateAttempt(tx)
+		rollbackToSavepoint(tx, inviteRebateSavePoint)
 		return nil
 	}
 
 	if err := creditInviterWalletTx(tx, inviter.Id, rebateQuota); err != nil {
 		if !errors.Is(err, ErrInviteRebateWalletLimit) {
 			common.SysError(fmt.Sprintf("invite rebate: failed to credit inviter %d: %s", inviter.Id, err.Error()))
-			discardInviteRebateAttempt(tx)
+			rollbackToSavepoint(tx, inviteRebateSavePoint)
 			return nil
 		}
 		// 钱包触顶时改写成 skipped 留档，基数与比例保留，管理员能看到本该返多少。
@@ -189,7 +228,7 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 		record.RebateQuota = 0
 		if saveErr := tx.Save(&record).Error; saveErr != nil {
 			common.SysError(fmt.Sprintf("invite rebate: failed to mark rebate %d skipped: %s", record.Id, saveErr.Error()))
-			discardInviteRebateAttempt(tx)
+			rollbackToSavepoint(tx, inviteRebateSavePoint)
 			return nil
 		}
 		common.SysError(fmt.Sprintf("invite rebate: inviter %d wallet at limit, rebate of %d skipped", inviter.Id, rebateQuota))
@@ -459,15 +498,16 @@ func resolveMemberLevelForNewUser(tx *gorm.DB, inviterId int) int {
 	return MemberLevelNormal
 }
 
-// IsInviteRebateEligible 判断某个用户是否有资格拿邀请返现：必须是内部学员，
-// 且不是管理员（管理员的返现是自己给自己记账）。与 creditInviteRebateTx 里的
-// 判定保持一致，前端的展示开关也走这里。
+// IsInviteRebateEligible 判断某个用户是否有资格拿邀请返现。内部学员每笔充值都能
+// 返，外部用户能从下线的首充里拿到一次，因此除管理员外人人都有资格；管理员不参与
+// （返到自己账号只是同一个人内部的账目搬运）。与 creditInviteRebateTx 里的判定
+// 保持一致，前端的展示开关也走这里。
 func IsInviteRebateEligible(userId int) bool {
 	var user User
-	if err := DB.Select("id", "role", "member_level").First(&user, userId).Error; err != nil {
+	if err := DB.Select("id", "role").First(&user, userId).Error; err != nil {
 		return false
 	}
-	return user.MemberLevel == MemberLevelInternal && user.Role < common.RoleAdminUser
+	return user.Role < common.RoleAdminUser
 }
 
 // GetUserMemberLevel 单独读取会员等级，避免为了一次展示把整个用户行取出来。
