@@ -185,6 +185,10 @@ export function UsersTable() {
     data: users,
     columns,
     enableRowSelection: true,
+    // Selection is keyed by user id, not row index: the list is paginated and
+    // refetched after every bulk action, so an index key would silently move a
+    // selection onto whichever account took that slot.
+    getRowId: (row) => String(row.id),
     columnFilters,
     globalFilter,
     pagination,

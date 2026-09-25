@@ -96,6 +96,14 @@ export const getUserRoleOptions = (t: (key: string) => string) => [
   { label: t('Root'), value: String(USER_ROLE.ROOT), icon: Shield },
 ]
 
+/**
+ * Mirrors the server rule for deleting an account: you may only delete users
+ * strictly below your own role, which also stops anyone from deleting
+ * themselves. Used to keep a bulk action from offering a doomed selection.
+ */
+export const canDeleteUser = (user: UserType, operatorRole: number): boolean =>
+  user.role < operatorRole
+
 // ============================================================================
 // Member Level Configuration
 // ============================================================================
