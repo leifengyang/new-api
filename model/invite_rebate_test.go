@@ -108,6 +108,13 @@ func requireQuota(t *testing.T, db *gorm.DB, userId int, expected int) {
 	assert.Equal(t, expected, user.Quota)
 }
 
+func requireAffCount(t *testing.T, db *gorm.DB, userId int, expected int) {
+	t.Helper()
+	var user User
+	require.NoError(t, db.Select("aff_count").First(&user, userId).Error)
+	assert.Equal(t, expected, user.AffCount)
+}
+
 func TestCreditInviteRebateAppliesConfiguredRate(t *testing.T) {
 	db := useInviteRebateDB(t)
 	setInviteRebateSetting(t, true, 1000)
@@ -590,6 +597,56 @@ func TestNewUserMemberLevelIsDecidedByInviteLink(t *testing.T) {
 		return external.InsertWithTx(tx, 2)
 	}))
 	assert.Equal(t, MemberLevelNormal, external.MemberLevel)
+}
+
+// 邀请人数曾经只在发放「注册即送」邀请奖励时才累加；奖励退役（QuotaForInviter 归零）
+// 之后计数再也没写过，用户页面的邀请人数一直停在 0。计数必须只看邀请关系，两个注册
+// 入口都要覆盖。
+func TestNewUserInviteIsCountedWithoutTheLegacyReward(t *testing.T) {
+	previousQuotaForInviter := common.QuotaForInviter
+	common.QuotaForInviter = 0
+	t.Cleanup(func() { common.QuotaForInviter = previousQuotaForInviter })
+
+	finalize := map[string]func(*User, int){
+		"账号密码注册":   func(user *User, inviterId int) { user.finishInsert(inviterId) },
+		"OAuth 注册": func(user *User, inviterId int) { user.FinalizeOAuthUserCreation(inviterId) },
+	}
+	for name, finish := range finalize {
+		t.Run(name, func(t *testing.T) {
+			db := useInviteRebateDB(t)
+			inviter := createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 0)
+			invitee := createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, inviter.Id)
+
+			finish(invitee, inviter.Id)
+
+			requireAffCount(t, db, inviter.Id, 1)
+			// 退役的注册即送奖励不能借这条路复活。
+			var stored User
+			require.NoError(t, db.Select("aff_quota", "aff_history").First(&stored, inviter.Id).Error)
+			assert.Zero(t, stored.AffQuota)
+			assert.Zero(t, stored.AffHistoryQuota)
+		})
+	}
+}
+
+// 存量部署里邀请关系已经存在、计数却是 0（就是上面那个 bug 留下的状态）。回填以
+// inviter_id 为准，且重复执行必须收敛。
+func TestInitializeInviteCountsBackfillsFromInviteRelation(t *testing.T) {
+	db := useInviteRebateDB(t)
+	inviter := createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, inviter.Id)
+	createInviteRebateUser(t, db, 3, common.RoleCommonUser, MemberLevelNormal, inviter.Id)
+	lonely := createInviteRebateUser(t, db, 4, common.RoleCommonUser, MemberLevelNormal, 0)
+	removed := createInviteRebateUser(t, db, 5, common.RoleCommonUser, MemberLevelNormal, lonely.Id)
+	require.NoError(t, db.Model(&User{}).Where("id = ?", lonely.Id).Update("aff_count", 3).Error)
+	require.NoError(t, db.Delete(&User{}, removed.Id).Error)
+
+	for range 2 {
+		require.NoError(t, InitializeInviteCounts())
+		requireAffCount(t, db, inviter.Id, 2)
+		// 下线已被删除的邀请人要归零，不能一直挂着过期计数。
+		requireAffCount(t, db, lonely.Id, 0)
+	}
 }
 
 func TestUpdateUsersMemberLevelByBatch(t *testing.T) {
@@ -1130,6 +1187,26 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Where("source_ref = ?", "trade-full").First(&skipped).Error)
 				assert.Equal(t, InviteRebateStatusSkipped, skipped.Status)
 				assert.Equal(t, InviteRebateSkipWalletLimit, skipped.SkipReason)
+			})
+
+			// 邀请人数回填要跨方言成立：一条 GROUP BY 聚合加一批按 id 的 UPDATE，
+			// MySQL 的 ONLY_FULL_GROUP_BY、PostgreSQL 把 COUNT(*) 当 numeric 回来
+			// 都不能让它跑偏，重复执行还必须是空操作。
+			t.Run("invite_count_backfill", func(t *testing.T) {
+				inviter := createInviteRebateUser(t, db, 71, common.RoleCommonUser, MemberLevelNormal, 0)
+				createInviteRebateUser(t, db, 72, common.RoleCommonUser, MemberLevelNormal, inviter.Id)
+				createInviteRebateUser(t, db, 73, common.RoleCommonUser, MemberLevelNormal, inviter.Id)
+				orphaned := createInviteRebateUser(t, db, 74, common.RoleCommonUser, MemberLevelNormal, 0)
+				gone := createInviteRebateUser(t, db, 75, common.RoleCommonUser, MemberLevelNormal, orphaned.Id)
+				require.NoError(t, db.Model(&User{}).Where("id = ?", orphaned.Id).Update("aff_count", 9).Error)
+				require.NoError(t, db.Where("id = ?", gone.Id).Delete(&User{}).Error)
+
+				for range 2 {
+					require.NoError(t, InitializeInviteCounts())
+					requireAffCount(t, db, inviter.Id, 2)
+					// 下线已被注销的邀请人要归零，不能一直挂着过期计数。
+					requireAffCount(t, db, orphaned.Id, 0)
+				}
 			})
 		})
 	}

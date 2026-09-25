@@ -607,11 +607,13 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
+// inviteUser 给邀请人记一次成功邀请。aff_count 是“邀请了多少人”的记账，只与
+// 邀请关系有关；它曾经和 aff_quota / aff_history 一起累加注册即送的邀请奖励，
+// 那个奖励退役后（见 updateOptionMap 中把 QuotaForInviter 归零）这三个字段的
+// 奖励部分恒为 0，所以这里只保留计数，避免再出现“奖励为 0 就连计数也不写”的死结。
 func inviteUser(inviterId int) error {
 	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+		"aff_count": gorm.Expr("aff_count + ?", 1),
 	})
 	if result.Error != nil {
 		return result.Error
@@ -756,15 +758,15 @@ func (user *User) finishInsert(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
+	// 邀请人数只取决于邀请关系，和奖励配置无关：inviter_id 在注册时就写进用户行了，
+	// 计数必须跟着它走，否则 QuotaForInviter 为 0 时邀请人数会永远停在 0。
+	if inviterId != 0 {
+		_ = inviteUser(inviterId)
+	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }
@@ -814,14 +816,14 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
+	// 与 finishInsert 同样处理：计数只看邀请关系，不看奖励配置。
+	if inviterId != 0 {
+		_ = inviteUser(inviterId)
+	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }
