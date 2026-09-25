@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Link } from '@tanstack/react-router'
 import { Loader2, LogIn, KeyRound } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -116,6 +116,16 @@ export function UserAuthForm({
     !passkeySupported ||
     (requiresLegalConsent && !agreedToLegal)
   const hasWeChatLogin = Boolean(status?.wechat_login)
+  const hasOAuthLogin = Boolean(
+    status?.github_oauth ||
+    status?.discord_oauth ||
+    status?.oidc_enabled ||
+    status?.linuxdo_oauth ||
+    status?.telegram_oauth ||
+    (status?.custom_oauth_providers?.length ?? 0) > 0
+  )
+  const hasAlternativeLogin =
+    passkeyLoginEnabled || hasWeChatLogin || hasOAuthLogin
 
   useEffect(() => {
     if (requiresLegalConsent) {
@@ -129,21 +139,6 @@ export function UserAuthForm({
     detectPasskeySupport()
       .then(setPasskeySupported)
       .catch(() => setPasskeySupported(false))
-  }, [])
-
-  const captchaInputRef = useRef<HTMLInputElement>(null)
-  const consentCheckboxRef = useRef<HTMLButtonElement>(null)
-  const [gateError, setGateError] = useState<'captcha' | 'consent' | null>(null)
-  const captchaErrorMessage = t('Enter the 6-digit code from the image')
-
-  const handleCaptchaCodeChange = useCallback((value: string) => {
-    setCaptchaCode(value)
-    setGateError((current) => (current === 'captcha' ? null : current))
-  }, [])
-
-  const handleLegalConsentChange = useCallback((value: boolean) => {
-    setAgreedToLegal(value)
-    setGateError((current) => (current === 'consent' ? null : current))
   }, [])
 
   const form = useForm<z.infer<typeof loginFormSchema>>({
@@ -169,23 +164,11 @@ export function UserAuthForm({
   }, [status])
 
   async function onSubmit(data: z.infer<typeof loginFormSchema>) {
-    if (isLoading) return
-
-    // Submit stays clickable so a blocked attempt can say what is missing
-    // instead of leaving a dead button; the server re-checks all of this.
-    if (!captchaId || !/^\d{6}$/.test(captchaCode)) {
-      setGateError('captcha')
-      captchaInputRef.current?.focus()
-      return
-    }
-
+    if (isLoading || !captchaId || !/^\d{6}$/.test(captchaCode)) return
     if (requiresLegalConsent && !agreedToLegal) {
-      setGateError('consent')
-      consentCheckboxRef.current?.focus()
+      toast.error(legalConsentErrorMessage)
       return
     }
-
-    setGateError(null)
 
     if (!validateTurnstile()) return
 
@@ -329,13 +312,13 @@ export function UserAuthForm({
   const alternativeLoginMethods = (
     <>
       {passkeyLoginEnabled && (
-        <div className='space-y-2'>
+        <div className='mt-2 space-y-1'>
           <Button
             type='button'
             variant='outline'
             disabled={passkeyButtonDisabled}
             onClick={handlePasskeyLogin}
-            className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
+            className='h-11 w-full justify-center gap-2 rounded-lg'
           >
             {isPasskeyLoading ? (
               <Loader2 className='h-4 w-4 animate-spin' />
@@ -373,9 +356,11 @@ export function UserAuthForm({
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className={cn('grid gap-5', className)}
+        className={cn('grid gap-4', className)}
         {...props}
       >
+        {hasAlternativeLogin && alternativeLoginMethods}
+
         {passwordLoginEnabled && (
           <>
             {/* Username Field */}
@@ -388,11 +373,6 @@ export function UserAuthForm({
                   <FormControl>
                     <Input
                       placeholder={t('Enter your username or email')}
-                      autoComplete='username'
-                      autoCapitalize='none'
-                      autoCorrect='off'
-                      spellCheck={false}
-                      className='h-11 px-3.5'
                       {...field}
                     />
                   </FormControl>
@@ -406,25 +386,21 @@ export function UserAuthForm({
               control={form.control}
               name='password'
               render={({ field }) => (
-                <FormItem>
-                  <div className='flex items-baseline justify-between gap-3'>
-                    <FormLabel>{t('Password')}</FormLabel>
-                    <Link
-                      to='/forgot-password'
-                      className='text-muted-foreground hover:text-foreground text-xs font-medium transition-colors'
-                    >
-                      {t('Forgot password?')}
-                    </Link>
-                  </div>
+                <FormItem className='relative'>
+                  <FormLabel>{t('Password')}</FormLabel>
                   <FormControl>
                     <PasswordInput
                       placeholder={t('Enter password')}
-                      autoComplete='current-password'
-                      className='[&_input]:h-11 [&_input]:px-3.5 [&_input]:pe-10'
                       {...field}
                     />
                   </FormControl>
                   <FormMessage />
+                  <Link
+                    to='/forgot-password'
+                    className='text-muted-foreground absolute end-0 -top-0.5 z-10 text-sm font-medium hover:opacity-75'
+                  >
+                    {t('Forgot password?')}
+                  </Link>
                 </FormItem>
               )}
             />
@@ -435,16 +411,19 @@ export function UserAuthForm({
               purpose='login'
               disabled={isLoading}
               value={captchaCode}
-              onChange={handleCaptchaCodeChange}
+              onChange={setCaptchaCode}
               onCaptchaChange={setCaptchaId}
-              inputRef={captchaInputRef}
-              error={gateError === 'captcha' ? captchaErrorMessage : undefined}
             />
 
             <Button
               type='submit'
-              className='h-11 w-full justify-center gap-2 text-[0.9375rem]'
-              disabled={isLoading}
+              className='mt-2 w-full justify-center gap-2'
+              disabled={
+                isLoading ||
+                !captchaId ||
+                !/^\d{6}$/.test(captchaCode) ||
+                (requiresLegalConsent && !agreedToLegal)
+              }
             >
               {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
               {t('Sign in')}
@@ -452,7 +431,7 @@ export function UserAuthForm({
 
             {/* Turnstile */}
             {isTurnstileEnabled && (
-              <div>
+              <div className='mt-2'>
                 <Turnstile
                   key={turnstileWidgetKey}
                   siteKey={turnstileSiteKey}
@@ -467,12 +446,11 @@ export function UserAuthForm({
         <LegalConsent
           status={status}
           checked={agreedToLegal}
-          onCheckedChange={handleLegalConsentChange}
-          checkboxRef={consentCheckboxRef}
-          error={gateError === 'consent' ? legalConsentErrorMessage : undefined}
+          onCheckedChange={setAgreedToLegal}
+          className='mt-1'
         />
 
-        {alternativeLoginMethods}
+        {!hasAlternativeLogin && alternativeLoginMethods}
       </form>
 
       {hasWeChatLogin && (

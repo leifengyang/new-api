@@ -57,12 +57,22 @@ test.each([
     )
     const adapter = vi.fn<AxiosAdapter>(async (config) => {
       expect(config.url?.split('?')[0]).toBe(`/api/user/${operation}`)
-      expect(JSON.parse(config.data)).toMatchObject({
+      const body = JSON.parse(config.data)
+      expect(body).toMatchObject({
         username: 'captcha-user',
         password: 'test-password',
-        captcha_id: 'captcha-id',
-        captcha_code: '123456',
       })
+      // Only the password login carries an image captcha; registration is not
+      // gated by one, so an anonymous register must not invent the fields.
+      if (operation === 'login') {
+        expect(body).toMatchObject({
+          captcha_id: 'captcha-id',
+          captcha_code: '123456',
+        })
+      } else {
+        expect(body).not.toHaveProperty('captcha_id')
+        expect(body).not.toHaveProperty('captcha_code')
+      }
       const response = {
         data: { success: status === 200, message: '' },
         status,
@@ -93,8 +103,6 @@ test.each([
         : register({
             username: 'captcha-user',
             password: 'test-password',
-            captcha_id: 'captcha-id',
-            captcha_code: '123456',
           })
     try {
       if (status === 200) {

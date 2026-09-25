@@ -1151,69 +1151,90 @@ func TestImageCaptchaGatesPasswordAuthentication(t *testing.T) {
 	engine.Use(middleware.BodyStorageCleanup(), middleware.DisableCache())
 	engine.GET("/api/captcha", GetImageCaptcha)
 	engine.POST("/api/user/login", middleware.AnonymousRequestBodyLimit(), middleware.ImageCaptchaCheck("login"), Login)
-	engine.POST("/api/user/register", middleware.AnonymousRequestBodyLimit(), middleware.ImageCaptchaCheck("register"), Register)
-	for _, purpose := range []string{"login", "register"} {
-		t.Run(purpose, func(t *testing.T) {
-			for _, test := range []struct {
-				name, code      string
-				absent, expired bool
-			}{
-				{name: "missing captcha", absent: true},
-				{name: "incorrect answer", code: "654321"},
-				{name: "empty answer"},
-				{name: "expired answer", code: "123456", expired: true},
-				{name: "correct answer", code: "123456"},
-			} {
-				t.Run(test.name, func(t *testing.T) {
-					image := httptest.NewRecorder()
-					engine.ServeHTTP(image, httptest.NewRequest(http.MethodGet, "/api/captcha?purpose="+purpose, nil))
-					var challenge struct {
-						Success bool
-						Data    struct {
-							ID    string `json:"captcha_id"`
-							Image string `json:"image"`
-						}
+	// Registration is deliberately not captcha-gated: the image challenge
+	// guards the password login only.
+	engine.POST("/api/user/register", middleware.AnonymousRequestBodyLimit(), Register)
+
+	t.Run("password login", func(t *testing.T) {
+		purpose := "login"
+		for _, test := range []struct {
+			name, code      string
+			absent, expired bool
+		}{
+			{name: "missing captcha", absent: true},
+			{name: "incorrect answer", code: "654321"},
+			{name: "empty answer"},
+			{name: "expired answer", code: "123456", expired: true},
+			{name: "correct answer", code: "123456"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				image := httptest.NewRecorder()
+				engine.ServeHTTP(image, httptest.NewRequest(http.MethodGet, "/api/captcha?purpose="+purpose, nil))
+				var challenge struct {
+					Success bool
+					Data    struct {
+						ID    string `json:"captcha_id"`
+						Image string `json:"image"`
 					}
-					require.NoError(t, common.Unmarshal(image.Body.Bytes(), &challenge))
-					require.True(t, challenge.Success)
-					assert.Contains(t, image.Header().Get("Cache-Control"), "no-store")
-					assert.True(t, strings.HasPrefix(challenge.Data.Image, "data:image/png;base64,"))
-					key := "auth:image-captcha:" + challenge.Data.ID
-					server.Set(key, purpose+":123456")
-					server.SetTTL(key, common.ImageCaptchaTTL)
-					if test.expired {
-						server.FastForward(common.ImageCaptchaTTL)
-					}
-					payload := map[string]string{"captcha_id": challenge.Data.ID, "captcha_code": test.code}
-					if test.absent {
-						payload = map[string]string{}
-					}
-					body, err := common.Marshal(payload)
+				}
+				require.NoError(t, common.Unmarshal(image.Body.Bytes(), &challenge))
+				require.True(t, challenge.Success)
+				assert.Contains(t, image.Header().Get("Cache-Control"), "no-store")
+				assert.True(t, strings.HasPrefix(challenge.Data.Image, "data:image/png;base64,"))
+				key := "auth:image-captcha:" + challenge.Data.ID
+				server.Set(key, purpose+":123456")
+				server.SetTTL(key, common.ImageCaptchaTTL)
+				if test.expired {
+					server.FastForward(common.ImageCaptchaTTL)
+				}
+				payload := map[string]string{"captcha_id": challenge.Data.ID, "captcha_code": test.code}
+				if test.absent {
+					payload = map[string]string{}
+				}
+				body, err := common.Marshal(payload)
+				require.NoError(t, err)
+				request := httptest.NewRequest(http.MethodPost, "/api/user/"+purpose, strings.NewReader(string(body)))
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Accept-Language", "en")
+				response := httptest.NewRecorder()
+				engine.ServeHTTP(response, request)
+				var result struct {
+					Success bool
+					Message string
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.False(t, result.Success)
+				if test.name == "correct answer" {
+					assert.Equal(t, i18n.Translate("en", i18n.MsgInvalidParams), result.Message)
+				} else {
+					assert.Equal(t, i18n.Translate("en", i18n.MsgCaptchaInvalid), result.Message)
+				}
+				// A valid answer cannot replay after either an accepted or failed attempt.
+				if !test.absent {
+					valid, err := common.VerifyImageCaptcha(context.Background(), purpose, challenge.Data.ID, "123456")
 					require.NoError(t, err)
-					request := httptest.NewRequest(http.MethodPost, "/api/user/"+purpose, strings.NewReader(string(body)))
-					request.Header.Set("Content-Type", "application/json")
-					request.Header.Set("Accept-Language", "en")
-					response := httptest.NewRecorder()
-					engine.ServeHTTP(response, request)
-					var result struct {
-						Success bool
-						Message string
-					}
-					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
-					assert.False(t, result.Success)
-					if test.name == "correct answer" {
-						assert.Equal(t, i18n.Translate("en", i18n.MsgInvalidParams), result.Message)
-					} else {
-						assert.Equal(t, i18n.Translate("en", i18n.MsgCaptchaInvalid), result.Message)
-					}
-					// A valid answer cannot replay after either an accepted or failed attempt.
-					if !test.absent {
-						valid, err := common.VerifyImageCaptcha(context.Background(), purpose, challenge.Data.ID, "123456")
-						require.NoError(t, err)
-						assert.False(t, valid)
-					}
-				})
-			}
-		})
-	}
+					assert.False(t, valid)
+				}
+			})
+		}
+	})
+
+	t.Run("registration reaches the handler without a captcha", func(t *testing.T) {
+		// An anonymous register carrying no challenge at all must land in the
+		// controller's own validation instead of being stopped by a captcha gate.
+		payload, err := common.Marshal(map[string]string{"username": "", "password": ""})
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(string(payload)))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept-Language", "en")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		var result struct {
+			Success bool
+			Message string
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.False(t, result.Success)
+		assert.Equal(t, i18n.Translate("en", i18n.MsgInvalidParams), result.Message)
+	})
 }
