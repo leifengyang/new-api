@@ -79,7 +79,8 @@ export function SelfRebateCard({
   const rebateCount = summary?.rebate_count ?? 0
 
   // 总开关、管理员不参与、内部与外部两种返现口径要分开讲，否则用户只看到一串 0
-  // 却不知道卡在哪一步。
+  // 却不知道卡在哪一步。外部用户只讲他们自己的首充口径，内部会员每笔都返这件事
+  // 不能让他们知道。
   let note = t(
     'You earn {{rate}} of every top-up made by the members you invited.',
     { rate: formatInviteRebatePercent(rate) }
@@ -90,7 +91,7 @@ export function SelfRebateCard({
     note = t('Administrators do not earn invite rebates.')
   } else if (!isInternal) {
     note = t(
-      'You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.',
+      'You earn {{rate}} of the first top-up made by each user you invite.',
       { rate: formatInviteRebatePercent(rate) }
     )
   }

@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "Every rebate credited for a top-up made by someone you invited.",
     "Your rebates appear here after someone you invited tops up.": "Your rebates appear here after someone you invited tops up.",
     "You earn {{rate}} of every top-up made by the members you invited.": "You earn {{rate}} of every top-up made by the members you invited.",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.",
+"You earn {{rate}} of the first top-up made by each user you invite.": "You earn {{rate}} of the first top-up made by each user you invite.",
     "Invite rebates are currently disabled.": "Invite rebates are currently disabled.",
     "Administrators do not earn invite rebates.": "Administrators do not earn invite rebates.",
     "Rebates": "Rebates"

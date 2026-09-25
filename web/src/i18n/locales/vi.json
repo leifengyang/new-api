@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "Mỗi lần người bạn mời nạp tiền, một khoản hoàn tiền sẽ được ghi lại ở đây.",
     "Your rebates appear here after someone you invited tops up.": "Khoản hoàn tiền sẽ xuất hiện ở đây sau khi người bạn mời nạp tiền.",
     "You earn {{rate}} of every top-up made by the members you invited.": "Bạn nhận được {{rate}} từ mỗi lần nạp tiền của những người bạn đã mời.",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "Bạn nhận được {{rate}} từ lần nạp đầu tiên của mỗi người bạn mời. Thành viên nội bộ nhận được ở mọi lần nạp.",
+"You earn {{rate}} of the first top-up made by each user you invite.": "Bạn nhận được {{rate}} từ lần nạp đầu tiên của mỗi người bạn mời.",
     "Invite rebates are currently disabled.": "Hoàn tiền mời hiện đang tắt.",
     "Administrators do not earn invite rebates.": "Quản trị viên không nhận hoàn tiền mời.",
     "Rebates": "Số khoản hoàn tiền"

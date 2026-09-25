@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "Chaque rechargement d'un utilisateur que vous avez invité ajoute une commission ici.",
     "Your rebates appear here after someone you invited tops up.": "Vos commissions apparaîtront ici dès qu'un utilisateur que vous avez invité effectue un rechargement.",
     "You earn {{rate}} of every top-up made by the members you invited.": "Vous recevez {{rate}} de chaque rechargement effectué par les utilisateurs que vous avez invités.",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "Vous recevez {{rate}} du premier rechargement de chaque utilisateur que vous invitez. Les membres internes le reçoivent sur chaque rechargement.",
+"You earn {{rate}} of the first top-up made by each user you invite.": "Vous recevez {{rate}} du premier rechargement de chaque utilisateur que vous invitez.",
     "Invite rebates are currently disabled.": "Les commissions d'invitation sont actuellement désactivées.",
     "Administrators do not earn invite rebates.": "Les administrateurs ne perçoivent pas de commission d’invitation.",
     "Rebates": "Commissions"

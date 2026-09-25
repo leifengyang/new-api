@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "你邀请的用户每次充值，都会在这里留下一笔返现。",
     "Your rebates appear here after someone you invited tops up.": "你邀请的用户充值后，返现记录会显示在这里。",
     "You earn {{rate}} of every top-up made by the members you invited.": "你邀请的用户每次充值，你都能拿到其中的 {{rate}}。",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "你邀请的每个用户的第一笔充值，你都能拿到其中的 {{rate}}。内部会员则每笔充值都能拿到。",
+"You earn {{rate}} of the first top-up made by each user you invite.": "你邀请的用户首次充值时，你能拿到其中的 {{rate}}。",
     "Invite rebates are currently disabled.": "邀请返现当前已关闭。",
     "Administrators do not earn invite rebates.": "管理员不参与邀请返现。",
     "Rebates": "返现笔数"

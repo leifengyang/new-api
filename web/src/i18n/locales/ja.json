@@ -6840,7 +6840,7 @@
     "Every rebate credited for a top-up made by someone you invited.": "招待したユーザーがチャージするたびに、ここにリベートが記録されます。",
     "Your rebates appear here after someone you invited tops up.": "招待したユーザーがチャージすると、リベート履歴がここに表示されます。",
     "You earn {{rate}} of every top-up made by the members you invited.": "招待したユーザーがチャージした金額の {{rate}} を受け取れます。",
-    "You earn {{rate}} of the first top-up made by each member you invite. Internal members earn it on every top-up.": "招待したユーザーごとに、最初のチャージ金額の {{rate}} を受け取れます。内部メンバーは毎回のチャージで受け取れます。",
+"You earn {{rate}} of the first top-up made by each user you invite.": "招待したユーザーの初回チャージ額の {{rate}} を受け取れます。",
     "Invite rebates are currently disabled.": "招待リベートは現在無効です。",
     "Administrators do not earn invite rebates.": "管理者は招待リベートを受け取れません。",
     "Rebates": "リベート件数"
