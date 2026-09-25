@@ -26,8 +26,8 @@ import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
 import { useHomePageContent } from './hooks'
+import { TownExperience } from './town/town-experience'
 
 export function Home() {
   const { i18n, t } = useTranslation()
@@ -121,13 +121,15 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
-    </PublicLayout>
+    <div className='aurora-home dark'>
+      <PublicLayout
+        showMainContainer={false}
+        showThemeSwitch={false}
+        showNotifications={false}
+      >
+        <TownExperience isAuthenticated={isAuthenticated} />
+        <Footer />
+      </PublicLayout>
+    </div>
   )
 }
