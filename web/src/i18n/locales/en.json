@@ -6849,6 +6849,9 @@
     "You earn {{rate}} of the first top-up made by each user you invite.": "You earn {{rate}} of the first top-up made by each user you invite.",
     "Invite rebates are currently disabled.": "Invite rebates are currently disabled.",
     "Administrators do not earn invite rebates.": "Administrators do not earn invite rebates.",
-    "Rebates": "Rebates"
+    "Rebates": "Rebates",
+    "Invite-Only Registration": "Invite-Only Registration",
+    "Require a valid invitation link to register": "Require a valid invitation link to register",
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Internal system, not open to the public. Non-employees are not permitted to register."
   }
 }

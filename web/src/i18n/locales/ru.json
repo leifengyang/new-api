@@ -6849,6 +6849,9 @@
     "You earn {{rate}} of the first top-up made by each user you invite.": "Вы получаете {{rate}} с первого пополнения каждого приглашённого вами пользователя.",
     "Invite rebates are currently disabled.": "Реферальные ребейты сейчас отключены.",
     "Administrators do not earn invite rebates.": "Администраторы не получают реферальные ребейты.",
-    "Rebates": "Количество ребейтов"
+    "Rebates": "Количество ребейтов",
+    "Invite-Only Registration": "Регистрация только по приглашению",
+    "Require a valid invitation link to register": "Для регистрации требуется действующая ссылка-приглашение",
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Внутренняя система, не открыта для посторонних. Регистрация доступна только приглашённым сотрудникам."
   }
 }

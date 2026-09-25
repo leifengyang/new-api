@@ -6849,6 +6849,9 @@
     "You earn {{rate}} of the first top-up made by each user you invite.": "Vous recevez {{rate}} du premier rechargement de chaque utilisateur que vous invitez.",
     "Invite rebates are currently disabled.": "Les commissions d'invitation sont actuellement désactivées.",
     "Administrators do not earn invite rebates.": "Les administrateurs ne perçoivent pas de commission d’invitation.",
-    "Rebates": "Commissions"
+    "Rebates": "Commissions",
+    "Invite-Only Registration": "Inscription sur invitation uniquement",
+    "Require a valid invitation link to register": "Exiger un lien d'invitation valide pour s'inscrire",
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Système à usage interne, non ouvert au public. Les personnes extérieures ne peuvent pas s'inscrire."
   }
 }

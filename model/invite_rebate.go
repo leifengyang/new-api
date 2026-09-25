@@ -478,6 +478,24 @@ func fillInviteRebateTotals(users []*User) error {
 	return nil
 }
 
+// ErrInvitationRequired 表示站点开启了仅邀请注册，而这次自助注册没有携带有效的
+// 邀请码。调用方负责把它翻译成用户可见的提示。
+var ErrInvitationRequired = errors.New("a valid invitation code is required for registration")
+
+// ResolveRegistrationInviter 解析自助注册携带的邀请码，并执行「仅邀请注册」准入。
+//
+// 邀请码是邀请人的推广码（aff_code）。站点开启仅邀请注册后，没有携带或携带了无效
+// 推广码的注册一律拒绝；判定只认服务端解析出的邀请人，前端是否渲染注册表单不构成
+// 任何准入依据。关闭该开关时保持历史行为：邀请码只是归属信息，解析不出邀请人时
+// 照样建号。
+func ResolveRegistrationInviter(affCode string) (int, error) {
+	inviterId, _ := GetUserIdByAffCode(affCode)
+	if common.InviteOnlyRegistrationEnabled && inviterId <= 0 {
+		return 0, ErrInvitationRequired
+	}
+	return inviterId, nil
+}
+
 // resolveMemberLevelForNewUser 决定新注册用户的会员等级，必须在建号事务内调用。
 //
 // 只有通过管理员邀请链接进来的用户才是内部学员。内部学员自己发出的链接拉进来

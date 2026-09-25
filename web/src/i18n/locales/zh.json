@@ -6849,6 +6849,9 @@
     "You earn {{rate}} of the first top-up made by each user you invite.": "你邀请的用户首次充值时，你能拿到其中的 {{rate}}。",
     "Invite rebates are currently disabled.": "邀请返现当前已关闭。",
     "Administrators do not earn invite rebates.": "管理员不参与邀请返现。",
-    "Rebates": "返现笔数"
+    "Rebates": "返现笔数",
+    "Invite-Only Registration": "仅限邀请注册",
+    "Require a valid invitation link to register": "必须通过有效的邀请链接才能注册",
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "企业自用系统，未对外开放，禁止非内部员工注册"
   }
 }

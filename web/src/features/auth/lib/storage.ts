@@ -59,3 +59,20 @@ export function saveAffiliateCode(code: string): void {
     console.error('Failed to save affiliate code:', error)
   }
 }
+
+/**
+ * Drop the stored affiliate code
+ *
+ * Called once a registration has consumed the invitation, so a later visit to
+ * the sign-up page is not treated as one that arrived through an invitation
+ * link.
+ */
+export function clearAffiliateCode(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(STORAGE_KEYS.AFFILIATE)
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Failed to clear affiliate code:', error)
+  }
+}

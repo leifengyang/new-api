@@ -46,6 +46,7 @@ import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useEmailVerification } from '@/features/auth/hooks/use-email-verification'
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import {
+  clearAffiliateCode,
   getAffiliateCode,
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
@@ -171,6 +172,8 @@ export function SignUpForm({
       })
 
       if (res?.success) {
+        // 邀请已被这次注册消费掉，再留着推广码会让后续访问看起来像带了邀请链接。
+        clearAffiliateCode()
         toast.success(t('Account created! Please sign in'))
         redirectToLogin()
       } else {

@@ -23,11 +23,21 @@ import { useStatus } from '@/hooks/use-status'
 
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
+import { isRegistrationOpen } from '../lib/invitation'
+import { RegistrationRestricted } from './components/registration-restricted'
 import { SignUpForm } from './components/sign-up-form'
 
 export function SignUp() {
   const { t } = useTranslation()
   const { status } = useStatus()
+
+  if (!isRegistrationOpen(status)) {
+    return (
+      <AuthLayout>
+        <RegistrationRestricted />
+      </AuthLayout>
+    )
+  }
 
   return (
     <AuthLayout>

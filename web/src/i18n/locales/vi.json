@@ -6849,6 +6849,9 @@
     "You earn {{rate}} of the first top-up made by each user you invite.": "Bạn nhận được {{rate}} từ lần nạp đầu tiên của mỗi người bạn mời.",
     "Invite rebates are currently disabled.": "Hoàn tiền mời hiện đang tắt.",
     "Administrators do not earn invite rebates.": "Quản trị viên không nhận hoàn tiền mời.",
-    "Rebates": "Số khoản hoàn tiền"
+    "Rebates": "Số khoản hoàn tiền",
+    "Invite-Only Registration": "Chỉ đăng ký bằng lời mời",
+    "Require a valid invitation link to register": "Yêu cầu liên kết mời hợp lệ để đăng ký",
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Hệ thống dùng nội bộ, không mở cho công chúng. Người ngoài không được phép đăng ký."
   }
 }

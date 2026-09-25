@@ -1238,3 +1238,143 @@ func TestImageCaptchaGatesPasswordAuthentication(t *testing.T) {
 		assert.Equal(t, i18n.Translate("en", i18n.MsgInvalidParams), result.Message)
 	})
 }
+
+// TestRegisterRequiresInvitationWhenInviteOnly covers the server-side gate that
+// makes registration invite-only: the invite code stops being pure attribution
+// and becomes the price of entry.
+func TestRegisterRequiresInvitationWhenInviteOnly(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	previousInviteOnly := common.InviteOnlyRegistrationEnabled
+	previousRegister, previousPasswordRegister := common.RegisterEnabled, common.PasswordRegisterEnabled
+	common.RegisterEnabled, common.PasswordRegisterEnabled = true, true
+	t.Cleanup(func() {
+		common.InviteOnlyRegistrationEnabled = previousInviteOnly
+		common.RegisterEnabled, common.PasswordRegisterEnabled = previousRegister, previousPasswordRegister
+	})
+
+	inviter := model.User{
+		Username: "invitation-owner", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default",
+	}
+	require.NoError(t, db.Create(&inviter).Error)
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", inviter.Id).Update("aff_code", "INV1").Error)
+
+	register := func(t *testing.T, body string) (bool, string) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Request.Header.Set("Accept-Language", "en")
+		Register(c)
+		var result struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+		return result.Success, result.Message
+	}
+
+	t.Run("closed gate keeps the historical behaviour", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = false
+		success, message := register(t, `{"username":"open-registration","password":"password123"}`)
+		assert.True(t, success, message)
+	})
+
+	t.Run("missing invitation code is refused", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = true
+		success, message := register(t, `{"username":"no-invitation","password":"password123"}`)
+		assert.False(t, success)
+		assert.Equal(t, i18n.Translate("en", i18n.MsgUserInvitationRequired), message)
+		var created model.User
+		assert.ErrorIs(t, db.First(&created, "username = ?", "no-invitation").Error, gorm.ErrRecordNotFound)
+	})
+
+	t.Run("unknown invitation code is refused", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = true
+		success, message := register(t, `{"username":"bad-invitation","password":"password123","aff_code":"NOPE"}`)
+		assert.False(t, success)
+		assert.Equal(t, i18n.Translate("en", i18n.MsgUserInvitationRequired), message)
+		var created model.User
+		assert.ErrorIs(t, db.First(&created, "username = ?", "bad-invitation").Error, gorm.ErrRecordNotFound)
+	})
+
+	t.Run("valid invitation code registers under the inviter", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = true
+		success, message := register(t, `{"username":"invited-user","password":"password123","aff_code":"INV1"}`)
+		require.True(t, success, message)
+		var invited model.User
+		require.NoError(t, db.First(&invited, "username = ?", "invited-user").Error)
+		assert.Equal(t, inviter.Id, invited.InviterId)
+	})
+
+	t.Run("refusal does not disclose an existing username", func(t *testing.T) {
+		// The gate runs before the duplicate-username check, so a caller without an
+		// invitation cannot ask whether a username is already taken.
+		common.InviteOnlyRegistrationEnabled = true
+		success, message := register(t, `{"username":"invitation-owner","password":"password123"}`)
+		assert.False(t, success)
+		assert.Equal(t, i18n.Translate("en", i18n.MsgUserInvitationRequired), message)
+	})
+}
+
+// TestOAuthRegistrationRequiresInvitationWhenInviteOnly keeps the gate on the
+// third-party self-service path too: covering only password registration would
+// let invite-only mode lapse silently the moment an OAuth provider is enabled.
+func TestOAuthRegistrationRequiresInvitationWhenInviteOnly(t *testing.T) {
+	setupAuthFlowControllerTest(t)
+	previousInviteOnly := common.InviteOnlyRegistrationEnabled
+	previousRegister := common.RegisterEnabled
+	common.RegisterEnabled = true
+	t.Cleanup(func() {
+		common.InviteOnlyRegistrationEnabled = previousInviteOnly
+		common.RegisterEnabled = previousRegister
+	})
+
+	inviter := model.User{
+		Username: "oauth-invitation-owner", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default",
+	}
+	require.NoError(t, model.DB.Create(&inviter).Error)
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", inviter.Id).Update("aff_code", "INV2").Error)
+
+	router := gin.New()
+	router.GET("/api/oauth/:provider", HandleOAuth)
+	signIn := func(t *testing.T, payload string) (bool, string) {
+		t.Helper()
+		token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+			Purpose: model.AuthFlowPurposeOAuth, Provider: "auth-flow-test", Intent: model.AuthFlowIntentLogin,
+			Payload: payload, ExpiresAt: time.Now().Add(time.Minute),
+		})
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodGet, "/api/oauth/auth-flow-test?state="+token+"&code=test", nil)
+		request.Header.Set("Accept-Language", "en")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var result struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		return result.Success, result.Message
+	}
+
+	t.Run("missing invitation code creates no account", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = true
+		success, message := signIn(t, `{}`)
+		assert.False(t, success)
+		assert.Equal(t, i18n.Translate("en", i18n.MsgUserInvitationRequired), message)
+		var count int64
+		require.NoError(t, model.DB.Model(&model.User{}).Where("username LIKE ?", "flow_%").Count(&count).Error)
+		assert.Zero(t, count)
+	})
+
+	t.Run("valid invitation code passes the gate", func(t *testing.T) {
+		common.InviteOnlyRegistrationEnabled = true
+		_, message := signIn(t, `{"affiliate_code":"INV2"}`)
+		assert.NotEqual(t, i18n.Translate("en", i18n.MsgUserInvitationRequired), message)
+		var invited model.User
+		require.NoError(t, model.DB.First(&invited, "inviter_id = ?", inviter.Id).Error)
+		assert.True(t, strings.HasPrefix(invited.Username, "flow_"))
+	})
+}
