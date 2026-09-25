@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { GraduationCap, UserRoundMinus } from 'lucide-react'
+import { GraduationCap, Trash2, UserRoundMinus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -33,9 +33,14 @@ import {
 } from '@/components/ui/tooltip'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { updateUsersMemberLevelBatch } from '../api'
-import { USER_MEMBER_LEVEL, getUserMemberLevel } from '../constants'
+import { batchDeleteUsers, updateUsersMemberLevelBatch } from '../api'
+import {
+  USER_MEMBER_LEVEL,
+  canDeleteUser,
+  getUserMemberLevel,
+} from '../constants'
 import type { User } from '../types'
 import { useUsers } from './users-provider'
 
@@ -51,7 +56,9 @@ type MemberLevelTarget = {
 export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
   const { t } = useTranslation()
   const { triggerRefresh } = useUsers()
+  const operatorRole = useAuthStore((state) => state.auth.user?.role ?? 0)
   const [target, setTarget] = useState<MemberLevelTarget | null>(null)
+  const [deleteTargets, setDeleteTargets] = useState<User[] | null>(null)
   const selectedRows = table.getFilteredSelectedRowModel().rows
 
   const levelUpdate = useMutation({
@@ -80,9 +87,41 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
     selectedRows.length > 0 &&
     selectedRows.every((row) => getUserMemberLevel(row.original) === level)
 
+  const deletion = useMutation({
+    mutationFn: async (targets: User[]) => {
+      const result = await batchDeleteUsers(targets.map((user) => user.id))
+      if (!result.success) throw createServerError(result)
+      return targets.length
+    },
+    onSuccess: (count, targets) => {
+      toast.success(t('Successfully deleted {{count}} users', { count }))
+      // Drop the deleted rows from the selection so the toolbar count keeps
+      // matching the list; the refresh below is what removes them from it.
+      table.setRowSelection((previous) => {
+        const next = { ...previous }
+        for (const user of targets) delete next[String(user.id)]
+        return next
+      })
+      setDeleteTargets(null)
+      triggerRefresh()
+    },
+    onError: (error, targets) => {
+      handleServerError(
+        error,
+        t('Failed to delete {{count}} users', { count: targets.length })
+      )
+    },
+  })
+
   const openFor = (level: number) => {
     setTarget({ ids: selectedRows.map((row) => row.original.id), level })
   }
+
+  // The server rejects the whole batch when it holds an account at or above the
+  // operator's role, so there is no point in offering the action.
+  const hasUndeletableRow = selectedRows.some(
+    (row) => !canDeleteUser(row.original, operatorRole)
+  )
 
   const isInternal = target?.level === USER_MEMBER_LEVEL.INTERNAL
 
@@ -129,6 +168,25 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
           </TooltipTrigger>
           <TooltipContent>{t('Mark as external user')}</TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='destructive'
+                size='icon'
+                className='size-8'
+                aria-label={t('Delete selected users')}
+                disabled={deletion.isPending || hasUndeletableRow}
+                onClick={() =>
+                  setDeleteTargets(selectedRows.map((row) => row.original))
+                }
+              />
+            }
+          >
+            <Trash2 aria-hidden='true' />
+          </TooltipTrigger>
+          <TooltipContent>{t('Delete selected users')}</TooltipContent>
+        </Tooltip>
       </BulkActionsToolbar>
       <ConfirmDialog
         open={target !== null}
@@ -159,6 +217,25 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
         handleConfirm={() => {
           if (target && !levelUpdate.isPending) {
             levelUpdate.mutate(target)
+          }
+        }}
+      />
+      <ConfirmDialog
+        destructive
+        open={deleteTargets !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletion.isPending) setDeleteTargets(null)
+        }}
+        title={t('Delete {{count}} users?', {
+          count: deleteTargets?.length ?? 0,
+        })}
+        desc={t('This action cannot be undone.')}
+        confirmText={deletion.isPending ? t('Deleting...') : t('Delete')}
+        isLoading={deletion.isPending}
+        disabled={!deleteTargets?.length}
+        handleConfirm={() => {
+          if (deleteTargets?.length && !deletion.isPending) {
+            deletion.mutate(deleteTargets)
           }
         }}
       />

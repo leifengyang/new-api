@@ -122,6 +122,15 @@ export async function deleteUser(id: number): Promise<ApiResponse> {
 }
 
 /**
+ * Delete many users at once (hard delete). The server refuses the whole batch
+ * when any selected account is at or above the operator's own role.
+ */
+export async function batchDeleteUsers(ids: number[]): Promise<ApiResponse> {
+  const res = await api.post('/api/user/batch', { ids })
+  return res.data
+}
+
+/**
  * Manage user (promote, demote, enable, disable, delete)
  */
 export async function manageUser(

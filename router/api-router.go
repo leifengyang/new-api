@@ -155,6 +155,9 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/:id", controller.GetUser)
 				adminRoute.POST("/", controller.CreateUser)
 				adminRoute.POST("/manage", controller.ManageUser)
+				// 与 /api/channel/batch、/api/redemption/batch 同一约定：POST 到
+				// 资源下的 /batch 表示批量删除。
+				adminRoute.POST("/batch", controller.DeleteUserBatch)
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
 				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)

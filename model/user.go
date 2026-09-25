@@ -1035,37 +1035,114 @@ func (user *User) HardDelete() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	var tokens []Token
-	var deletedAuthVersion int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
+	_, err := hardDeleteUsers([]int{user.Id})
+	return err
+}
+
+// MaxBatchDeleteUsers 限制一次批量删除的用户数。管理端用户列表一页最多 100 行，
+// 选择也只在当前页，所以这个上界覆盖真实操作；再大只是把单个事务拖得更长。
+const MaxBatchDeleteUsers = 100
+
+var (
+	ErrBatchDeleteNoTargets  = errors.New("请选择要删除的用户")
+	ErrBatchDeleteTooMany    = fmt.Errorf("一次最多删除 %d 个用户", MaxBatchDeleteUsers)
+	ErrBatchDeleteTargetGone = errors.New("所选用户不存在或已被删除")
+	ErrBatchDeleteNotAllowed = errors.New("不能删除与自己同级或更高权限的账号")
+)
+
+// HardDeleteUsersByIds 批量硬删除用户，返回真正删掉的行数。
+//
+// operatorRole 是操作者的角色：与自己同级或更高权限的账号一律不能删，这同时挡住了
+// 删除自己。任何一个目标不合格就整批拒绝，不做部分删除——用户删除不可撤销，删一半
+// 再报错留下的残局比直接拒绝更难收拾，管理员重选一次的成本却很低。
+func HardDeleteUsersByIds(ids []int, operatorRole int) (int64, error) {
+	unique := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return 0, ErrBatchDeleteNoTargets
 		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return 0, ErrBatchDeleteNoTargets
+	}
+	if len(unique) > MaxBatchDeleteUsers {
+		return 0, ErrBatchDeleteTooMany
+	}
+
+	// Unscoped：已注销的用户仍然占着这一行，管理员要能把它彻底删掉；也正因为
+	// 可能已经软删除，存在性不能用默认作用域判断。
+	var targets []User
+	if err := DB.Unscoped().Select("id", "role").Where("id IN ?", unique).Find(&targets).Error; err != nil {
+		return 0, err
+	}
+	if len(targets) != len(unique) {
+		return 0, ErrBatchDeleteTargetGone
+	}
+	for _, target := range targets {
+		if operatorRole <= target.Role {
+			return 0, ErrBatchDeleteNotAllowed
+		}
+	}
+	return hardDeleteUsers(unique)
+}
+
+// hardDeleteUsers 是硬删除的唯一实现，单条和批量都走这里。ids 必须已经去重且非空。
+//
+// 顺序沿用原单条删除：先自增认证版本（内部会下发 deny fence，Redis 不可用时整个
+// 事务失败，绝不会出现「用户删了、旧令牌还能用」），再清掉认证数据，最后删行。
+// 缓存只在提交之后失效，事务没落地就不动缓存。
+func hardDeleteUsers(ids []int) (int64, error) {
+	var (
+		tokens       []Token
+		deletedCount int64
+		authVersions = make(map[int]int64, len(ids))
+	)
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		if common.RedisEnabled {
-			if err := tx.Unscoped().Select("id", commonKeyCol).Where("user_id = ?", user.Id).Find(&tokens).Error; err != nil {
+			if err := tx.Unscoped().Select("id", commonKeyCol).Where("user_id IN ?", ids).Find(&tokens).Error; err != nil {
 				return err
 			}
 		}
-		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
-			return err
+		for _, userId := range ids {
+			next, err := IncrementUserAuthVersionWithTx(tx, userId)
+			if err != nil {
+				return err
+			}
+			authVersions[userId] = next
+			if err := deleteUserAuthenticationData(tx, userId); err != nil {
+				return err
+			}
 		}
-		return tx.Unscoped().Delete(user).Error
+		result := tx.Unscoped().Where("id IN ?", ids).Delete(&User{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deletedCount = result.RowsAffected
+		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := publishCommittedUserAuthVersion(user.Id, deletedAuthVersion); err != nil {
-		common.SysError(fmt.Sprintf("failed to publish auth tombstone after hard deleting user %d: %v", user.Id, err))
+	for userId, authVersion := range authVersions {
+		if err := publishCommittedUserAuthVersion(userId, authVersion); err != nil {
+			common.SysError(fmt.Sprintf("failed to publish auth tombstone after hard deleting user %d: %v", userId, err))
+		}
 	}
 	if err := invalidateTokensCache(tokens); err != nil {
-		common.SysError(fmt.Sprintf("failed to invalidate token cache after hard deleting user %d: %v", user.Id, err))
+		common.SysError(fmt.Sprintf("failed to invalidate token cache after hard deleting %d users: %v", len(ids), err))
 	}
-	if err := invalidateUserCache(user.Id); err != nil {
-		common.SysError(fmt.Sprintf("failed to invalidate user cache after hard deleting user %d: %v", user.Id, err))
+	for _, userId := range ids {
+		if err := invalidateUserCache(userId); err != nil {
+			common.SysError(fmt.Sprintf("failed to invalidate user cache after hard deleting user %d: %v", userId, err))
+		}
 	}
-	return nil
+	return deletedCount, nil
 }
 
 func deleteUserAuthenticationData(tx *gorm.DB, userId int) error {

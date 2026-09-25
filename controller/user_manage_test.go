@@ -66,7 +66,13 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 			}
 		}
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}))
+	// User deletion walks every table that holds authentication data for the
+	// account, so the fixture has to create them too.
+	require.NoError(t, db.AutoMigrate(
+		&model.User{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{},
+		&model.Token{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.PasskeyCredential{},
+		&model.AuthFlow{}, &model.ExternalIdentityClaim{}, &model.UserOAuthBinding{},
+	))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
 	if dialect == "sqlite" {
@@ -190,6 +196,160 @@ func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	require.NoError(t, db.First(&unchanged, unchanged.Id).Error)
 	assert.EqualValues(t, 1, unchanged.AuthVersion)
 	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+}
+
+func performDeleteUserBatchRequest(t *testing.T, operatorRole int, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/batch", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("id", 9999)
+	c.Set("role", operatorRole)
+	c.Set("username", "root-operator")
+	c.Set(common.RequestIdKey, "batch-delete-test-request")
+	DeleteUserBatch(c)
+	return recorder
+}
+
+func TestDeleteUserBatchEnforcesRoleAndDeletesAtomically(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		operatorRole  int
+		targets       []model.User
+		insertMissing bool
+		duplicateIds  bool
+		wantSuccess   bool
+		wantDeleted   int64
+		wantMessage   string
+	}{
+		{
+			name: "root deletes common users", operatorRole: common.RoleRootUser,
+			targets:     []model.User{{Username: "batch-common-one", Role: common.RoleCommonUser}, {Username: "batch-common-two", Role: common.RoleCommonUser}},
+			wantSuccess: true, wantDeleted: 2,
+		},
+		{
+			name: "admin deletes a common user", operatorRole: common.RoleAdminUser,
+			targets:     []model.User{{Username: "batch-admin-common", Role: common.RoleCommonUser}},
+			wantSuccess: true, wantDeleted: 1,
+		},
+		{
+			name: "admin cannot delete a peer admin", operatorRole: common.RoleAdminUser,
+			targets:     []model.User{{Username: "batch-peer-admin", Role: common.RoleAdminUser}},
+			wantMessage: i18n.MsgUserNoPermissionHigherLevel,
+		},
+		{
+			name: "admin cannot delete a root account", operatorRole: common.RoleAdminUser,
+			targets:     []model.User{{Username: "batch-root-target", Role: common.RoleRootUser}},
+			wantMessage: i18n.MsgUserNoPermissionHigherLevel,
+		},
+		{
+			name: "root cannot delete another root account", operatorRole: common.RoleRootUser,
+			targets:     []model.User{{Username: "batch-self", Role: common.RoleRootUser}},
+			wantMessage: i18n.MsgUserNoPermissionHigherLevel,
+		},
+		{
+			// The undeletable row is second on purpose: deleting row by row
+			// would already have removed the first one before it noticed.
+			name: "one refused target keeps the whole batch", operatorRole: common.RoleAdminUser,
+			targets:     []model.User{{Username: "batch-kept-common", Role: common.RoleCommonUser}, {Username: "batch-kept-admin", Role: common.RoleAdminUser}},
+			wantMessage: i18n.MsgUserNoPermissionHigherLevel,
+		},
+		{
+			name: "an unknown target refuses the batch", operatorRole: common.RoleRootUser,
+			targets:       []model.User{{Username: "batch-known", Role: common.RoleCommonUser}},
+			insertMissing: true,
+			wantMessage:   i18n.MsgUserNotExists,
+		},
+		{
+			name: "empty selection is refused", operatorRole: common.RoleRootUser,
+			wantMessage: i18n.MsgInvalidParams,
+		},
+		{
+			name: "duplicate ids are deleted once", operatorRole: common.RoleRootUser,
+			targets:      []model.User{{Username: "batch-duplicate", Role: common.RoleCommonUser}},
+			duplicateIds: true,
+			wantSuccess:  true, wantDeleted: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			ids := make([]int, 0, len(tc.targets))
+			for i := range tc.targets {
+				tc.targets[i].Password = "password"
+				tc.targets[i].Status = common.UserStatusEnabled
+				tc.targets[i].AuthVersion = 1
+				// aff_code carries a unique index, so two fixtures sharing the
+				// empty default would collide. It is also varchar(32), so the
+				// code has to stay short; the username is already unique here.
+				tc.targets[i].AffCode = fmt.Sprintf("aff-%s-%d", tc.targets[i].Username, i)
+				require.NoError(t, db.Create(&tc.targets[i]).Error)
+				ids = append(ids, tc.targets[i].Id)
+			}
+			if tc.duplicateIds {
+				ids = append(ids, ids[0])
+			}
+			if tc.insertMissing {
+				ids = append(ids, 404)
+			}
+
+			body, err := common.Marshal(map[string]any{"ids": ids})
+			require.NoError(t, err)
+			recorder := performDeleteUserBatchRequest(t, tc.operatorRole, string(body))
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			require.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
+			if tc.wantSuccess {
+				assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"data":%d`, tc.wantDeleted))
+			} else {
+				assert.Contains(t, recorder.Body.String(), i18n.Translate("en", tc.wantMessage))
+			}
+
+			for _, target := range tc.targets {
+				var kept model.User
+				err := db.Unscoped().First(&kept, target.Id).Error
+				if tc.wantSuccess {
+					assert.ErrorIs(t, err, gorm.ErrRecordNotFound, "hard delete must remove the row entirely")
+					continue
+				}
+				require.NoError(t, err, "a refused batch must not delete anything")
+				assert.EqualValues(t, 1, kept.AuthVersion, "a refused batch must not bump auth versions")
+			}
+		})
+	}
+}
+
+func TestDeleteUserBatchRemovesAuthenticationDataAndAudits(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	now := time.Now().Unix()
+	user := model.User{Username: "batch-auth-owner", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "batch-auth-aff"}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.Token{UserId: user.Id, Key: "batch-auth-token"}).Error)
+	require.NoError(t, db.Create(&model.UserSession{
+		SID: "batch-auth-session", UserID: user.Id, Version: 1, UserAuthVersion: 1,
+		Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password",
+		LastActiveAt: now, ExpiresAt: now + 3600,
+	}).Error)
+
+	recorder := performDeleteUserBatchRequest(t, common.RoleRootUser, fmt.Sprintf(`{"ids":[%d]}`, user.Id))
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+	for _, record := range []any{&model.Token{}, &model.UserSession{}} {
+		var count int64
+		require.NoError(t, db.Unscoped().Model(record).Where("user_id = ?", user.Id).Count(&count).Error)
+		assert.Zero(t, count)
+	}
+
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&audits).Error)
+	require.Len(t, audits, 1)
+	assert.Equal(t, "user.delete_batch", audits[0].Action)
+	assert.True(t, audits[0].Success)
+	params, err := common.Marshal(audits[0].Other.Op.Params)
+	require.NoError(t, err)
+	assert.Contains(t, string(params), `"count":1`)
+	assert.Contains(t, string(params), `"requested":1`)
+	assert.NotContains(t, string(params), user.Username, "the audit must not leak the deleted account name")
 }
 
 func createQuotaTestOperator(t *testing.T, db *gorm.DB, role int) model.User {

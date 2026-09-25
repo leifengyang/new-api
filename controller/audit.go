@@ -68,6 +68,7 @@ var auditContentTemplates = map[string]string{
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 
+	"user.delete_batch":        "Batch deleted ${count} of ${requested} users",
 	"user.member_level_update": "Set member level of user ${username} (ID: ${target_user_id}) to ${member_level}",
 	"user.member_level_batch":  "Batch set member level ${member_level} for ${count} of ${requested} users",
 	"invite_rebate.reverse":    "Reversed invite rebate ${rebate_id} (inviter ${inviter_id}, invitee ${invitee_id}): recovered ${recovered}, outstanding ${outstanding}; reason: ${reason}",
