@@ -45,14 +45,19 @@ func hasCustomModelRatio(modelName string, currentRatio float64) bool {
 	return currentRatio != defaultRatio
 }
 
-func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
+// calculateAudioQuota returns the charge along with the saturation event (if
+// any) and whether the 1-quota minimum-charge floor decided the result. Both
+// are surfaced so the consume log can explain a charge that does not match the
+// plain quantity x price product.
+func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp, bool) {
 	if info.UsePrice {
 		modelPrice := decimal.NewFromFloat(info.ModelPrice)
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		groupRatio := decimal.NewFromFloat(info.GroupRatio)
 
 		quota := modelPrice.Mul(quotaPerUnit).Mul(groupRatio)
-		return common.QuotaFromDecimalChecked(quota)
+		charged, clamp := common.QuotaFromDecimalChecked(quota)
+		return charged, clamp, false
 	}
 
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(info.ModelName))
@@ -77,11 +82,14 @@ func calculateAudioQuota(info QuotaInfo) (int, *common.QuotaClamp) {
 	quota = quota.Mul(ratio)
 
 	// If ratio is not zero and quota is less than or equal to zero, set quota to 1
+	minimumCharge := false
 	if !ratio.IsZero() && quota.LessThanOrEqual(decimal.Zero) {
 		quota = decimal.NewFromInt(1)
+		minimumCharge = true
 	}
 
-	return common.QuotaFromDecimalChecked(quota)
+	charged, clamp := common.QuotaFromDecimalChecked(quota)
+	return charged, clamp, minimumCharge
 }
 
 func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage) error {
@@ -134,7 +142,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		GroupRatio: actualGroupRatio,
 	}
 
-	quota, clamp := calculateAudioQuota(quotaInfo)
+	quota, clamp, _ := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
 
 	if userQuota < quota {
@@ -198,10 +206,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		GroupRatio: groupRatio,
 	}
 
-	quota, clamp := calculateAudioQuota(quotaInfo)
+	quota, clamp, minimumCharge := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
+	// A tiered expression replaces the formula's result outright, so the floor
+	// that the formula applied no longer explains the charge on the log.
+	chargeAdjustment := chargeAdjustmentReason{MinimumCharge: minimumCharge}
 	if tieredOk {
 		quota = tieredQuota
+		chargeAdjustment = chargeAdjustmentReason{}
 	}
 
 	totalTokens := usage.TotalTokens
@@ -218,6 +230,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		chargeAdjustment = chargeAdjustmentReason{NoBillableUsage: true}
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
@@ -239,6 +252,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	attachChargeAdjustment(other, relayInfo.QuotaClamp, chargeAdjustment)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
@@ -331,10 +345,14 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		GroupRatio: groupRatio,
 	}
 
-	quota, clamp := calculateAudioQuota(quotaInfo)
+	quota, clamp, minimumCharge := calculateAudioQuota(quotaInfo)
 	noteQuotaClamp(relayInfo, clamp)
+	// A tiered expression replaces the formula's result outright, so the floor
+	// that the formula applied no longer explains the charge on the log.
+	chargeAdjustment := chargeAdjustmentReason{MinimumCharge: minimumCharge}
 	if tieredOk {
 		quota = tieredQuota
+		chargeAdjustment = chargeAdjustmentReason{}
 	}
 
 	totalTokens := usage.TotalTokens
@@ -351,6 +369,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		// in this case, must be some error happened
 		// we cannot just return, because we may have to return the pre-consumed quota
 		quota = 0
+		chargeAdjustment = chargeAdjustmentReason{NoBillableUsage: true}
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
@@ -372,6 +391,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	attachChargeAdjustment(other, relayInfo.QuotaClamp, chargeAdjustment)
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,

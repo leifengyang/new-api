@@ -6852,6 +6852,22 @@
     "Rebates": "Số khoản hoàn tiền",
     "Invite-Only Registration": "Chỉ đăng ký bằng lời mời",
     "Require a valid invitation link to register": "Yêu cầu liên kết mời hợp lệ để đăng ký",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Hệ thống dùng nội bộ, không mở cho công chúng. Người ngoài không được phép đăng ký."
+    "Internal platform, not open to the public. Registration is not permitted.": "Nền tảng nội bộ, không mở cho công chúng. Không được phép đăng ký.",
+    "Charged": "Đã trừ",
+    "Computed total": "Tổng tính được",
+    "Difference": "Chênh lệch",
+    "Usage details": "Chi tiết sử dụng",
+    "Technical details": "Chi tiết kỹ thuật",
+    "{{count}} sections": "{{count}} mục",
+    "calls": "lần gọi",
+    "This request carried no billable usage, so nothing was charged.": "Yêu cầu này không có mức sử dụng nào cần tính phí nên không bị trừ phí.",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "Kết quả tính theo công thức chưa đủ một đơn vị quota nên đã áp dụng mức tính tối thiểu một đơn vị.",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "Số tiền tính được vượt giới hạn cho mỗi yêu cầu nên đã bị cắt về mức trần.",
+    "The charge was adjusted by the server after the formula ran.": "Máy chủ đã điều chỉnh khoản phí sau khi công thức chạy xong.",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "Chênh lệch đến từ hệ số hoặc việc làm tròn phía máy chủ mà bản ghi này không liệt kê. Số đã trừ ở trên là con số chính xác.",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "Yêu cầu này được tính phí theo ảnh, với các hệ số mà bản ghi không liệt kê, nên không thể tách khoản phí thành từng mục. Số ở trên là con số chính xác.",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "Yêu cầu này được định giá bằng biểu thức tính phí, tổng của biểu thức chính là khoản phí. Xem chi tiết theo bậc bên dưới.",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "Bản ghi này thiếu các trường định giá cần để tách khoản phí. Số ở trên là con số chính xác.",
+    "No billable usage was recorded for this request.": "Không có mức sử dụng nào cần tính phí được ghi cho yêu cầu này."
   }
 }

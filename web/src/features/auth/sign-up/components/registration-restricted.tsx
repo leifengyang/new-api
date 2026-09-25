@@ -36,7 +36,7 @@ export function RegistrationRestricted() {
       icon={Lock}
       title={t('Invite-Only Registration')}
       description={t(
-        'Internal system, not open to the public. Non-employees are not permitted to register.'
+        'Internal platform, not open to the public. Registration is not permitted.'
       )}
       action={<Button render={<Link to='/sign-in' />}>{t('Sign in')}</Button>}
     />

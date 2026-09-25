@@ -22,7 +22,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import {
@@ -147,7 +147,7 @@ describe('quota adjustment log localization', () => {
   })
 
   test.each(cases)(
-    '$action switches language in the preview and details',
+    '$action switches language in the details dialog',
     async (scenario) => {
       const i18n = createInstance()
       await i18n.init({
@@ -189,19 +189,16 @@ describe('quota adjustment log localization', () => {
         </I18nextProvider>
       )
 
-      // The modal makes the table preview inert, but both remain rendered.
-      expect(screen.getAllByText(scenario.english)).toHaveLength(2)
-      expect(
-        within(screen.getByRole('dialog')).getByText(scenario.english)
-      ).toBeInTheDocument()
+      // The table cell is a button now, so the descriptor renders once: a
+      // top-up row's payload, shown above the collapsed diagnostics.
+      expect(screen.getAllByText(scenario.english)).toHaveLength(1)
+      const dialog = within(screen.getByRole('dialog'))
+      expect(dialog.getByText(scenario.english)).toBeInTheDocument()
       await act(() => i18n.changeLanguage('zh'))
-      expect(screen.getAllByText(scenario.chinese)).toHaveLength(2)
-      expect(
-        within(screen.getByRole('dialog')).getByText(scenario.chinese)
-      ).toBeInTheDocument()
+      expect(screen.getAllByText(scenario.chinese)).toHaveLength(1)
+      expect(dialog.getByText(scenario.chinese)).toBeInTheDocument()
       expect(screen.queryByText('English export fallback')).toBeNull()
       if ('target_user_id' in scenario.params) {
-        const dialog = within(screen.getByRole('dialog'))
         expect(dialog.getByText('quota-owner')).toBeVisible()
         expect(dialog.getByText('调整前额度')).toBeVisible()
         expect(dialog.getByText('调整后额度')).toBeVisible()

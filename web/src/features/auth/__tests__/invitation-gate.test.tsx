@@ -40,7 +40,7 @@ import { SignUp } from '../sign-up'
 const png = 'data:image/png;base64,iVBORw0KGgo='
 const INVITE_TITLE = 'Invite-Only Registration'
 const INVITE_MESSAGE =
-  'Internal system, not open to the public. Non-employees are not permitted to register.'
+  'Internal platform, not open to the public. Registration is not permitted.'
 
 type StatusOverrides = Record<string, unknown>
 

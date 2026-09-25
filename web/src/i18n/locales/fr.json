@@ -6852,6 +6852,22 @@
     "Rebates": "Commissions",
     "Invite-Only Registration": "Inscription sur invitation uniquement",
     "Require a valid invitation link to register": "Exiger un lien d'invitation valide pour s'inscrire",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Système à usage interne, non ouvert au public. Les personnes extérieures ne peuvent pas s'inscrire."
+    "Internal platform, not open to the public. Registration is not permitted.": "Plateforme interne, non ouverte au public. L'inscription n'est pas autorisée.",
+    "Charged": "Facturé",
+    "Computed total": "Total calculé",
+    "Difference": "Écart",
+    "Usage details": "Détail de l'usage",
+    "Technical details": "Détails techniques",
+    "{{count}} sections": "{{count}} sections",
+    "calls": "appels",
+    "This request carried no billable usage, so nothing was charged.": "Cette requête ne comportait aucun usage facturable, rien n'a donc été facturé.",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "Le calcul donne moins d'une unité de quota ; la facturation minimale d'une unité a donc été appliquée.",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "Le montant calculé dépassait la limite prise en charge par requête ; il a donc été plafonné.",
+    "The charge was adjusted by the server after the formula ran.": "Le montant a été ajusté par le serveur après l'exécution de la formule.",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "L'écart provient d'un multiplicateur ou d'un arrondi côté serveur que cet enregistrement ne détaille pas. Le montant facturé ci-dessus fait foi.",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "Cette requête a été facturée à l'image, avec des multiplicateurs que l'enregistrement ne détaille pas ; le montant ne peut donc pas être décomposé terme par terme. Le montant ci-dessus fait foi.",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "Cette requête a été tarifée par une expression de facturation, et le total de l'expression constitue le montant facturé. Voir le détail des paliers ci-dessous.",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "Cet enregistrement ne contient pas les champs de tarification nécessaires pour décomposer le montant. Le montant ci-dessus fait foi.",
+    "No billable usage was recorded for this request.": "Aucun usage facturable n'a été enregistré pour cette requête."
   }
 }

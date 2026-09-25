@@ -24,6 +24,7 @@ import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
+import { expandTechnicalDetails } from './dialog-helpers'
 
 const i18nKeys = {
   'Log Details': 'Log Details',
@@ -36,6 +37,8 @@ const i18nKeys = {
   'Group Ratio': 'Group Ratio',
   'Total Cost': 'Total Cost',
   'Usage parameters': 'Usage parameters',
+  'Technical details': 'Technical details',
+  '{{count}} sections': '{{count}} sections',
 }
 
 function makeLog(other: LogOtherData): UsageLog {
@@ -102,6 +105,7 @@ test('shows the recorded request and response models in log details', () => {
       returned_model: 'unexpected-model',
     },
   })
+  expandTechnicalDetails()
   expect(screen.getByText('Response model: unexpected-model')).toBeVisible()
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
@@ -143,6 +147,7 @@ describe('usage facts billing details', () => {
         1000
       )
     )
+    expandTechnicalDetails()
     const billable = within(
       screen.getByRole('group', { name: 'Billable token breakdown' })
     )
@@ -190,6 +195,7 @@ describe('usage facts billing details', () => {
         },
       })
     )
+    expandTechnicalDetails()
 
     expect(screen.getByText('Usage parameters')).toBeInTheDocument()
     expect(rowValue('resolution')).toBe('720P')
@@ -211,6 +217,7 @@ describe('usage facts billing details', () => {
         group_ratio: 1,
       })
     )
+    expandTechnicalDetails()
 
     expect(screen.queryByText('Usage parameters')).toBeNull()
     expect(screen.queryByText('resolution')).toBeNull()
@@ -225,6 +232,7 @@ describe('usage facts billing details', () => {
         usage_facts: {},
       })
     )
+    expandTechnicalDetails()
 
     expect(screen.queryByText('Usage parameters')).toBeNull()
     expect(screen.queryByText('resolution')).toBeNull()
