@@ -105,7 +105,8 @@ For commercial licensing, please contact support@quantumnous.com
  * an ink-tinted hover would just read as dirty. */
 :root {
   --radius: 0.625rem;
-  --app-header-height: 3rem;
+  /* 后台顶栏按紧凑档给，正文区因此多出 4px 可用高度。 */
+  --app-header-height: 2.75rem;
   /* Static build-channel fallback consumed when JS hasn't booted yet. */
   --app-rev: '2k6e8r7p';
   /* Currently active body font. The font axis swaps this between

@@ -200,13 +200,16 @@ export function getTimeColor(
 }
 
 /**
- * Get first-response-token color based on latency (in seconds)
+ * Get first-response-token color based on latency (in seconds).
+ *
+ * 首字时延的分档按站点口径放宽：10 秒内算快，30 秒内需要留意，再慢就是红色。
+ * 30 秒以上（含 60 秒以上）都落在红色，配色只有绿/黄/红三档，中间不再细分。
  */
 export function getFirstResponseTimeColor(
   seconds: number
 ): 'success' | 'warning' | 'danger' {
-  if (seconds < 5) return 'success'
-  if (seconds < 10) return 'warning'
+  if (seconds < 10) return 'success'
+  if (seconds < 30) return 'warning'
   return 'danger'
 }
 
