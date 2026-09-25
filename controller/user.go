@@ -955,10 +955,21 @@ type deleteUserBatchRequest struct {
 // DeleteUserBatch 批量硬删除用户，供管理端用户列表的多选删除使用。
 // 权限判定与单个删除同源，只是搬进了 model.HardDeleteUsersByIds：与操作者同级或
 // 更高权限的账号（含自己）不能删，任何一个不合格就整批拒绝。
+//
+// 删除不可撤销，所以除了登录态还要一次二次验证：proof 与所选 id 集合绑定，换一批
+// 目标就用不上了。校验在动数据库之前完成，验证没通过时整批原样保留。
 func DeleteUserBatch(c *gin.Context) {
 	req := deleteUserBatchRequest{}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	context, err := common.Marshal(service.UserBatchDeleteContext{UserIDs: req.Ids})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeUserBatchDelete, Context: context}) == nil {
 		return
 	}
 	count, err := model.HardDeleteUsersByIds(req.Ids, c.GetInt("role"))

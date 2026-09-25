@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
+import { authRequestOptions } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
@@ -123,10 +124,21 @@ export async function deleteUser(id: number): Promise<ApiResponse> {
 
 /**
  * Delete many users at once (hard delete). The server refuses the whole batch
- * when any selected account is at or above the operator's own role.
+ * when any selected account is at or above the operator's own role, and the
+ * proof must have been issued for exactly this set of ids.
  */
-export async function batchDeleteUsers(ids: number[]): Promise<ApiResponse> {
-  const res = await api.post('/api/user/batch', { ids })
+export async function batchDeleteUsers(
+  ids: number[],
+  proofToken: string
+): Promise<ApiResponse> {
+  const res = await api.post(
+    '/api/user/batch',
+    { ids },
+    {
+      ...authRequestOptions,
+      headers: { 'X-Security-Proof': proofToken },
+    }
+  )
   return res.data
 }
 

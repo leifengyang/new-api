@@ -38,6 +38,7 @@ export type SecurityProofScope =
   | 'account.password.set'
   | 'account.password.change'
   | 'account.delete'
+  | 'user.delete_batch'
 
 export type VerificationOperation =
   | { scope: 'channel.key.read'; context: { channel_id: number } }
@@ -46,10 +47,16 @@ export type VerificationOperation =
       context: { provider: string; email?: string; code?: string }
     }
   | { scope: 'account.binding.unbind'; context: { provider_id: number } }
+  // The proof is bound to the exact selection, so a verification made for one
+  // set of accounts cannot be spent on another.
+  | { scope: 'user.delete_batch'; context: { user_ids: number[] } }
   | {
       scope: Exclude<
         SecurityProofScope,
-        'channel.key.read' | 'account.binding.bind' | 'account.binding.unbind'
+        | 'channel.key.read'
+        | 'account.binding.bind'
+        | 'account.binding.unbind'
+        | 'user.delete_batch'
       >
       context?: Record<string, never>
     }

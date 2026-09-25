@@ -31,6 +31,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
@@ -60,6 +64,8 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
   const [target, setTarget] = useState<MemberLevelTarget | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<User[] | null>(null)
   const selectedRows = table.getFilteredSelectedRowModel().rows
+  const verification = useSecureVerification()
+  const { requestVerification } = verification
 
   const levelUpdate = useMutation({
     mutationFn: async (next: MemberLevelTarget) => {
@@ -88,12 +94,21 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
     selectedRows.every((row) => getUserMemberLevel(row.original) === level)
 
   const deletion = useMutation({
-    mutationFn: async (targets: User[]) => {
-      const result = await batchDeleteUsers(targets.map((user) => user.id))
+    mutationFn: async ({
+      targets,
+      proofToken,
+    }: {
+      targets: User[]
+      proofToken: string
+    }) => {
+      const result = await batchDeleteUsers(
+        targets.map((user) => user.id),
+        proofToken
+      )
       if (!result.success) throw createServerError(result)
       return targets.length
     },
-    onSuccess: (count, targets) => {
+    onSuccess: (count, { targets }) => {
       toast.success(t('Successfully deleted {{count}} users', { count }))
       // Drop the deleted rows from the selection so the toolbar count keeps
       // matching the list; the refresh below is what removes them from it.
@@ -105,7 +120,7 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
       setDeleteTargets(null)
       triggerRefresh()
     },
-    onError: (error, targets) => {
+    onError: (error, { targets }) => {
       handleServerError(
         error,
         t('Failed to delete {{count}} users', { count: targets.length })
@@ -115,6 +130,24 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
 
   const openFor = (level: number) => {
     setTarget({ ids: selectedRows.map((row) => row.original.id), level })
+  }
+
+  // Deleting accounts cannot be undone, so the confirmation is followed by a
+  // second check of the operator's identity. The proof is bound to this exact
+  // selection on the server, and a cancelled prompt deletes nothing.
+  const confirmDeletion = async () => {
+    const targets = deleteTargets
+    if (!targets?.length || deletion.isPending) return
+    const proof = await requestVerification({
+      scope: 'user.delete_batch',
+      context: { user_ids: targets.map((user) => user.id) },
+      title: t('Verify to delete {{count}} users', { count: targets.length }),
+      description: t(
+        'Complete the verification to delete the selected users. This action cannot be undone.'
+      ),
+    })
+    if (!proof) return
+    deletion.mutate({ targets, proofToken: proof.proof_token })
   }
 
   // The server rejects the whole batch when it holds an account at or above the
@@ -176,7 +209,11 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
                 size='icon'
                 className='size-8'
                 aria-label={t('Delete selected users')}
-                disabled={deletion.isPending || hasUndeletableRow}
+                disabled={
+                  deletion.isPending ||
+                  verification.isActive ||
+                  hasUndeletableRow
+                }
                 onClick={() =>
                   setDeleteTargets(selectedRows.map((row) => row.original))
                 }
@@ -222,9 +259,11 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
       />
       <ConfirmDialog
         destructive
-        open={deleteTargets !== null}
+        open={deleteTargets !== null && !verification.isActive}
         onOpenChange={(open) => {
-          if (!open && !deletion.isPending) setDeleteTargets(null)
+          if (!open && !deletion.isPending && !verification.isActive) {
+            setDeleteTargets(null)
+          }
         }}
         title={t('Delete {{count}} users?', {
           count: deleteTargets?.length ?? 0,
@@ -233,12 +272,9 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
         confirmText={deletion.isPending ? t('Deleting...') : t('Delete')}
         isLoading={deletion.isPending}
         disabled={!deleteTargets?.length}
-        handleConfirm={() => {
-          if (deleteTargets?.length && !deletion.isPending) {
-            deletion.mutate(deleteTargets)
-          }
-        }}
+        handleConfirm={confirmDeletion}
       />
+      <SecureVerificationDialog {...verification.dialogProps} />
     </>
   )
 }

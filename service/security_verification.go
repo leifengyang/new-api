@@ -34,6 +34,7 @@ const (
 	VerificationScopePasswordSet         = "account.password.set"
 	VerificationScopePasswordChange      = "account.password.change"
 	VerificationScopeAccountDelete       = "account.delete"
+	VerificationScopeUserBatchDelete     = "user.delete_batch"
 )
 
 var (
@@ -64,6 +65,13 @@ type AccountBindingContext struct {
 
 type AccountUnbindingContext struct {
 	ProviderID int `json:"provider_id"`
+}
+
+// UserBatchDeleteContext binds an administrative batch delete to the exact set
+// of accounts it authorizes, so a proof obtained for one selection cannot be
+// spent on another.
+type UserBatchDeleteContext struct {
+	UserIDs []int `json:"user_ids"`
 }
 
 // VerificationBinding contains no original operation parameters. It can safely
@@ -116,6 +124,32 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		if len(fields) != 1 || common.Unmarshal(fields["provider_id"], &context.ProviderID) != nil || context.ProviderID <= 0 {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
+		normalized = context
+	case VerificationScopeUserBatchDelete:
+		var context UserBatchDeleteContext
+		if len(fields) != 1 || common.Unmarshal(fields["user_ids"], &context.UserIDs) != nil {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		// The selection is normalized before it is hashed: the verification
+		// request and the delete request must hash the same set even when the
+		// client lists the ids in another order or repeats one of them.
+		unique := make([]int, 0, len(context.UserIDs))
+		seen := make(map[int]struct{}, len(context.UserIDs))
+		for _, userID := range context.UserIDs {
+			if userID <= 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+			if _, ok := seen[userID]; ok {
+				continue
+			}
+			seen[userID] = struct{}{}
+			unique = append(unique, userID)
+		}
+		if len(unique) == 0 || len(unique) > model.MaxBatchDeleteUsers {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		sort.Ints(unique)
+		context.UserIDs = unique
 		normalized = context
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
@@ -186,7 +220,8 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
-		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
+		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+		VerificationScopeUserBatchDelete:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}
@@ -234,6 +269,11 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
+	// The batch delete route is admin-only; a proof for it must not be mintable
+	// by an account that could not call the endpoint anyway.
+	if scope == VerificationScopeUserBatchDelete && state.Role < common.RoleAdminUser {
+		return nil, ErrVerificationForbidden
+	}
 	methods, err := securityVerificationPolicy(scope, *state)
 	if err != nil {
 		return nil, err
@@ -242,7 +282,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
-			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
+			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete, VerificationScopeUserBatchDelete:
 				methods[i].Available, methods[i].Reason = false, "Password authentication is disabled."
 			}
 		}
