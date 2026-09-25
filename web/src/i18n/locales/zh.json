@@ -6852,7 +6852,7 @@
     "Rebates": "返现笔数",
     "Invite-Only Registration": "仅限邀请注册",
     "Require a valid invitation link to register": "必须通过有效的邀请链接才能注册",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "企业自用系统，未对外开放，禁止非内部员工注册",
+    "Internal platform, not open to the public. Registration is not permitted.": "企业内部平台，未对外开放，禁止注册",
     "Charged": "实扣金额",
     "Computed total": "计算合计",
     "Difference": "差额",

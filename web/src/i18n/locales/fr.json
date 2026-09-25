@@ -6852,7 +6852,7 @@
     "Rebates": "Commissions",
     "Invite-Only Registration": "Inscription sur invitation uniquement",
     "Require a valid invitation link to register": "Exiger un lien d'invitation valide pour s'inscrire",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Système à usage interne, non ouvert au public. Les personnes extérieures ne peuvent pas s'inscrire.",
+    "Internal platform, not open to the public. Registration is not permitted.": "Plateforme interne, non ouverte au public. L'inscription n'est pas autorisée.",
     "Charged": "Facturé",
     "Computed total": "Total calculé",
     "Difference": "Écart",

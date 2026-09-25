@@ -6852,7 +6852,7 @@
     "Rebates": "Количество ребейтов",
     "Invite-Only Registration": "Регистрация только по приглашению",
     "Require a valid invitation link to register": "Для регистрации требуется действующая ссылка-приглашение",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Внутренняя система, не открыта для посторонних. Регистрация доступна только приглашённым сотрудникам.",
+    "Internal platform, not open to the public. Registration is not permitted.": "Внутренняя платформа, не открыта для посторонних. Регистрация запрещена.",
     "Charged": "Списано",
     "Computed total": "Расчётный итог",
     "Difference": "Расхождение",

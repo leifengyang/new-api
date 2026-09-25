@@ -6852,7 +6852,7 @@
     "Rebates": "リベート件数",
     "Invite-Only Registration": "招待制の登録",
     "Require a valid invitation link to register": "登録には有効な招待リンクが必要です",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "社内専用システムのため一般公開していません。招待された社員以外は登録できません。",
+    "Internal platform, not open to the public. Registration is not permitted.": "社内プラットフォームのため一般公開していません。登録はできません。",
     "Charged": "実際の課金額",
     "Computed total": "計算合計",
     "Difference": "差額",
