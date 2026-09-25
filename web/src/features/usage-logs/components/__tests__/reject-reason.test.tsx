@@ -23,6 +23,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
+import { expandTechnicalDetails } from './dialog-helpers'
 
 const queryClients: QueryClient[] = []
 
@@ -87,6 +88,7 @@ afterEach(() => {
 describe('usage log reject reason', () => {
   test('shows the nested admin reject reason to admins', () => {
     renderDetails(true)
+    expandTechnicalDetails()
 
     expect(screen.getByText('Reject Reason')).toBeInTheDocument()
     expect(screen.getByText('blocked by channel policy')).toBeInTheDocument()
@@ -94,6 +96,7 @@ describe('usage log reject reason', () => {
 
   test('hides the nested admin reject reason from non-admin users', () => {
     renderDetails(false)
+    expandTechnicalDetails()
 
     expect(screen.queryByText('Reject Reason')).toBeNull()
     expect(screen.queryByText('blocked by channel policy')).toBeNull()

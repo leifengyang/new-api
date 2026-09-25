@@ -114,6 +114,23 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+/**
+ * Why the charged quota is not the plain quantity x price product.
+ *
+ * Public, unlike `admin_info.quota_saturation`: the reconciliation line in the
+ * log details dialog is shown to every role. Only logs written after this field
+ * was introduced carry it, so its absence means "not recorded", not "no
+ * adjustment" — see the dialog's fallback wording.
+ */
+export interface ChargeAdjustment {
+  kind: 'no_billable_usage' | 'clamped' | 'minimum_charge' | string
+  /** clamp only: the conversion that saturated. */
+  op?: string
+  clamp_kind?: 'overflow' | 'underflow' | 'nan'
+  original?: number
+  clamped?: number
+}
+
 export interface LogOtherData {
   admin_info?: {
     request_policy?: PolicyEvent[]
@@ -239,6 +256,8 @@ export interface LogOtherData {
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string
+  // Public marker explaining a charge that differs from the plain product.
+  charge_adjustment?: ChargeAdjustment
   group?: string
   stream_status?: {
     status?: string

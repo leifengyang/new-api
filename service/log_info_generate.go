@@ -18,6 +18,58 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Charge-adjustment kinds recorded under the public other.charge_adjustment.
+// Unlike admin_info.quota_saturation, this marker is visible to the log owner,
+// because it explains why the charged quota is not the plain
+// quantity x unit-price x ratio product.
+const (
+	// ChargeAdjustmentNoBillableUsage: the request carried nothing billable, so
+	// the final charge was forced to 0.
+	ChargeAdjustmentNoBillableUsage = "no_billable_usage"
+	// ChargeAdjustmentClamped: a quota conversion saturated at the
+	// single-request bound (or fell back from NaN).
+	ChargeAdjustmentClamped = "clamped"
+	// ChargeAdjustmentMinimumCharge: a non-zero ratio with a computed charge of
+	// 0 or less was floored to 1 quota.
+	ChargeAdjustmentMinimumCharge = "minimum_charge"
+)
+
+// chargeAdjustmentReason carries the adjustment facts that are not derivable
+// from relayInfo alone.
+type chargeAdjustmentReason struct {
+	NoBillableUsage bool
+	MinimumCharge   bool
+}
+
+// attachChargeAdjustment records why this request's final charge diverges from
+// the plain product, so a non-admin log owner can reconcile the two. A public
+// marker rather than an admin_info one on purpose: the reconciliation line is
+// shown to every role. Precedence follows explanatory power for the final
+// number, since several causes can co-occur on one request.
+func attachChargeAdjustment(other *model.LogOther, clamp *common.QuotaClamp, reason chargeAdjustmentReason) {
+	if other == nil {
+		return
+	}
+	switch {
+	case reason.NoBillableUsage:
+		other.SetPublic("charge_adjustment", map[string]any{
+			"kind": ChargeAdjustmentNoBillableUsage,
+		})
+	case clamp != nil:
+		other.SetPublic("charge_adjustment", map[string]any{
+			"kind":       ChargeAdjustmentClamped,
+			"op":         clamp.Op,
+			"clamp_kind": clamp.Kind,
+			"original":   clamp.Original,
+			"clamped":    clamp.Clamped,
+		})
+	case reason.MinimumCharge:
+		other.SetPublic("charge_adjustment", map[string]any{
+			"kind": ChargeAdjustmentMinimumCharge,
+		})
+	}
+}
+
 // attachQuotaSaturationToOther nests a quota saturation marker under
 // other.admin_info.quota_saturation. Nesting under admin_info makes it
 // admin-only for free, since model.formatUserLogs strips the whole admin_info

@@ -6852,6 +6852,22 @@
     "Rebates": "Rebates",
     "Invite-Only Registration": "Invite-Only Registration",
     "Require a valid invitation link to register": "Require a valid invitation link to register",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Internal system, not open to the public. Non-employees are not permitted to register."
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Internal system, not open to the public. Non-employees are not permitted to register.",
+    "Charged": "Charged",
+    "Computed total": "Computed total",
+    "Difference": "Difference",
+    "Usage details": "Usage details",
+    "Technical details": "Technical details",
+    "{{count}} sections": "{{count}} sections",
+    "calls": "calls",
+    "This request carried no billable usage, so nothing was charged.": "This request carried no billable usage, so nothing was charged.",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "The formula came to less than one quota unit, so the minimum charge of one unit was applied.",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "The computed amount exceeded the supported per-request bound, so it was capped.",
+    "The charge was adjusted by the server after the formula ran.": "The charge was adjusted by the server after the formula ran.",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.",
+    "No billable usage was recorded for this request.": "No billable usage was recorded for this request."
   }
 }

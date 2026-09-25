@@ -6852,6 +6852,22 @@
     "Rebates": "リベート件数",
     "Invite-Only Registration": "招待制の登録",
     "Require a valid invitation link to register": "登録には有効な招待リンクが必要です",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "社内専用システムのため一般公開していません。招待された社員以外は登録できません。"
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "社内専用システムのため一般公開していません。招待された社員以外は登録できません。",
+    "Charged": "実際の課金額",
+    "Computed total": "計算合計",
+    "Difference": "差額",
+    "Usage details": "使用量の内訳",
+    "Technical details": "技術的な詳細",
+    "{{count}} sections": "{{count}} 件",
+    "calls": "回",
+    "This request carried no billable usage, so nothing was charged.": "このリクエストには課金対象の使用量がなかったため、課金されませんでした。",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "計算結果が 1 クォータ単位未満だったため、最低 1 単位が課金されました。",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "計算結果が 1 リクエストあたりの上限を超えたため、上限値に切り詰められました。",
+    "The charge was adjusted by the server after the formula ran.": "計算後にサーバー側で課金額が調整されました。",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "差額はサーバー側の係数または丸めによるもので、この記録には内訳がありません。上記の実際の課金額が正となります。",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "このリクエストは画像単位で課金され、その係数が記録に残っていないため、項目ごとに分解できません。上記の金額が正となります。",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "このリクエストは課金式で価格が決まり、式の合計が課金額となります。以下の段階別内訳をご覧ください。",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "この記録には金額を分解するための価格情報が含まれていません。上記の金額が正となります。",
+    "No billable usage was recorded for this request.": "このリクエストには課金対象の使用量が記録されていません。"
   }
 }

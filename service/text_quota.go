@@ -65,6 +65,11 @@ type textQuotaSummary struct {
 	ToolSurchargeItems     []ToolSurchargeItem
 	ToolCallSurchargeQuota decimal.Decimal
 	FixedPriceBilling      bool
+	// MinimumChargeApplied feeds the public other.charge_adjustment marker. It
+	// must be cleared when tiered settlement replaces the formula's result.
+	// Whether usage was billable is deliberately NOT cached here: it depends on
+	// fields that tiered settlement fills in later. See attachChargeAdjustment.
+	MinimumChargeApplied bool
 }
 
 // hasBillableUsage reports whether this request should incur any charge.
@@ -299,6 +304,10 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	ratio := dModelRatio.Mul(dGroupRatio)
 	summary.ToolCallSurchargeQuota = calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
 
+	// Tracked across both pricing branches so the settle path can tell the log
+	// owner that the 1-quota floor, rather than the formula, set the charge.
+	minimumChargeApplied := false
+
 	var audioInputQuota decimal.Decimal
 	if !relayInfo.PriceData.UsePrice {
 		baseTokens := dPromptTokens
@@ -357,6 +366,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
 			quotaCalculateDecimal = decimal.NewFromInt(1)
+			minimumChargeApplied = true
 		}
 		quota, clamp := common.QuotaFromDecimalChecked(quotaCalculateDecimal)
 		summary.Quota = quota
@@ -371,11 +381,16 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		noteQuotaClamp(relayInfo, clamp)
 	}
 
+	// The floor only stands when the request was billable: an unbillable
+	// request is charged 0 regardless of what the formula produced.
 	if !summary.hasBillableUsage() {
 		summary.Quota = 0
+		minimumChargeApplied = false
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
+		minimumChargeApplied = true
 	}
+	summary.MinimumChargeApplied = minimumChargeApplied
 
 	return summary
 }
@@ -425,6 +440,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			tieredResult = tieredRes
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
 			summary.FixedPriceBilling = isFixedPriceSettlement(relayInfo, tieredRes)
+			// The expression replaced the formula's result outright, so the floor
+			// the formula applied no longer explains the charge on the log.
+			summary.MinimumChargeApplied = false
 			if summary.FixedPriceBilling {
 				summary.AudioInputPrice = 0
 			}
@@ -531,6 +549,12 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	}
 
+	attachChargeAdjustment(other, relayInfo.QuotaClamp, chargeAdjustmentReason{
+		// Evaluated here, not in calculateTextQuotaSummary: billability depends on
+		// FixedPriceBilling, which only tiered settlement sets.
+		NoBillableUsage: !summary.hasBillableUsage(),
+		MinimumCharge:   summary.MinimumChargeApplied,
+	})
 	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

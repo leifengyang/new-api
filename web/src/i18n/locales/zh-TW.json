@@ -6852,6 +6852,22 @@
     "Rebates": "返現筆數",
     "Invite-Only Registration": "僅限邀請註冊",
     "Require a valid invitation link to register": "必須透過有效的邀請連結才能註冊",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "企業自用系統，未對外開放，禁止非內部員工註冊"
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "企業自用系統，未對外開放，禁止非內部員工註冊",
+    "Charged": "實扣金額",
+    "Computed total": "計算合計",
+    "Difference": "差額",
+    "Usage details": "用量明細",
+    "Technical details": "技術詳情",
+    "{{count}} sections": "{{count}} 項",
+    "calls": "次",
+    "This request carried no billable usage, so nothing was charged.": "本次請求沒有可計費的用量，因此沒有扣費。",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "依公式計算的結果不足一個額度單位，因此以最低一個單位計費。",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "計算結果超出單次請求支援的上限，因此被截斷至上限。",
+    "The charge was adjusted by the server after the formula ran.": "伺服器在公式計算之後又調整了扣費金額。",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "差額來自伺服器的係數或取整，本記錄未逐項列出。以上實扣金額為準。",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "本次請求按圖片計費，其乘數未記錄在案，因此無法逐項拆分費用。以上金額為準。",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "本次請求按計費表達式計價，表達式算出的總額即為扣費金額。詳見下方的階梯明細。",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "本記錄缺少拆分費用所需的計價欄位。以上金額為準。",
+    "No billable usage was recorded for this request.": "本次請求沒有記錄任何可計費用​量。"
   }
 }

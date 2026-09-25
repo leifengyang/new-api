@@ -6852,6 +6852,22 @@
     "Rebates": "Количество ребейтов",
     "Invite-Only Registration": "Регистрация только по приглашению",
     "Require a valid invitation link to register": "Для регистрации требуется действующая ссылка-приглашение",
-    "Internal system, not open to the public. Non-employees are not permitted to register.": "Внутренняя система, не открыта для посторонних. Регистрация доступна только приглашённым сотрудникам."
+    "Internal system, not open to the public. Non-employees are not permitted to register.": "Внутренняя система, не открыта для посторонних. Регистрация доступна только приглашённым сотрудникам.",
+    "Charged": "Списано",
+    "Computed total": "Расчётный итог",
+    "Difference": "Расхождение",
+    "Usage details": "Детализация использования",
+    "Technical details": "Технические детали",
+    "{{count}} sections": "{{count}} разделов",
+    "calls": "вызовы",
+    "This request carried no billable usage, so nothing was charged.": "В этом запросе не было оплачиваемого использования, поэтому списание не производилось.",
+    "The formula came to less than one quota unit, so the minimum charge of one unit was applied.": "По формуле получилось меньше одной единицы квоты, поэтому применён минимальный тариф — одна единица.",
+    "The computed amount exceeded the supported per-request bound, so it was capped.": "Расчётная сумма превысила поддерживаемый предел на запрос, поэтому была ограничена.",
+    "The charge was adjusted by the server after the formula ran.": "Сервер скорректировал сумму списания после расчёта по формуле.",
+    "The difference comes from a server-side multiplier or rounding that this record does not itemize. The charged amount above is the authoritative one.": "Расхождение вызвано серверным коэффициентом или округлением, которые в этой записи не детализированы. Списание выше — достоверная величина.",
+    "This request was billed per image, with multipliers the record does not itemize, so the charge cannot be broken down term by term. The amount above is the authoritative one.": "Этот запрос тарифицирован за изображение, а множители в записи не детализированы, поэтому сумму нельзя разложить по слагаемым. Сумма выше — достоверная.",
+    "This request was priced by a billing expression, and the expression total is the charge. See the tier breakdown below.": "Цена этого запроса рассчитана выражением тарификации, и его итог равен списанию. Подробности по уровням ниже.",
+    "This record does not carry the pricing fields needed to break the charge down. The amount above is the authoritative one.": "В этой записи нет полей тарификации, необходимых для разбивки суммы. Сумма выше — достоверная.",
+    "No billable usage was recorded for this request.": "Для этого запроса не зафиксировано оплачиваемого использования."
   }
 }
