@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -461,7 +462,29 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+// logQuery 是日志列表的查询条件。企业控制台只放行其中一部分字段，收窄成结构体
+// 而不是继续往参数表上追加，避免调用方漏填成员范围后查到全平台日志。
+type logQuery struct {
+	LogType           int
+	StartTimestamp    int64
+	EndTimestamp      int64
+	ModelName         string
+	Username          string
+	TokenName         string
+	Channel           int
+	Group             string
+	RequestId         string
+	UpstreamRequestId string
+	// UserIDs 非空时只查这些用户的日志；为空表示不按用户收窄，仅平台管理端使用。
+	UserIDs []int
+	// WithChannelNames 决定要不要回填渠道名。企业控制台不下发渠道，就不必去查。
+	WithChannelNames bool
+	StartIdx         int
+	Num              int
+}
+
+func queryLogs(q logQuery) (logs []*Log, total int64, err error) {
+	logType := q.LogType
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -469,37 +492,42 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+	if len(q.UserIDs) > 0 {
+		tx = tx.Where("logs.user_id IN ?", q.UserIDs)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", q.ModelName); err != nil {
 		return nil, 0, err
 	}
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", q.Username); err != nil {
 		return nil, 0, err
 	}
-	if tokenName != "" {
-		tx = tx.Where("logs.token_name = ?", tokenName)
+	if q.TokenName != "" {
+		tx = tx.Where("logs.token_name = ?", q.TokenName)
 	}
-	if requestId != "" {
-		tx = tx.Where("logs.request_id = ?", requestId)
+	if q.RequestId != "" {
+		tx = tx.Where("logs.request_id = ?", q.RequestId)
 	}
-	if upstreamRequestId != "" {
-		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
+	if q.UpstreamRequestId != "" {
+		tx = tx.Where("logs.upstream_request_id = ?", q.UpstreamRequestId)
 	}
-	if startTimestamp != 0 {
-		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	if q.StartTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", q.StartTimestamp)
 	}
-	if endTimestamp != 0 {
-		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	if q.EndTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", q.EndTimestamp)
 	}
-	if channel != 0 {
-		tx = tx.Where("logs.channel_id = ?", channel)
+	if q.Channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", q.Channel)
 	}
-	if group != "" {
-		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	if q.Group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", q.Group)
 	}
 	err = tx.Model(&Log{}).Count(&total).Error
 	if err != nil {
 		return nil, 0, err
 	}
+	num := q.Num
+	startIdx := q.StartIdx
 	order := "logs.created_at desc, logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
@@ -519,7 +547,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		}
 	}
 
-	if channelIds.Len() > 0 {
+	if q.WithChannelNames && channelIds.Len() > 0 {
 		var channels []struct {
 			Id   int    `gorm:"column:id"`
 			Name string `gorm:"column:name"`
@@ -553,6 +581,95 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 
 	return logs, total, err
+}
+
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	return queryLogs(logQuery{
+		LogType:           logType,
+		StartTimestamp:    startTimestamp,
+		EndTimestamp:      endTimestamp,
+		ModelName:         modelName,
+		Username:          username,
+		TokenName:         tokenName,
+		Channel:           channel,
+		Group:             group,
+		RequestId:         requestId,
+		UpstreamRequestId: upstreamRequestId,
+		WithChannelNames:  true,
+		StartIdx:          startIdx,
+		Num:               num,
+	})
+}
+
+// GetEnterpriseMemberLogs 只查给定成员的日志。成员集合为空就是没有结果 ——
+// 企业控制台绝不能退化成查全平台，所以空集合在这里直接返回。
+func GetEnterpriseMemberLogs(memberIds []int, logType int, startTimestamp int64, endTimestamp int64, modelName string, group string, startIdx int, num int) (logs []*Log, total int64, err error) {
+	if len(memberIds) == 0 {
+		return nil, 0, nil
+	}
+	return queryLogs(logQuery{
+		LogType:        logType,
+		StartTimestamp: startTimestamp,
+		EndTimestamp:   endTimestamp,
+		ModelName:      modelName,
+		Group:          group,
+		UserIDs:        memberIds,
+		StartIdx:       startIdx,
+		Num:            num,
+	})
+}
+
+// SumEnterpriseMemberQuota 统计给定成员在时间窗内实际消耗的额度，供企业控制台的
+// 日志页显示「这一屏条件一共花了多少」。口径固定为消费日志。
+func SumEnterpriseMemberQuota(memberIds []int, startTimestamp int64, endTimestamp int64, modelName string, group string) (quota int64, err error) {
+	if len(memberIds) == 0 {
+		return 0, nil
+	}
+	tx := LOG_DB.Model(&Log{}).
+		Where("logs.type = ?", LogTypeConsume).
+		Where("logs.user_id IN ?", memberIds)
+	if startTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+		return 0, err
+	}
+	if group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+	err = tx.Select("COALESCE(sum(quota), 0)").Scan(&quota).Error
+	return quota, err
+}
+
+// FormatEnterpriseMemberLogs 是企业控制台的日志投影：渠道名与渠道编号不下发
+// （那是平台侧的库存信息），IP 只留网段。其余字段与企业成员看自己的日志一致。
+func FormatEnterpriseMemberLogs(logs []*Log) {
+	for i := range logs {
+		logs[i].ChannelName = ""
+		logs[i].ChannelId = 0
+		logs[i].Ip = maskLogIpAddress(logs[i].Ip)
+		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
+	}
+}
+
+// maskLogIpAddress 把 IP 截到网段：IPv4 留前两段、IPv6 留前两组，其余打码。
+// 认不出来的值一律不原样透出。
+func maskLogIpAddress(ip string) string {
+	if ip == "" {
+		return ""
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return "***"
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return fmt.Sprintf("%d.%d.*.*", v4[0], v4[1])
+	}
+	// 切片要转回 []byte：net.IP 带 String()，fmt 会先取字符串再按 %x 编码。
+	return fmt.Sprintf("%x:%x:*:*:*:*:*:*", []byte(parsed[0:2]), []byte(parsed[2:4]))
 }
 
 const logSearchCountLimit = 10000

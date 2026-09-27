@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { UsageLog } from '@/features/usage-logs/data/schema'
+
 // ============================================================================
 // API envelopes
 // ============================================================================
@@ -105,3 +107,64 @@ export interface EnterpriseMemberOptions {
   member_group: string
   member_enabled: boolean
 }
+
+// ============================================================================
+// Usage（用量板块）
+// ============================================================================
+
+/** 秒级时间戳区间，与服务端的 start_timestamp / end_timestamp 对齐。 */
+export interface EnterpriseUsageRange {
+  start: number
+  end: number
+}
+
+/**
+ * 一条聚合结果。三个聚合（按模型 / 按成员 / 按小时）共用这个形状，只有被分组的
+ * 那几个字段有值：按模型时是 `model_name`，按成员时是 `user_id`+`username`，
+ * 趋势里是 `created_at`。
+ */
+export interface EnterpriseUsageRow {
+  user_id: number
+  username: string
+  model_name: string
+  /** 趋势里是 quota_data 自带的小时桶起点。 */
+  created_at: number
+  count: number
+  quota: number
+  token_used: number
+}
+
+export type EnterpriseUsageResponse = EnterpriseApiResponse<{
+  /**
+   * 平台的用量看板关掉时 quota_data 根本不落库。false 时界面必须明说统计已关闭，
+   * 不能把「没数据」显示成一排 0。
+   */
+  data_export_enabled: boolean
+  by_model: EnterpriseUsageRow[]
+  by_member: EnterpriseUsageRow[]
+  trend: EnterpriseUsageRow[]
+}>
+
+// ============================================================================
+// Member logs（成员日志）
+// ============================================================================
+
+export interface GetEnterpriseLogsParams {
+  p?: number
+  page_size?: number
+  /** 字符串形式的日志类型，空串表示全部。 */
+  type?: string
+  model_name?: string
+  group?: string
+  start_timestamp: number
+  end_timestamp: number
+}
+
+export type GetEnterpriseLogsResponse = EnterpriseApiResponse<{
+  page: number
+  page_size: number
+  total: number
+  items: UsageLog[]
+  /** 本次筛选下所有成员的消费合计，不只是当前这一页。 */
+  quota_total: number
+}>

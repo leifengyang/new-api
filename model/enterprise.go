@@ -371,6 +371,17 @@ func ListEnterpriseMembers(enterpriseId int, filter EnterpriseMemberFilter, offs
 	return members, total, nil
 }
 
+// ListEnterpriseMemberIds 取企业名下全部成员的 id，供用量与日志查询收窄范围。
+func ListEnterpriseMemberIds(enterpriseId int) ([]int, error) {
+	memberIds := make([]int, 0, 16)
+	if err := DB.Model(&User{}).
+		Where("enterprise_owner_id = ?", enterpriseId).
+		Pluck("id", &memberIds).Error; err != nil {
+		return nil, err
+	}
+	return memberIds, nil
+}
+
 // GetEnterpriseMember 取一个成员，用于控制台的回显与操作前的确认。
 func GetEnterpriseMember(enterpriseId, memberId int) (*User, error) {
 	var member User

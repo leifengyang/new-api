@@ -32,7 +32,7 @@ func useEnterpriseControllerDB(t *testing.T) *gorm.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Log{}, &model.QuotaData{}))
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
 	model.DB, model.LOG_DB = db, db
@@ -313,4 +313,86 @@ func TestSummariseLimitsAndJsonLimitsOrNull(t *testing.T) {
 	// 这里只负责给前端回显。
 	assert.Equal(t, []string{"vip"}, jsonLimitsOrNull(`["vip"]`))
 	assert.Equal(t, []string{}, jsonLimitsOrNull(`[]`))
+}
+
+// 用量接口同样只认自己的成员：传别人的 member_id 直接拒绝，不静默忽略；
+// 不带 member_id 时口径是「企业账号自己 + 名下全部成员」。
+func TestGetEnterpriseUsageScopesToOwnMembers(t *testing.T) {
+	db := useEnterpriseControllerDB(t)
+	newEnterpriseAccount(t, db, 1, 0)
+	createEnterpriseTestUser(t, db, 2, "member-a", common.RoleCommonUser, 1)
+	createEnterpriseTestUser(t, db, 3, "member-b", common.RoleCommonUser, 1)
+	newEnterpriseAccount(t, db, 4, 0)
+	createEnterpriseTestUser(t, db, 5, "foreign", common.RoleCommonUser, 4)
+
+	hour := int64(1700000000) - int64(1700000000)%3600
+	require.NoError(t, db.Create(&[]model.QuotaData{
+		{UserID: 1, Username: "corp1", ModelName: "gpt-4o", CreatedAt: hour, Count: 1, Quota: 100},
+		{UserID: 2, Username: "member-a", ModelName: "gpt-4o", CreatedAt: hour, Count: 1, Quota: 200},
+		{UserID: 5, Username: "foreign", ModelName: "gpt-4o", CreatedAt: hour, Count: 1, Quota: 900},
+	}).Error)
+
+	target := fmt.Sprintf("/api/enterprise/usage?start_timestamp=%d&end_timestamp=%d", hour, hour+3600)
+	c, recorder := newEnterpriseRequest(http.MethodGet, target, "", 1, nil)
+	GetEnterpriseUsage(c)
+	payload := decodeEnterpriseResponse(t, recorder)
+	require.True(t, payload["success"].(bool), "响应：%s", recorder.Body.String())
+
+	data := payload["data"].(map[string]any)
+	assert.True(t, data["data_export_enabled"].(bool))
+	visible := 0.0
+	for _, raw := range data["by_member"].([]any) {
+		row := raw.(map[string]any)
+		assert.NotEqual(t, 5.0, row["user_id"], "别家企业的账号不能出现")
+		visible += row["quota"].(float64)
+	}
+	assert.Equal(t, 300.0, visible, "企业账号自己 100 + member-a 200")
+
+	// 别人的成员 id：拒绝，而不是当成「查不到」静默返回空。
+	c, recorder = newEnterpriseRequest(http.MethodGet, target+"&member_id=5", "", 1, nil)
+	GetEnterpriseUsage(c)
+	payload = decodeEnterpriseResponse(t, recorder)
+	assert.False(t, payload["success"].(bool), "不能查别家企业的成员")
+
+	// 只看自己某个成员时，企业账号自己的用量不计入。
+	c, recorder = newEnterpriseRequest(http.MethodGet, target+"&member_id=2", "", 1, nil)
+	GetEnterpriseUsage(c)
+	payload = decodeEnterpriseResponse(t, recorder)
+	require.True(t, payload["success"].(bool), "响应：%s", recorder.Body.String())
+	rows := payload["data"].(map[string]any)["by_member"].([]any)
+	require.Len(t, rows, 1)
+	assert.Equal(t, 200.0, rows[0].(map[string]any)["quota"])
+}
+
+// 日志接口下发前就把渠道和 IP 处理掉：渠道不下发，IP 只留网段，
+// 平台侧的 admin_info 也不跟着走。
+func TestGetEnterpriseLogsMasksChannelAndIp(t *testing.T) {
+	db := useEnterpriseControllerDB(t)
+	newEnterpriseAccount(t, db, 1, 0)
+	createEnterpriseTestUser(t, db, 2, "member-a", common.RoleCommonUser, 1)
+	createEnterpriseTestUser(t, db, 5, "foreign", common.RoleCommonUser, 4)
+
+	require.NoError(t, db.Create(&[]model.Log{
+		{UserId: 2, Username: "member-a", Type: model.LogTypeConsume, ModelName: "gpt-4o",
+			Quota: 120, CreatedAt: 1700000000, Ip: "203.0.113.7", ChannelId: 9,
+			Other: `{"admin_info":{"is_multi_key":true},"is_stream":true}`},
+		{UserId: 5, Username: "foreign", Type: model.LogTypeConsume, ModelName: "gpt-4o",
+			Quota: 999, CreatedAt: 1700000001, Ip: "198.51.100.9"},
+	}).Error)
+
+	c, recorder := newEnterpriseRequest(http.MethodGet,
+		"/api/enterprise/logs?start_timestamp=1699999999&end_timestamp=1700000100", "", 1, nil)
+	GetEnterpriseLogs(c)
+	payload := decodeEnterpriseResponse(t, recorder)
+	require.True(t, payload["success"].(bool), "响应：%s", recorder.Body.String())
+
+	data := payload["data"].(map[string]any)
+	assert.Equal(t, 1.0, data["total"], "别的企业的日志不算进来")
+	items := data["items"].([]any)
+	require.Len(t, items, 1)
+	item := items[0].(map[string]any)
+	assert.Equal(t, "203.0.*.*", item["ip"])
+	assert.Zero(t, item["channel"])
+	assert.NotContains(t, item["other"], "admin_info")
+	assert.Equal(t, 120.0, data["quota_total"])
 }

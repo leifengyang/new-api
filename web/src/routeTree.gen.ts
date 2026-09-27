@@ -39,6 +39,8 @@ import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authentic
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedEnterpriseIndexRouteImport } from './routes/_authenticated/enterprise/index'
+import { Route as AuthenticatedEnterpriseLogsRouteImport } from './routes/_authenticated/enterprise/logs'
+import { Route as AuthenticatedEnterpriseUsageRouteImport } from './routes/_authenticated/enterprise/usage'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedInviteRebatesIndexRouteImport } from './routes/_authenticated/invite-rebates/index'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
@@ -226,6 +228,18 @@ const AuthenticatedEnterpriseIndexRoute =
   AuthenticatedEnterpriseIndexRouteImport.update({
     id: '/enterprise/',
     path: '/enterprise/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseLogsRoute =
+  AuthenticatedEnterpriseLogsRouteImport.update({
+    id: '/enterprise/logs',
+    path: '/enterprise/logs',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseUsageRoute =
+  AuthenticatedEnterpriseUsageRouteImport.update({
+    id: '/enterprise/usage',
+    path: '/enterprise/usage',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedErrorsErrorRoute =
@@ -462,6 +476,8 @@ export interface FileRoutesByFullPath {
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/enterprise/logs': typeof AuthenticatedEnterpriseLogsRoute
+  '/enterprise/usage': typeof AuthenticatedEnterpriseUsageRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
@@ -526,6 +542,8 @@ export interface FileRoutesByTo {
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/enterprise/logs': typeof AuthenticatedEnterpriseLogsRoute
+  '/enterprise/usage': typeof AuthenticatedEnterpriseUsageRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
@@ -594,6 +612,8 @@ export interface FileRoutesById {
   '/(auth)/user/reset': typeof authUserResetRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/_authenticated/enterprise/logs': typeof AuthenticatedEnterpriseLogsRoute
+  '/_authenticated/enterprise/usage': typeof AuthenticatedEnterpriseUsageRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
@@ -661,6 +681,8 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
+    | '/enterprise/logs'
+    | '/enterprise/usage'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
@@ -725,6 +747,8 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
+    | '/enterprise/logs'
+    | '/enterprise/usage'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
@@ -792,6 +816,8 @@ export interface FileRouteTypes {
     | '/(auth)/user/reset'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
+    | '/_authenticated/enterprise/logs'
+    | '/_authenticated/enterprise/usage'
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
@@ -1061,6 +1087,20 @@ declare module '@tanstack/react-router' {
       path: '/enterprise'
       fullPath: '/enterprise/'
       preLoaderRoute: typeof AuthenticatedEnterpriseIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/logs': {
+      id: '/_authenticated/enterprise/logs'
+      path: '/enterprise/logs'
+      fullPath: '/enterprise/logs'
+      preLoaderRoute: typeof AuthenticatedEnterpriseLogsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/usage': {
+      id: '/_authenticated/enterprise/usage'
+      path: '/enterprise/usage'
+      fullPath: '/enterprise/usage'
+      preLoaderRoute: typeof AuthenticatedEnterpriseUsageRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/errors/$error': {
@@ -1405,6 +1445,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
+  AuthenticatedEnterpriseLogsRoute: typeof AuthenticatedEnterpriseLogsRoute
+  AuthenticatedEnterpriseUsageRoute: typeof AuthenticatedEnterpriseUsageRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
@@ -1433,6 +1475,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
+  AuthenticatedEnterpriseLogsRoute: AuthenticatedEnterpriseLogsRoute,
+  AuthenticatedEnterpriseUsageRoute: AuthenticatedEnterpriseUsageRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
