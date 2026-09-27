@@ -622,11 +622,61 @@ var ErrInvitationRequired = errors.New("a valid invitation code is required for 
 // 任何准入依据。关闭该开关时保持历史行为：邀请码只是归属信息，解析不出邀请人时
 // 照样建号。
 func ResolveRegistrationInviter(affCode string) (int, error) {
-	inviterId, _ := GetUserIdByAffCode(affCode)
-	if common.InviteOnlyRegistrationEnabled && inviterId <= 0 {
-		return 0, ErrInvitationRequired
+	admission, err := ResolveRegistrationAdmission(affCode)
+	if err != nil {
+		return 0, err
 	}
-	return inviterId, nil
+	return admission.InviterId, nil
+}
+
+// RegistrationAdmission 是一次自助注册的准入结果。
+type RegistrationAdmission struct {
+	// InviterId 是邀请返现关系里的邀请人。企业成员恒为 0：企业管理员是在履行
+	// 管理职责，不是在发展下线，用他的链接注册进来的人不该给他带来返现。
+	InviterId int
+	// EnterpriseOwnerId 非 0 时，新用户归属到这家企业名下。
+	EnterpriseOwnerId int
+}
+
+// ResolveRegistrationAdmission 解析自助注册携带的邀请码，并执行「仅邀请注册」准入。
+//
+// 邀请码是企业 / 用户的推广码（aff_code）。企业账号的推广链接同时就是它的成员
+// 邀请链接：用这个码注册进来的新用户直接挂到该企业名下，且不与企业账号建立
+// 邀请返现关系。判定只认服务端解析出的账号，前端是否渲染注册表单不构成准入依据。
+func ResolveRegistrationAdmission(affCode string) (RegistrationAdmission, error) {
+	inviterId, _ := GetUserIdByAffCode(affCode)
+	if inviterId <= 0 {
+		if common.InviteOnlyRegistrationEnabled {
+			return RegistrationAdmission{}, ErrInvitationRequired
+		}
+		return RegistrationAdmission{}, nil
+	}
+	enterpriseOwnerId, err := enterpriseOwnerForInviter(inviterId)
+	if err != nil {
+		return RegistrationAdmission{}, err
+	}
+	if enterpriseOwnerId > 0 {
+		return RegistrationAdmission{EnterpriseOwnerId: enterpriseOwnerId}, nil
+	}
+	return RegistrationAdmission{InviterId: inviterId}, nil
+}
+
+// enterpriseOwnerForInviter 判断邀请人是不是企业账号，是则返回它的 id。
+//
+// 读失败直接把错误往上抛，不退回「当成普通邀请人」：那等于把一次数据库故障
+// 变成一条不该存在的返现关系，而注册本来就要连库，失败一次不会更糟。
+func enterpriseOwnerForInviter(inviterId int) (int, error) {
+	var inviter User
+	if err := DB.Select("id", "is_enterprise", "role").First(&inviter, inviterId).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if inviter.IsEnterprise == EnterpriseFlagYes && inviter.Role == common.RoleCommonUser {
+		return inviter.Id, nil
+	}
+	return 0, nil
 }
 
 // resolveMemberLevelForNewUser 决定新注册用户的会员等级，必须在建号事务内调用。

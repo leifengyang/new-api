@@ -75,6 +75,17 @@ var auditContentTemplates = map[string]string{
 
 	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
+
+	// 企业空间：平台管理员对企业账号打标记，以及企业管理员在企业控制台里的动作。
+	// 后者由普通用户触发，但走的是同一条管理审计链路，管理员能在审计日志里看到。
+	"user.enterprise_mark":       "Marked user ${username} (ID: ${target_user_id}) as an enterprise account; member limit ${member_limit}",
+	"user.enterprise_unmark":     "Removed the enterprise account mark from user ${username} (ID: ${target_user_id}); released ${released} members",
+	"enterprise.member_create":   "Enterprise ${enterprise_id} created member ${username} (ID: ${target_user_id})",
+	"enterprise.member_enable":   "Enterprise ${enterprise_id} enabled member (ID: ${target_user_id})",
+	"enterprise.member_disable":  "Enterprise ${enterprise_id} disabled member (ID: ${target_user_id}); returned ${returned} quota",
+	"enterprise.member_quota":    "Enterprise ${enterprise_id} transferred ${quota} quota to member (ID: ${target_user_id})",
+	"enterprise.member_limits":   "Enterprise ${enterprise_id} set member (ID: ${target_user_id}) scope: groups ${groups}, models ${models}",
+	"enterprise.member_password": "Enterprise ${enterprise_id} reset the password of member (ID: ${target_user_id})",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {

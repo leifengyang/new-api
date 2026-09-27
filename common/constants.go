@@ -71,6 +71,9 @@ var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 var InviteOnlyRegistrationEnabled = false // 仅邀请注册：自助注册必须携带有效邀请码，由 RegisterEnabled 总开关兜底
 
+// EnterpriseMemberLimit 单个企业账号最多能带多少成员，后台可调。
+var EnterpriseMemberLimit = 100
+
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{

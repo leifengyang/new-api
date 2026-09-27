@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["InviteOnlyRegistrationEnabled"] = strconv.FormatBool(common.InviteOnlyRegistrationEnabled)
+	common.OptionMap["EnterpriseMemberLimit"] = strconv.Itoa(common.EnterpriseMemberLimit)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
@@ -509,6 +511,19 @@ func updateOptionMap(key string, value string) (err error) {
 		operation_setting.USDExchangeRate, _ = strconv.ParseFloat(value, 64)
 	case "MinTopUp":
 		operation_setting.MinTopUp, _ = strconv.Atoi(value)
+	case "EnterpriseMemberLimit":
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 1 {
+			// 上限是「一个企业最多带多少人」，配成 0 或负数会让所有企业立刻建不了号。
+			// 非法值一律退回默认值并留痕，不静默接受。
+			common.SysError(fmt.Sprintf("invalid EnterpriseMemberLimit %q, falling back to %d", value, defaultEnterpriseMemberLimit))
+			limit = defaultEnterpriseMemberLimit
+		}
+		if limit > maxEnterpriseMemberLimit {
+			common.SysError(fmt.Sprintf("EnterpriseMemberLimit %d exceeds the ceiling, clamped to %d", limit, maxEnterpriseMemberLimit))
+			limit = maxEnterpriseMemberLimit
+		}
+		common.EnterpriseMemberLimit = limit
 	case "StripeApiSecret":
 		setting.StripeApiSecret = value
 	case "StripeWebhookSecret":

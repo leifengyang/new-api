@@ -526,13 +526,16 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	user.Status = common.UserStatusEnabled
 
 	// Handle affiliate code
-	inviterId, err := model.ResolveRegistrationInviter(affiliateCode)
+	admission, err := model.ResolveRegistrationAdmission(affiliateCode)
 	if err != nil {
 		return nil, nil, err
 	}
+	inviterId := admission.InviterId
 	// InsertWithTx 只拿 inviterId 算会员等级和邀请计数，归属字段要调用方自己填；
 	// 漏掉这里，第三方注册进来的人会永远挂在 inviter_id = 0 上，邀请人拿不到返现。
+	// 企业归属同理：带着企业账号推广码来的新用户要落到该企业名下。
 	user.InviterId = inviterId
+	user.EnterpriseOwnerId = admission.EnterpriseOwnerId
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
