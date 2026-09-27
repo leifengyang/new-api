@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { GraduationCap, Trash2, UserRoundMinus } from 'lucide-react'
+import { Building2, GraduationCap, Trash2, UserRoundMinus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -37,13 +37,21 @@ import {
 } from '@/features/auth/secure-verification'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { batchDeleteUsers, updateUsersMemberLevelBatch } from '../api'
+import {
+  batchDeleteUsers,
+  updateUserEnterprise,
+  updateUsersMemberLevelBatch,
+} from '../api'
 import {
   USER_MEMBER_LEVEL,
+  USER_ROLE,
   canDeleteUser,
   getUserMemberLevel,
+  isEnterpriseAccount,
+  isEnterpriseMember,
 } from '../constants'
 import type { User } from '../types'
 import { useUsers } from './users-provider'
@@ -63,6 +71,9 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
   const operatorRole = useAuthStore((state) => state.auth.user?.role ?? 0)
   const [target, setTarget] = useState<MemberLevelTarget | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<User[] | null>(null)
+  const [enterpriseTargets, setEnterpriseTargets] = useState<number[] | null>(
+    null
+  )
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const verification = useSecureVerification()
   const { requestVerification } = verification
@@ -128,6 +139,39 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
     },
   })
 
+  // 标记企业账号没有批量接口：服务端一次只认一个账号，因为标记要走事务，取消
+  // 标记还要把成员余额退回。这里逐个调用，最后按账号数汇报，中间某个失败不影响
+  // 其余的。抛出异常（网络失败）仍然按整次操作失败处理。
+  const enterpriseMark = useMutation({
+    mutationFn: async (ids: number[]) => {
+      let failed = 0
+      for (const id of ids) {
+        const result = await updateUserEnterprise(id, true)
+        if (!result.success) failed += 1
+      }
+      return { total: ids.length, failed }
+    },
+    onSuccess: ({ total, failed }) => {
+      if (failed === 0) {
+        toast.success(
+          t('Marked {{count}} users as enterprise accounts', { count: total })
+        )
+      } else {
+        toast.error(
+          t(
+            '{{failed}} of {{count}} accounts could not be marked as enterprise accounts',
+            { failed, count: total }
+          )
+        )
+      }
+      setEnterpriseTargets(null)
+      triggerRefresh()
+    },
+    onError: (error) => {
+      handleServerError(error, t('Failed to update the enterprise account'))
+    },
+  })
+
   const openFor = (level: number) => {
     setTarget({ ids: selectedRows.map((row) => row.original.id), level })
   }
@@ -157,6 +201,29 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
   )
 
   const isInternal = target?.level === USER_MEMBER_LEVEL.INTERNAL
+
+  // 服务端只放普通用户，而且已经是别人成员的不行；这两种选中了也做不成，所以
+  // 直接不给点。已经是企业账号的行送过去只是空操作，从请求里剔除，只有全被
+  // 剔除时才当作无事可做。
+  const hasIneligibleEnterpriseRow = selectedRows.some(
+    (row) =>
+      row.original.role >= USER_ROLE.ADMIN || isEnterpriseMember(row.original)
+  )
+  const enterpriseMarkIds = selectedRows
+    .filter((row) => !isEnterpriseAccount(row.original))
+    .map((row) => row.original.id)
+  const canMarkEnterprise =
+    !hasIneligibleEnterpriseRow && enterpriseMarkIds.length > 0
+  const enterpriseDisabled = !canMarkEnterprise || enterpriseMark.isPending
+  // 点不了的时候 tooltip 得说清为什么，否则这个按钮就是「按了没反应」。
+  let enterpriseHint = t('Mark as enterprise account')
+  if (!canMarkEnterprise) {
+    enterpriseHint = hasIneligibleEnterpriseRow
+      ? t(
+          'Administrators and users who already belong to an enterprise cannot become enterprise accounts.'
+        )
+      : t('Every selected account is already an enterprise account.')
+  }
 
   return (
     <>
@@ -200,6 +267,31 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
             <UserRoundMinus aria-hidden='true' />
           </TooltipTrigger>
           <TooltipContent>{t('Mark as external user')}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              // 这里用 aria-disabled 而不是 disabled：被禁用的按钮不派发指针
+              // 事件，说明原因的 tooltip 就弹不出来。同 channels 的批量操作栏。
+              <Button
+                variant='outline'
+                size='icon'
+                className={cn(
+                  'size-8',
+                  enterpriseDisabled && 'cursor-not-allowed opacity-50'
+                )}
+                aria-label={t('Mark as enterprise account')}
+                aria-disabled={enterpriseDisabled}
+                onClick={() => {
+                  if (enterpriseDisabled) return
+                  setEnterpriseTargets(enterpriseMarkIds)
+                }}
+              />
+            }
+          >
+            <Building2 aria-hidden='true' />
+          </TooltipTrigger>
+          <TooltipContent>{enterpriseHint}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -254,6 +346,27 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
         handleConfirm={() => {
           if (target && !levelUpdate.isPending) {
             levelUpdate.mutate(target)
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={enterpriseTargets !== null}
+        onOpenChange={(open) => {
+          if (!open && !enterpriseMark.isPending) setEnterpriseTargets(null)
+        }}
+        title={t('Mark {{count}} users as enterprise accounts?', {
+          count: enterpriseTargets?.length ?? 0,
+        })}
+        // 和行菜单里单个标记共用同一段说明：这段话本来就不分单复数。
+        desc={t(
+          'They keep their role: this only opens an enterprise console where they can create members, hand out quota from their own balance, and narrow what each member can use. Members are ordinary platform accounts that administrators still see and manage.'
+        )}
+        confirmText={enterpriseMark.isPending ? t('Saving...') : t('Confirm')}
+        isLoading={enterpriseMark.isPending}
+        disabled={!enterpriseTargets?.length}
+        handleConfirm={() => {
+          if (enterpriseTargets && !enterpriseMark.isPending) {
+            enterpriseMark.mutate(enterpriseTargets)
           }
         }}
       />

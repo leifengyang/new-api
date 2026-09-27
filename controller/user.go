@@ -385,9 +385,16 @@ func SearchUsers(c *gin.Context) {
 			memberLevel = &parsed
 		}
 	}
+	// 企业账号筛选：后台列表要能一键列出所有企业账号（见用户列表工具栏）。
+	var isEnterprise *int
+	if isEnterpriseStr := c.Query("is_enterprise"); isEnterpriseStr != "" {
+		if parsed, err := strconv.Atoi(isEnterpriseStr); err == nil {
+			isEnterprise = &parsed
+		}
+	}
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
-	users, total, err := model.SearchUsers(keyword, group, role, status, memberLevel, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOptions)
+	users, total, err := model.SearchUsers(keyword, group, role, status, memberLevel, isEnterprise, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOptions)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -537,12 +544,12 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"member_level":      user.MemberLevel,
 		// 前端据此决定要不要显示企业控制台入口。它只是一枚用于渲染的标记，
 		// 真正的准入判定在服务端（middleware.EnterpriseAuth + 每个查询的归属收窄）。
-		"is_enterprise": user.IsEnterprise == model.EnterpriseFlagYes,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,
+		"is_enterprise":   user.IsEnterprise == model.EnterpriseFlagYes,
+		"linux_do_id":     user.LinuxDOId,
+		"setting":         user.Setting,
+		"stripe_customer": user.StripeCustomer,
+		"sidebar_modules": userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":     permissions,
 	}
 }
 

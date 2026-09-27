@@ -480,7 +480,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, memberLevel *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, memberLevel *int, isEnterprise *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -527,6 +527,9 @@ func SearchUsers(keyword string, group string, role *int, status *int, memberLev
 	}
 	if memberLevel != nil {
 		query = query.Where("member_level = ?", *memberLevel)
+	}
+	if isEnterprise != nil {
+		query = query.Where("is_enterprise = ?", *isEnterprise)
 	}
 
 	// 获取总数

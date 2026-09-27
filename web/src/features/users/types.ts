@@ -126,6 +126,8 @@ export interface SearchUsersParams {
   role?: string
   status?: string
   member_level?: string
+  /** 企业账号标记：'1' 只列企业账号，'0' 只列没被标记的账号。 */
+  is_enterprise?: string
   p?: number
   page_size?: number
   sort_by?: UserSortBy

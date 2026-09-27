@@ -283,8 +283,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
       {
         id: 'enterprise',
         header: t('Enterprise'),
-        // 没有列筛选：服务端的用户搜索没有这个条件，筛选器只会筛当前这一页，
-        // 那是假的。要看有哪些企业账号，用操作菜单里的标记动作即可。
+        // 筛选走服务端的 is_enterprise 条件（见 users-table 的工具栏），列表是
+        // 分页 + manualFiltering，所以这一列不需要自己的 filterFn，筛的也不是
+        // 当前这一页。
         cell: ({ row }) =>
           isEnterpriseAccount(row.original) ? (
             <BadgeCell>

@@ -67,6 +67,7 @@ export async function searchUsers(
     role = '',
     status = '',
     member_level = '',
+    is_enterprise = '',
     p = 1,
     page_size = 10,
     sort_by,
@@ -78,6 +79,7 @@ export async function searchUsers(
   if (role) queryParams.set('role', role)
   if (status) queryParams.set('status', status)
   if (member_level) queryParams.set('member_level', member_level)
+  if (is_enterprise) queryParams.set('is_enterprise', is_enterprise)
   queryParams.set('p', String(p))
   queryParams.set('page_size', String(page_size))
   if (sort_by) queryParams.set('sort_by', sort_by)
