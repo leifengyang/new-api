@@ -31,6 +31,7 @@ import { formatQuota } from '@/lib/format'
 import {
   INVITE_REBATE_STATUS,
   INVITE_REBATE_STATUSES,
+  getInviteRebateLegLabel,
   getSkipReasonLabel,
 } from '../constants'
 import {
@@ -62,6 +63,9 @@ function RebateRow(props: { rebate: InviteRebate; locale?: string }) {
         </span>
       </div>
       <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
+        {/* 内部学员的列表里两种腿混在一起，标出来才知道这笔充值来自谁。 */}
+        <span>{getInviteRebateLegLabel(rebate.leg, t)}</span>
+        <span aria-hidden='true'>·</span>
         <span className='tabular-nums'>
           {t('Top-up Amount')}: {formatQuota(rebate.base_quota)}
         </span>
@@ -156,7 +160,7 @@ export function SelfRebateDetailsDialog({
       onOpenChange={onOpenChange}
       title={t('Invite Rebates')}
       description={t(
-        'Every rebate credited for a top-up made by someone you invited.'
+        'Every rebate credited to you, and the top-up it came from.'
       )}
       bodyClassName='min-h-[120px]'
       footer={

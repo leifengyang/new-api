@@ -209,7 +209,9 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, "邀请奖励已由邀请返现取代，该配置仅支持 0")
 			return
 		}
-	case operation_setting.InviteRebateRateKey:
+	case operation_setting.InviteRebateRateKey,
+		operation_setting.InviteRebateExternalRateKey,
+		operation_setting.InviteRebateUplineRateKey:
 		rate, err := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
 		if err != nil || !operation_setting.IsValidInviteRebateRateBasisPoints(rate) {
 			common.ApiErrorMsg(c, fmt.Sprintf("返现比例需为 0 到 %d 之间的万分比（1000 表示 10%%）",

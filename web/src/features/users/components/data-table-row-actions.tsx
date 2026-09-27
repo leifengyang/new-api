@@ -362,10 +362,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         desc={
           memberLevelTarget === USER_MEMBER_LEVEL.INTERNAL
             ? t(
-                'They earn an invite rebate from the top-ups of the users they invite directly.'
+                'They earn an invite rebate from the top-ups of the users they invite directly, plus a share of the top-ups made by the users those invitees bring in.'
               )
             : t(
-                'They keep earning an invite rebate, but only on the first top-up made by each user they invite. Rebates already credited are not reversed.'
+                'They keep earning an invite rebate from the top-ups of the users they invite directly, at the external rate, and the first internal member above them also earns from those top-ups. Rebates already credited are not reversed.'
               )
         }
         confirmText={memberLevelPending ? t('Saving...') : t('Confirm')}

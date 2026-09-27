@@ -68,6 +68,7 @@ func TestBuildInviteRebateItemMasksDownlineOnlyWhenRequested(t *testing.T) {
 		InviteeId:       2,
 		Source:          model.InviteRebateSourceEpay,
 		SourceRef:       "trade-1",
+		Leg:             model.InviteRebateLegUpline,
 		BaseQuota:       100000,
 		RateBasisPoints: 1000,
 		RebateQuota:     10000,
@@ -82,6 +83,8 @@ func TestBuildInviteRebateItemMasksDownlineOnlyWhenRequested(t *testing.T) {
 	assert.Equal(t, "zhangsan", adminView.InviteeName)
 	// 未收回的额度是返现额度减去已撤销部分，撤销界面据此显示还能扣多少。
 	assert.Equal(t, 6000, adminView.Outstanding)
+	// 一笔充值的两条腿会长得像两行一模一样的流水，只有腿名能区分谁按哪条规则拿钱。
+	assert.Equal(t, model.InviteRebateLegUpline, adminView.Leg)
 
 	selfView := buildInviteRebateItem(rebate, usernames, true)
 	assert.Equal(t, "teacher", selfView.InviterName)
@@ -90,6 +93,7 @@ func TestBuildInviteRebateItemMasksDownlineOnlyWhenRequested(t *testing.T) {
 	assert.Equal(t, 100000, selfView.BaseQuota)
 	assert.Equal(t, 10000, selfView.RebateQuota)
 	assert.Equal(t, model.InviteRebateSourceEpay, selfView.Source)
+	assert.Equal(t, model.InviteRebateLegUpline, selfView.Leg)
 }
 
 func TestBuildInviteRebateItemsResolvesUsernamesInOneQuery(t *testing.T) {

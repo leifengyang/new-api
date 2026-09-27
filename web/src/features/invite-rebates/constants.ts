@@ -93,6 +93,25 @@ export const getInviteRebateSourceOptions = (t: (key: string) => string) =>
   }))
 
 // ============================================================================
+// Ledger leg
+// ============================================================================
+
+/**
+ * Mirrors `model.InviteRebateLeg*`. One top-up writes at most two rows: the
+ * direct leg pays the paying user's own inviter, the upline leg pays the first
+ * internal member above an external inviter.
+ */
+export const INVITE_REBATE_LEG_LABELS: Record<string, string> = {
+  direct: 'Direct invitee',
+  upline: 'Upline member',
+}
+
+export const getInviteRebateLegLabel = (
+  leg: string,
+  t: (key: string) => string
+): string => t(INVITE_REBATE_LEG_LABELS[leg] ?? leg)
+
+// ============================================================================
 // Reversal
 // ============================================================================
 

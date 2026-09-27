@@ -67,6 +67,7 @@ function makeRebate(overrides: Partial<InviteRebate> = {}): InviteRebate {
     inviter_name: 'alice',
     invitee_id: 3,
     invitee_name: 'bob',
+    leg: 'direct',
     source: 'epay',
     source_ref: '',
     base_quota: 500000,
@@ -138,9 +139,13 @@ it('requires a reason and sends it trimmed with the rebate id', async () => {
   renderDialog()
 
   const dialog = await screen.findByRole('dialog')
-  // The copy names the inviter and how much is clawed back from their balance.
+  // The copy names the inviter and how much is clawed back from their balance,
+  // and warns that the same top-up's other leg goes with it.
   expect(
     within(dialog).getByText(/credited to alice is deducted from their balance/)
+  ).toBeInTheDocument()
+  expect(
+    within(dialog).getByText(/Every other rebate issued for the same top-up/)
   ).toBeInTheDocument()
 
   const confirm = within(dialog).getByRole('button', {

@@ -94,9 +94,10 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 // declaring which order the credit belongs to, so it cannot silently skip the
 // rebate or hand the rebate a non-unique dedup key.
 //
-// The returned credit, when non-nil, must be applied with finalizeInviteRebate
-// after the transaction commits.
-func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string, sourceRef string, updates map[string]any) (*inviteRebateCredit, error) {
+// The returned credits, when non-empty, must be applied with
+// finalizeInviteRebate after the transaction commits. One top-up can pay out
+// more than one leg (see creditInviteRebateTx), hence a slice.
+func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string, sourceRef string, updates map[string]any) ([]*inviteRebateCredit, error) {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return nil, err
@@ -123,12 +124,8 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string,
 		return nil, ErrTopUpQuotaLimitExceeded
 	}
 
-	// 首充打点在余额更新之后：只有这一笔真的入账了，它才算这个用户的首充。
-	// 先打点的话，一笔因为钱包上限而失败的充值会把首充名额白白占掉。
-	firstTopUp := stampFirstTopUpTx(tx, userId)
-
 	// 充值本身已经落库，返现只是它的附带结果，因此这里绝不返回错误。
-	return creditInviteRebateTx(tx, userId, creditedQuota, source, sourceRef, firstTopUp), nil
+	return creditInviteRebateTx(tx, userId, creditedQuota, source, sourceRef), nil
 }
 
 func (topUp *TopUp) Update() error {
@@ -199,7 +196,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	}
 
 	var quotaToAdd int
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 	topUp := &TopUp{}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
@@ -256,7 +253,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	var quota int
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -481,7 +478,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -552,7 +549,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	var quota int
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -627,7 +624,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	var quotaToAdd int
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -690,7 +687,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	var quotaToAdd int
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"

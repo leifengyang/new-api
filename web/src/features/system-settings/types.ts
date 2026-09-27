@@ -358,6 +358,8 @@ export type BillingSettings = {
   'checkin_setting.max_quota': number
   'invite_rebate_setting.enabled': boolean
   'invite_rebate_setting.rate_basis_points': number
+  'invite_rebate_setting.external_rate_basis_points': number
+  'invite_rebate_setting.internal_referrer_rate_basis_points': number
 }
 
 export type OperationsSettings = {
