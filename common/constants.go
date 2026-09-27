@@ -15,7 +15,10 @@ var Version = "v0.0.0"            // this hard coding will be replaced automatic
 var SystemName = "New API"
 var Footer = ""
 var Logo = ""
-var TopUpLink = ""
+
+// 定制版默认指向自己的发卡站：钱包页把它渲染成一个「在线充值」渠道，用户在那里
+// 买卡密后回钱包页兑换。后台「系统设置 - 通用 - 额度设置 - Top-Up Link」可改地址。
+var TopUpLink = "https://catfk.com/shop/DLAZ9MW9"
 
 // var ChatLink = ""
 // var ChatLink2 = ""
