@@ -115,17 +115,29 @@ it('keeps the external channel clickable when the amount is below the gateway mi
   expect(getChannel()).toBeEnabled()
 })
 
-it('shows the external channel when no gateway method is configured at all', () => {
+it('shows only the external channel when no gateway is actually switched on', () => {
   renderCard({
     topupInfo: makeTopupInfo({
+      // 服务端在没配网关时照样返回这份默认列表，它不是「可用」的证据。
       enable_online_topup: false,
       enable_stripe_topup: false,
-      pay_methods: [],
+      pay_methods: [
+        { name: '支付宝', type: 'alipay' },
+        { name: '微信', type: 'wxpay' },
+        { name: '自定义1', type: 'custom1', min_topup: 50 },
+      ],
     }),
     topupLink: CHANNEL_URL,
   })
 
-  getChannel()
+  expect(getChannel()).toBeInTheDocument()
+  // 一个网关都没接，就不该摆出一排点了没反应的支付宝/微信。
+  expect(
+    screen.queryByRole('button', { name: /支付宝|微信|Alipay/ })
+  ).toBeNull()
+  // 只挂了发卡站时，金额在店里选，平台这边的金额输入框也不该出现。
+  expect(screen.queryByLabelText('Custom Amount')).toBeNull()
+
   // 渠道那一排还在，就不该再报「没有任何可用支付方式」。
   expect(
     screen.queryByText(
