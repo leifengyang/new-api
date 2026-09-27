@@ -39,6 +39,24 @@ function isSafariBrowser(): boolean {
 }
 
 /**
+ * Reject non-navigable schemes (e.g. javascript:, data:) and relative URLs.
+ * Only http/https are allowed for backend-provided navigation targets, both the
+ * gateway checkout URLs and the external top-up channel.
+ */
+export function isSafeExternalUrl(value: string | undefined | null): boolean {
+  const trimmed = value?.trim()
+  if (!trimmed) {
+    return false
+  }
+  try {
+    const url = new URL(trimmed)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+/**
  * Submit payment form (for non-Stripe payments)
  */
 export function submitPaymentForm(
