@@ -50,6 +50,20 @@ func Distribute() func(c *gin.Context) {
 			return
 		}
 		_, pinned, _ := constraints.ResolvedPin()
+
+		// 企业给成员限定的模型白名单。
+		//
+		// 与令牌的模型限制不同，这一条刻意放在 pinned 之外：pin 锁的是渠道，模型
+		// 仍然来自请求体，所以「有 pin 就跳过」等于给成员留了一条绕过白名单的路。
+		// 正常流程不会因此被拦——pinned 的任务请求带的是原任务的模型，成员当初能
+		// 建成那个任务，就说明它本来就在白名单里。模型为空时不判：pinned 请求允许
+		// 不带模型（比如插件自己决定模型），空名字不是「用了别的模型」。
+		if modelRequest.Model != "" &&
+			!service.ModelNameMatchesLimit(service.EnterpriseModelLimitSet(c), modelRequest.Model) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+			return
+		}
+
 		if !pinned {
 			// Select a channel for the user
 			// check token model mapping

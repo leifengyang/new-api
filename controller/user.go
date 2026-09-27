@@ -535,6 +535,9 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,
 		"member_level":      user.MemberLevel,
+		// 前端据此决定要不要显示企业控制台入口。它只是一枚用于渲染的标记，
+		// 真正的准入判定在服务端（middleware.EnterpriseAuth + 每个查询的归属收窄）。
+		"is_enterprise": user.IsEnterprise == model.EnterpriseFlagYes,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
 		"stripe_customer":   user.StripeCustomer,
