@@ -894,7 +894,7 @@ func TestUserListFillsCumulativeInviteRebate(t *testing.T) {
 	}
 
 	// 搜索是另一条查询路径，同样要填上。
-	found, _, err := SearchUsers("user1", "", nil, nil, nil, 0, 10)
+	found, _, err := SearchUsers("user1", "", nil, nil, nil, nil, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 	assert.Equal(t, 1, found[0].Id)
@@ -1307,7 +1307,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				createInviteRebateUser(t, db, 33, common.RoleCommonUser, MemberLevelNormal, 0)
 
 				internal := MemberLevelInternal
-				users, total, err := SearchUsers("user3", "", nil, nil, &internal, 0, 50)
+				users, total, err := SearchUsers("user3", "", nil, nil, &internal, nil, 0, 50)
 				require.NoError(t, err)
 				assert.EqualValues(t, 1, total)
 				require.Len(t, users, 1)
@@ -1315,7 +1315,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, MemberLevelInternal, users[0].MemberLevel)
 
 				external := MemberLevelNormal
-				_, total, err = SearchUsers("user3", "", nil, nil, &external, 0, 50)
+				_, total, err = SearchUsers("user3", "", nil, nil, &external, nil, 0, 50)
 				require.NoError(t, err)
 				assert.EqualValues(t, 2, total)
 
@@ -1357,7 +1357,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				assertRebateColumn(t, users)
 
 				// 列表有两条查询路径，搜索那条也要填。
-				found, _, err := SearchUsers("user5", "", nil, nil, nil, 0, 10)
+				found, _, err := SearchUsers("user5", "", nil, nil, nil, nil, 0, 10)
 				require.NoError(t, err)
 				assertRebateColumn(t, found)
 			})

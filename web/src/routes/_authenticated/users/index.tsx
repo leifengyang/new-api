@@ -40,6 +40,12 @@ const usersSearchSchema = z.object({
     .array(z.enum(['0', '1']))
     .optional()
     .catch([]),
+  // 工具栏只给「企业账号」一个选项，'0' 留给手写 URL 的人：取消标记之后要能
+  // 把这些账号单独列出来。
+  enterprise: z
+    .array(z.enum(['0', '1']))
+    .optional()
+    .catch([]),
 })
 
 export const Route = createFileRoute('/_authenticated/users/')({

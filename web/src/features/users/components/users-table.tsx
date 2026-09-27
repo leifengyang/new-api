@@ -85,6 +85,7 @@ export function UsersTable() {
       { columnId: 'role', searchKey: 'role', type: 'array' },
       { columnId: 'group', searchKey: 'group', type: 'string' },
       { columnId: 'member_level', searchKey: 'member_level', type: 'array' },
+      { columnId: 'enterprise', searchKey: 'enterprise', type: 'array' },
     ],
   })
   const statusFilter =
@@ -100,6 +101,10 @@ export function UsersTable() {
     ''
   const memberLevelFilter =
     (columnFilters.find((filter) => filter.id === 'member_level')?.value as
+      | string[]
+      | undefined) ?? []
+  const enterpriseFilter =
+    (columnFilters.find((filter) => filter.id === 'enterprise')?.value as
       | string[]
       | undefined) ?? []
 
@@ -136,6 +141,7 @@ export function UsersTable() {
       roleFilter,
       groupFilter,
       memberLevelFilter,
+      enterpriseFilter,
       sortParams,
       refreshTrigger,
     ],
@@ -145,7 +151,8 @@ export function UsersTable() {
         statusFilter.length > 0 ||
         roleFilter.length > 0 ||
         Boolean(groupFilter) ||
-        memberLevelFilter.length > 0
+        memberLevelFilter.length > 0 ||
+        enterpriseFilter.length > 0
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
@@ -161,6 +168,7 @@ export function UsersTable() {
               role: roleFilter[0] ?? '',
               group: groupFilter,
               member_level: memberLevelFilter[0] ?? '',
+              is_enterprise: enterpriseFilter[0] ?? '',
             })
           : await getUsers(params)
 
@@ -249,6 +257,14 @@ export function UsersTable() {
             columnId: 'member_level',
             title: t('Member Level'),
             options: getUserMemberLevelOptions(t),
+            singleSelect: true,
+          },
+          {
+            // 只有一个选项：勾上就只列企业账号，正好对上列表里那枚徽标。
+            // 取值走服务端条件，所以筛的是全量而不是当前这一页。
+            columnId: 'enterprise',
+            title: t('Enterprise'),
+            options: [{ label: t('Enterprise Account'), value: '1' }],
             singleSelect: true,
           },
         ],
