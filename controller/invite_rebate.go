@@ -21,13 +21,15 @@ const maxReverseReasonLength = 255
 // inviteRebateItem 是返现流水的对外形态。邀请人、下线都以用户名呈现，
 // 管理员看全名，下线本人看到的是脱敏后的名字。
 type inviteRebateItem struct {
-	Id              int    `json:"id"`
-	InviterId       int    `json:"inviter_id"`
-	InviterName     string `json:"inviter_name"`
-	InviteeId       int    `json:"invitee_id"`
-	InviteeName     string `json:"invitee_name"`
-	Source          string `json:"source"`
-	SourceRef       string `json:"source_ref"`
+	Id          int    `json:"id"`
+	InviterId   int    `json:"inviter_id"`
+	InviterName string `json:"inviter_name"`
+	InviteeId   int    `json:"invitee_id"`
+	InviteeName string `json:"invitee_name"`
+	Source      string `json:"source"`
+	SourceRef   string `json:"source_ref"`
+	/** `direct` = 直属下线返现，`upline` = 上层内部学员返现。 */
+	Leg             string `json:"leg"`
 	BaseQuota       int    `json:"base_quota"`
 	RateBasisPoints int    `json:"rate_basis_points"`
 	RebateQuota     int    `json:"rebate_quota"`
@@ -65,10 +67,11 @@ func buildInviteRebateItem(rebate *model.InviteRebate, usernames map[int]string,
 		InviteeName:     usernames[rebate.InviteeId],
 		Source:          rebate.Source,
 		SourceRef:       rebate.SourceRef,
+		Leg:             rebate.Leg,
 		BaseQuota:       rebate.BaseQuota,
 		RateBasisPoints: rebate.RateBasisPoints,
 		RebateQuota:     rebate.RebateQuota,
-		Outstanding:     rebate.RebateQuota - rebate.ReversedQuota,
+		Outstanding:     rebate.OutstandingQuota(),
 		Status:          rebate.Status,
 		SkipReason:      rebate.SkipReason,
 		ReversedQuota:   rebate.ReversedQuota,
@@ -171,8 +174,10 @@ type reverseInviteRebateRequest struct {
 	Reason string `json:"reason"`
 }
 
-// ReverseInviteRebate 管理员撤销一笔已入账的返现。返现可能已被消费，
-// 因此按「能扣多少扣多少」处理，未收回的部分留在流水里可见。
+// ReverseInviteRebate 管理员撤销一笔已入账的返现。入参是流水的 id，但撤销的是
+// 它所属的那一整笔充值：一笔充值可能同时给直属邀请人和上层内部学员发过钱，
+// 冲正必须一起走，否则会留下一半收不回的返现。返现可能已被消费，因此按
+// 「能扣多少扣多少」处理，未收回的部分留在流水里可见。
 func ReverseInviteRebate(c *gin.Context) {
 	req := reverseInviteRebateRequest{}
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
@@ -189,7 +194,7 @@ func ReverseInviteRebate(c *gin.Context) {
 		return
 	}
 
-	rebate, err := model.ReverseInviteRebate(req.Id, c.GetInt("id"), reason)
+	reversed, err := model.ReverseInviteRebate(req.Id, c.GetInt("id"), reason)
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInviteRebateNotCredited):
@@ -204,12 +209,29 @@ func ReverseInviteRebate(c *gin.Context) {
 		return
 	}
 
+	legs := make([]map[string]any, 0, len(reversed))
+	recovered := 0
+	outstanding := 0
+	for _, leg := range reversed {
+		recovered += leg.Deducted
+		outstanding += leg.Rebate.OutstandingQuota()
+		legs = append(legs, map[string]any{
+			"rebate_id":  leg.Rebate.Id,
+			"leg":        leg.Rebate.Leg,
+			"inviter_id": leg.Rebate.InviterId,
+			"recovered":  leg.Deducted,
+			// 冲正后仍未收回的部分：返现已经被花掉时它不为零。
+			"outstanding": leg.Rebate.OutstandingQuota(),
+		})
+	}
 	recordManageAudit(c, "invite_rebate.reverse", map[string]any{
-		"rebate_id":   rebate.Id,
-		"inviter_id":  rebate.InviterId,
-		"invitee_id":  rebate.InviteeId,
-		"recovered":   rebate.ReversedQuota,
-		"outstanding": rebate.RebateQuota - rebate.ReversedQuota,
+		"rebate_id":   req.Id,
+		"source":      reversed[0].Rebate.Source,
+		"source_ref":  reversed[0].Rebate.SourceRef,
+		"invitee_id":  reversed[0].Rebate.InviteeId,
+		"legs":        legs,
+		"recovered":   recovered,
+		"outstanding": outstanding,
 		"reason":      reason,
 	})
 	common.ApiSuccess(c, nil)
@@ -240,13 +262,17 @@ func GetSelfInviteRebates(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, gin.H{
-		"page":              pageInfo,
-		"summary":           summary,
-		"rate_basis_points": rebateSetting.RateBasisPoints,
-		"rebate_enabled":    rebateSetting.Enabled,
-		"member_level":      model.GetUserMemberLevel(userId),
-		// 前端据此决定是否展示邀请返现卡片：内部学员且非管理员才拿得到返现。
+		"page":             pageInfo,
+		"summary":          summary,
+		"rebate_enabled":   rebateSetting.Enabled,
+		"member_level":     model.GetUserMemberLevel(userId),
 		"rebate_available": model.IsInviteRebateEligible(userId),
+		// 三个比例都下发：本人是内部学员就用 ① 和 ③，是外部用户就用 ②，由前端按
+		// 会员等级挑，文案要说清自己这两条腿各按多少返。多给的两个数字不泄露别人
+		// 的身份，只是同一份公开配置的另外两项。
+		"rate_basis_points":                   rebateSetting.RateBasisPoints,
+		"external_rate_basis_points":          rebateSetting.ExternalRateBasisPoints,
+		"internal_referrer_rate_basis_points": rebateSetting.InternalReferrerRateBasisPoints,
 	})
 }
 

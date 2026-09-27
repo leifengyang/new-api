@@ -30,13 +30,25 @@ const (
 	InviteRebateStatusSkipped  = "skipped"
 )
 
+// 返现的腿。一笔充值最多产生两条腿，各自对应一个独立比例、可以发给不同的人：
+//
+//	direct —— 直属下线充值，返给直接邀请人（内部学员按比例①，外部用户按比例②）
+//	upline —— 外部用户的直属下线充值，再返给该外部用户邀请链上第一个内部学员（比例③）
+//
+// 存下来是为了让台账自己说得清「这笔钱是按哪条规则发的」，也免得后台要反推。
+const (
+	InviteRebateLegDirect = "direct"
+	InviteRebateLegUpline = "upline"
+)
+
 // inviteRebateSavePoint 圈住一次返现尝试。理由见 creditInviteRebateTx。
+// 每条腿各开一个保存点（名字带腿名）：同名的保存点会互相遮蔽，回滚内层会把
+// 外层已经落库的那条腿一起带走，而两条腿必须各成败各的。
 const inviteRebateSavePoint = "invite_rebate_attempt"
 
-// firstTopUpSavePoint 圈住首充打点这一次写入。理由与返现相同：PostgreSQL 上一条
-// 失败语句会把整个事务置为 aborted，此后连 COMMIT 都会变成 ROLLBACK。首充标记
-// 只是返现规则的依据，绝不能把付款人的充值一起带走。
-const firstTopUpSavePoint = "first_topup_stamp"
+// maxInviterChainDepth 限制向上追溯邀请人的层数。正常邀请链只有个位数层，
+// 这个上限是给脏数据准备的：自环或互相邀请的环会让追溯变成死循环。
+const maxInviterChainDepth = 32
 
 // rollbackToSavepoint 放弃保存点内的写入，并把外层充值事务救回可提交状态。
 // 只能在保存点已经开好之后调用。
@@ -58,20 +70,35 @@ var (
 	ErrInviteRebateBalanceChanged = errors.New("邀请人余额已变化，请重试")
 )
 
+// 返现台账的唯一索引名。(Source, SourceRef, InviterId) 上的唯一索引是防重的
+// 硬约束：上游的订单状态检查已经保证一笔充值只入账一次，但 webhook 重放、并发
+// 回调仍可能让返现逻辑被二次触发。发放路径因此先写这条流水再动钱包——插入失败
+// 即代表「这笔来源已经给这个人发过」，直接放弃，绝不会重复给同一个人加钱。
+//
+// 索引带 InviterId 而不是只带 SourceRef，是因为一笔充值现在可能发出两条腿、
+// 落到两个不同的人头上：同一笔充值、同一个收款人只能有一条流水，不同收款人
+// 各记各的。只按 (Source, SourceRef) 唯一会直接挡掉第二条腿。
+//
+// 早先的 idx_invite_rebate_source 只覆盖前两列，由 migrateInviteRebateGrantUniqueness
+// 在 AutoMigrate 之前换掉，见那里的说明。
+const inviteRebateGrantIndex = "idx_invite_rebate_grant"
+
+// legacyInviteRebateSourceIndex 是上一版台账的唯一索引名，升级时会被丢弃。
+const legacyInviteRebateSourceIndex = "idx_invite_rebate_source"
+
 // InviteRebate 是邀请返现流水，也是返现的唯一事实来源。
 //
-// (Source, SourceRef) 上的唯一索引是防重的硬约束：上游的订单状态检查已经保证
-// 一笔充值只入账一次，但 webhook 重放、并发回调仍可能让返现逻辑被二次触发。
-// 发放路径因此先写这条流水再动钱包——插入失败即代表这笔来源已经发过，直接
-// 放弃，绝不会重复给邀请人加钱。
-//
 // RateBasisPoints 是发放当时的比例快照，后台改比例只影响之后的返现。
+// Leg 记录这笔钱是按哪条规则发的（direct / upline），见上面的腿常量。
 type InviteRebate struct {
-	Id              int    `json:"id" gorm:"primaryKey"`
-	InviterId       int    `json:"inviter_id" gorm:"index;not null"`
-	InviteeId       int    `json:"invitee_id" gorm:"index;not null"`
-	Source          string `json:"source" gorm:"type:varchar(32);not null;uniqueIndex:idx_invite_rebate_source,priority:1"`
-	SourceRef       string `json:"source_ref" gorm:"type:varchar(255);not null;uniqueIndex:idx_invite_rebate_source,priority:2"`
+	Id        int    `json:"id" gorm:"primaryKey"`
+	InviterId int    `json:"inviter_id" gorm:"index;not null;uniqueIndex:idx_invite_rebate_grant,priority:3"`
+	InviteeId int    `json:"invitee_id" gorm:"index;not null"`
+	Source    string `json:"source" gorm:"type:varchar(32);not null;uniqueIndex:idx_invite_rebate_grant,priority:1"`
+	SourceRef string `json:"source_ref" gorm:"type:varchar(255);not null;uniqueIndex:idx_invite_rebate_grant,priority:2"`
+	// Leg 的默认值同时承担存量行的回填：老台账只有「直属下线」这一条腿，
+	// 加列时数据库会用默认值把已有行填成 direct，不需要额外的数据迁移。
+	Leg             string `json:"leg" gorm:"type:varchar(16);not null;default:direct"`
 	BaseQuota       int    `json:"base_quota" gorm:"type:bigint;not null;default:0"`
 	RateBasisPoints int    `json:"rate_basis_points" gorm:"not null;default:0"`
 	RebateQuota     int    `json:"rebate_quota" gorm:"type:bigint;not null;default:0"`
@@ -82,6 +109,12 @@ type InviteRebate struct {
 	ReversedBy      int    `json:"reversed_by" gorm:"not null;default:0"`
 	ReverseReason   string `json:"reverse_reason" gorm:"type:varchar(255);not null;default:''"`
 	CreatedAt       int64  `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+}
+
+// OutstandingQuota 是这条腿还没被收回的额度。冲正按「能扣多少扣多少」处理，
+// 扣不满的部分留在这里，既是对外展示的口径，也是「还要不要再冲一次」的依据。
+func (rebate *InviteRebate) OutstandingQuota() int {
+	return rebate.RebateQuota - rebate.ReversedQuota
 }
 
 // inviteRebateCredit 携带事务提交后需要落地的邀请人入账信息。余额缓存
@@ -98,36 +131,23 @@ type inviteRebateCredit struct {
 	Quota           int
 }
 
-// stampFirstTopUpTx 判定本次充值是不是该用户的第一笔成功充值，并把首充时间记到
-// user 上。返回值就是 creditInviteRebateTx 里外部邀请人拿不拿得到返现的依据。
-//
-// 用 CAS（first_topup_at = 0 → 当前时间）而不是「先读后写」：并发回调下只有一个
-// 事务能把它从 0 翻过去，外部邀请人的首充返现因此不会发两次。打点在充值入账之后、
-// 同一个事务里，事务回滚会连同标记一起撤销，所以被回滚的充值不算首充。
-//
-// 打点失败只意味着外部邀请人拿不到这笔首充返现，因此这里不返回错误；但它仍然
-// 自带保存点——失败的语句不能把付款人的充值事务一起拖下水。
-func stampFirstTopUpTx(tx *gorm.DB, userId int) bool {
-	if err := tx.SavePoint(firstTopUpSavePoint).Error; err != nil {
-		common.SysError(fmt.Sprintf("invite rebate: failed to open savepoint for first top-up of user %d: %s", userId, err.Error()))
-		return false
-	}
-	result := tx.Model(&User{}).
-		Where("id = ? AND first_topup_at = 0", userId).
-		Update("first_topup_at", common.GetTimestamp())
-	if result.Error != nil {
-		common.SysError(fmt.Sprintf("invite rebate: failed to stamp first top-up of user %d: %s", userId, result.Error.Error()))
-		rollbackToSavepoint(tx, firstTopUpSavePoint)
-		return false
-	}
-	return result.RowsAffected == 1
+// inviteRebateLeg 是一条待发放的返现腿：发给谁、按哪条规则、比例多少。
+type inviteRebateLeg struct {
+	Inviter User
+	Leg     string
+	Rate    int
 }
 
-// creditInviteRebateTx 在充值事务内给邀请人发放返现。
+// creditInviteRebateTx 在充值事务内给邀请人发放返现，返回本次实际入账的腿。
 //
-// firstTopUp 是本次充值是否为被邀请人的首充，由 stampFirstTopUpTx 在同一个事务里
-// 判定。内部学员按每笔充值返现；外部用户只在下线的首充上拿一次，那是拉新的一次性
-// 奖励，不是可持续的分润。
+// 一笔充值最多发两条腿，每条腿的比例各自独立（后台三个输入框）：
+//
+//	直属下线充值 → 直接邀请人拿一条 direct 腿：
+//	    内部学员按比例①，外部用户按比例②
+//	外部用户的直属下线充值 → 再发一条 upline 腿：
+//	    从该外部用户的邀请人往上找，第一个「内部学员且非管理员」按比例③
+//
+// 两条腿互不依赖：比例填 0 就只是那条腿不发，另一条照常。
 //
 // 它刻意不返回错误：返现是充值的附带结果，任何失败（邀请人不存在、钱包触顶、
 // 流水写入失败）都只能影响返现本身，绝不能让付款人的充值失败。无法入账的
@@ -135,13 +155,13 @@ func stampFirstTopUpTx(tx *gorm.DB, userId int) bool {
 //
 // 「不返回错误」还不够：写入部分必须跑在 SAVEPOINT 里。PostgreSQL 上一条语句
 // 失败会把整个事务置为 aborted，此后连 COMMIT 都会变成 ROLLBACK——而「插入撞上
-// (source, source_ref) 唯一索引」正是这里预期内的重放结果，只忽略错误继续走的
-// 话，付款人的充值会被这笔返现一起回滚（钱收了、额度没到）。SQLite / MySQL 的
-// 失败语句不会污染事务，保存点在那里只是多一次往返；三个库走同一条路径，行为
-// 不随方言分叉。
-func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string, firstTopUp bool) *inviteRebateCredit {
+// (source, source_ref, inviter_id) 唯一索引」正是这里预期内的重放结果，只忽略
+// 错误继续走的话，付款人的充值会被这笔返现一起回滚（钱收了、额度没到）。
+// SQLite / MySQL 的失败语句不会污染事务，保存点在那里只是多一次往返；三个库
+// 走同一条路径，行为不随方言分叉。
+func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string) []*inviteRebateCredit {
 	setting := operation_setting.GetInviteRebateSetting()
-	if !setting.Enabled || setting.RateBasisPoints <= 0 || baseQuota <= 0 || sourceRef == "" {
+	if !setting.Enabled || baseQuota <= 0 || sourceRef == "" {
 		return nil
 	}
 
@@ -155,18 +175,82 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	}
 
 	var inviter User
-	if err := tx.Select("id", "role", "member_level").First(&inviter, invitee.InviterId).Error; err != nil {
+	if err := tx.Select("id", "inviter_id", "role", "member_level").First(&inviter, invitee.InviterId).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: inviter %d of user %d not found: %s", invitee.InviterId, inviteeId, err.Error()))
 		return nil
 	}
 	// 管理员不参与：管理员名下的用户充值属于自己的业务收入，再返到管理账号
-	// 只是同一个人内部的账目搬运。
+	// 只是同一个人内部的账目搬运。管理员的下线因此既不触发直属腿，也不往上
+	// 追溯第三腿。
 	if inviter.Role >= common.RoleAdminUser {
 		return nil
 	}
-	// 内部学员每笔充值都能返；外部用户只在下线的首充上返一次。判定放在身份
-	// 判定之后，是为了让内部学员的每笔充值都不必经过首充这一关。
-	if inviter.MemberLevel != MemberLevelInternal && !firstTopUp {
+
+	legs := make([]inviteRebateLeg, 0, 2)
+	if inviter.MemberLevel == MemberLevelInternal {
+		legs = append(legs, inviteRebateLeg{Inviter: inviter, Leg: InviteRebateLegDirect, Rate: setting.RateBasisPoints})
+	} else {
+		legs = append(legs, inviteRebateLeg{Inviter: inviter, Leg: InviteRebateLegDirect, Rate: setting.ExternalRateBasisPoints})
+		// 第三腿只认「外部用户的下线充值」：往上找到的第一个内部学员拿钱，
+		// 中间隔着的其他外部用户不参与。
+		if upline, ok := findUplineInternalInviter(tx, inviter.Id); ok {
+			legs = append(legs, inviteRebateLeg{Inviter: upline, Leg: InviteRebateLegUpline, Rate: setting.InternalReferrerRateBasisPoints})
+		}
+	}
+
+	credits := make([]*inviteRebateCredit, 0, len(legs))
+	for _, leg := range legs {
+		if credit := creditInviteRebateLegTx(tx, inviteeId, baseQuota, source, sourceRef, leg); credit != nil {
+			credits = append(credits, credit)
+		}
+	}
+	// 一条腿都没发出去时回 nil 而不是空切片：调用方与用例都按「什么都没发生」
+	// 判断，空切片非 nil，会让 assert.Nil 这类判断悄悄变成假阳性。
+	if len(credits) == 0 {
+		return nil
+	}
+	return credits
+}
+
+// findUplineInternalInviter 从 fromUserId 的邀请人开始向上找，返回第一个
+// 「内部学员且非管理员」。
+//
+// 走到管理员就停：管理员是邀请树的根，再往上是另一个人的关系网，不该为这批
+// 用户付钱。管理员是邀请返现里唯一的身份例外，停在这里与 creditInviteRebateTx
+// 里「管理员不参与」是同一个口径。
+func findUplineInternalInviter(tx *gorm.DB, fromUserId int) (User, bool) {
+	current := fromUserId
+	for depth := 0; depth < maxInviterChainDepth; depth++ {
+		var node User
+		if err := tx.Select("id", "inviter_id").First(&node, current).Error; err != nil {
+			common.SysError(fmt.Sprintf("invite rebate: failed to walk inviter chain at user %d: %s", current, err.Error()))
+			return User{}, false
+		}
+		parentId := node.InviterId
+		// parentId == current 是自环，0 是链到头，两者都说明没有更上层的内部学员。
+		if parentId <= 0 || parentId == current {
+			return User{}, false
+		}
+		var parent User
+		if err := tx.Select("id", "role", "member_level").First(&parent, parentId).Error; err != nil {
+			common.SysError(fmt.Sprintf("invite rebate: upline inviter %d not found: %s", parentId, err.Error()))
+			return User{}, false
+		}
+		if parent.Role >= common.RoleAdminUser {
+			return User{}, false
+		}
+		if parent.MemberLevel == MemberLevelInternal {
+			return parent, true
+		}
+		current = parent.Id
+	}
+	common.SysError(fmt.Sprintf("invite rebate: inviter chain from user %d exceeds %d levels, stopped", fromUserId, maxInviterChainDepth))
+	return User{}, false
+}
+
+// creditInviteRebateLegTx 发放一条腿：写流水、加余额，全程在自己的保存点内。
+func creditInviteRebateLegTx(tx *gorm.DB, inviteeId int, baseQuota int, source string, sourceRef string, leg inviteRebateLeg) *inviteRebateCredit {
+	if leg.Rate <= 0 {
 		return nil
 	}
 
@@ -178,7 +262,7 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	// 悄悄压到 21 亿以下，对不上账。
 	rebateQuota, err := common.WalletQuotaFromDecimalStrict(
 		decimal.NewFromInt(int64(baseQuota)).
-			Mul(decimal.NewFromInt(int64(setting.RateBasisPoints))).
+			Mul(decimal.NewFromInt(int64(leg.Rate))).
 			Div(decimal.NewFromInt(10000)),
 	)
 	if err != nil {
@@ -191,18 +275,20 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	}
 
 	record := InviteRebate{
-		InviterId:       inviter.Id,
+		InviterId:       leg.Inviter.Id,
 		InviteeId:       inviteeId,
 		Source:          source,
 		SourceRef:       sourceRef,
+		Leg:             leg.Leg,
 		BaseQuota:       baseQuota,
-		RateBasisPoints: setting.RateBasisPoints,
+		RateBasisPoints: leg.Rate,
 		RebateQuota:     rebateQuota,
 		Status:          InviteRebateStatusCredited,
 	}
 
+	savePoint := inviteRebateSavePoint + "_" + leg.Leg
 	// 前面的分支都还没写过库，保存点因此开在第一次写入之前。
-	if err := tx.SavePoint(inviteRebateSavePoint).Error; err != nil {
+	if err := tx.SavePoint(savePoint).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: failed to open savepoint for %s/%s: %s", source, sourceRef, err.Error()))
 		return nil
 	}
@@ -211,15 +297,15 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	// 重放的流水会被索引拦下但钱已经进了邀请人钱包，重放一次就多送一次。
 	// 插入失败即代表这笔来源已经发过（或返现侧本身出问题），直接放弃。
 	if err := tx.Create(&record).Error; err != nil {
-		common.SysError(fmt.Sprintf("invite rebate: failed to record rebate for %s/%s: %s", source, sourceRef, err.Error()))
-		rollbackToSavepoint(tx, inviteRebateSavePoint)
+		common.SysError(fmt.Sprintf("invite rebate: failed to record %s rebate for %s/%s: %s", leg.Leg, source, sourceRef, err.Error()))
+		rollbackToSavepoint(tx, savePoint)
 		return nil
 	}
 
-	if err := creditInviterWalletTx(tx, inviter.Id, rebateQuota); err != nil {
+	if err := creditInviterWalletTx(tx, leg.Inviter.Id, rebateQuota); err != nil {
 		if !errors.Is(err, ErrInviteRebateWalletLimit) {
-			common.SysError(fmt.Sprintf("invite rebate: failed to credit inviter %d: %s", inviter.Id, err.Error()))
-			rollbackToSavepoint(tx, inviteRebateSavePoint)
+			common.SysError(fmt.Sprintf("invite rebate: failed to credit inviter %d: %s", leg.Inviter.Id, err.Error()))
+			rollbackToSavepoint(tx, savePoint)
 			return nil
 		}
 		// 钱包触顶时改写成 skipped 留档，基数与比例保留，管理员能看到本该返多少。
@@ -228,16 +314,16 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 		record.RebateQuota = 0
 		if saveErr := tx.Save(&record).Error; saveErr != nil {
 			common.SysError(fmt.Sprintf("invite rebate: failed to mark rebate %d skipped: %s", record.Id, saveErr.Error()))
-			rollbackToSavepoint(tx, inviteRebateSavePoint)
+			rollbackToSavepoint(tx, savePoint)
 			return nil
 		}
-		common.SysError(fmt.Sprintf("invite rebate: inviter %d wallet at limit, rebate of %d skipped", inviter.Id, rebateQuota))
+		common.SysError(fmt.Sprintf("invite rebate: inviter %d wallet at limit, %s rebate of %d skipped", leg.Inviter.Id, leg.Leg, rebateQuota))
 		return nil
 	}
 
 	return &inviteRebateCredit{
 		RebateId:        record.Id,
-		InviterId:       inviter.Id,
+		InviterId:       leg.Inviter.Id,
 		InviteeId:       inviteeId,
 		BaseQuota:       baseQuota,
 		RateBasisPoints: record.RateBasisPoints,
@@ -268,97 +354,144 @@ func creditInviterWalletTx(tx *gorm.DB, inviterId int, quota int) error {
 }
 
 // finalizeInviteRebate 是返现的唯一收尾入口，必须在充值事务提交后调用：
-// 把增量补进余额缓存，并写一条归属邀请人的流水日志。
-func finalizeInviteRebate(credit *inviteRebateCredit) {
-	if credit == nil || credit.Quota <= 0 {
-		return
+// 把每条腿的增量补进余额缓存，并各写一条归属邀请人的流水日志。
+// 一笔充值可能同时给两个人发钱，因此入参是腿的集合。
+func finalizeInviteRebate(credits []*inviteRebateCredit) {
+	for _, credit := range credits {
+		if credit == nil || credit.Quota <= 0 {
+			continue
+		}
+		syncCreditUserQuotaCache(credit.InviterId, credit.Quota, "invite rebate")
+		// 带上流水号，便于从用户日志直接定位到后台的返现记录。
+		RecordLog(credit.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现 #%d：下线用户 %d 充值 %s，按 %.2f%% 返现 %s",
+			credit.RebateId, credit.InviteeId, logger.LogQuota(credit.BaseQuota),
+			float64(credit.RateBasisPoints)/100, logger.LogQuota(credit.Quota)))
 	}
-	syncCreditUserQuotaCache(credit.InviterId, credit.Quota, "invite rebate")
-	// 带上流水号，便于从用户日志直接定位到后台的返现记录。
-	RecordLog(credit.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现 #%d：下线用户 %d 充值 %s，按 %.2f%% 返现 %s",
-		credit.RebateId, credit.InviteeId, logger.LogQuota(credit.BaseQuota),
-		float64(credit.RateBasisPoints)/100, logger.LogQuota(credit.Quota)))
 }
 
-// ReverseInviteRebate 撤销一笔已入账的返现。
+// ReverseInviteRebate 撤销一笔返现。入参是台账里任意一条腿的 id，实际撤销的是
+// 它所属的那一整笔充值：一笔充值可能同时给直属邀请人和上层内部学员发过钱，
+// 冲正时两条腿必须一起走，否则会留下一半收不回的返现。
 //
 // 返现已经变成邀请人的可用余额，可能已被消费，因此这里按「能扣多少扣多少」
 // 处理：最多扣到余额为 0，未收回的部分留在流水的 RebateQuota 与 ReversedQuota
 // 差额里，不产生负余额。余额缓存同步在事务提交后按实际扣减量递减。
-func ReverseInviteRebate(rebateId int, operatorId int, reason string) (*InviteRebate, error) {
+//
+// 整笔是一个事务：任何一条腿扣款失败（余额被并发改动）都会全部回滚，让管理员
+// 看到「请重试」而不是一个只冲了一半的账。
+func ReverseInviteRebate(rebateId int, operatorId int, reason string) ([]ReversedInviteRebate, error) {
 	if rebateId <= 0 {
 		return nil, errors.New("返现记录 id 无效")
 	}
-	rebate := &InviteRebate{}
-	deducted := 0
+	anchor := &InviteRebate{}
+	reversed := make([]ReversedInviteRebate, 0, 2)
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := lockForUpdate(tx).First(rebate, rebateId).Error; err != nil {
+		reversed = reversed[:0]
+		if err := lockForUpdate(tx).First(anchor, rebateId).Error; err != nil {
 			return err
 		}
-		if rebate.Status != InviteRebateStatusCredited {
-			return ErrInviteRebateNotCredited
-		}
-		outstanding := rebate.RebateQuota - rebate.ReversedQuota
-		if outstanding <= 0 {
+		if anchor.Status != InviteRebateStatusCredited || anchor.OutstandingQuota() <= 0 {
 			return ErrInviteRebateNotCredited
 		}
 
-		var inviter User
-		if err := lockForUpdate(tx).Select("id", "quota").First(&inviter, rebate.InviterId).Error; err != nil {
+		var legs []*InviteRebate
+		if err := lockForUpdate(tx).
+			Where("source = ? AND source_ref = ?", anchor.Source, anchor.SourceRef).
+			Order("id asc").
+			Find(&legs).Error; err != nil {
 			return err
 		}
-		deducted = min(outstanding, max(inviter.Quota, 0))
-		previousReversed := rebate.ReversedQuota
 
-		// 先占坑再加钱：以读到的 reversed_quota 作比较并交换。并发的第二次撤销
-		// 会在这里拿到 0 行并放弃，不会去动钱包。SQLite 上 lockForUpdate 是空
-		// 操作，如果没有这道 CAS，两次并发撤销会各自读到同一份旧值并重复扣款。
-		ledger := tx.Model(&InviteRebate{}).
-			Where("id = ? AND reversed_quota = ?", rebate.Id, previousReversed).
-			Updates(map[string]any{
-				"reversed_quota": gorm.Expr("reversed_quota + ?", deducted),
-				"reversed_at":    common.GetTimestamp(),
-				"reversed_by":    operatorId,
-				"reverse_reason": reason,
-			})
-		if ledger.Error != nil {
-			return ledger.Error
+		for _, leg := range legs {
+			if leg.Status != InviteRebateStatusCredited {
+				continue
+			}
+			outstanding := leg.OutstandingQuota()
+			if outstanding <= 0 {
+				continue
+			}
+			deducted, err := reverseInviteRebateLegTx(tx, leg, outstanding, operatorId, reason)
+			if err != nil {
+				return err
+			}
+			reversed = append(reversed, ReversedInviteRebate{Rebate: leg, Deducted: deducted})
 		}
-		if ledger.RowsAffected == 0 {
+		if len(reversed) == 0 {
 			return ErrInviteRebateNotCredited
 		}
-
-		if deducted > 0 {
-			// 条件更新兜底：即使余额在读取之后被别的并发事务動过，也扣不到负数。
-			// 影响到 0 行说明余额已不足本次扣减，整笔回滚让管理员重试。
-			result := tx.Model(&User{}).Where("id = ? AND quota >= ?", inviter.Id, deducted).
-				Update("quota", gorm.Expr("quota - ?", deducted))
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected == 0 {
-				return ErrInviteRebateBalanceChanged
-			}
-		}
-
-		rebate.ReversedQuota = previousReversed + deducted
-		rebate.ReversedAt = common.GetTimestamp()
-		rebate.ReversedBy = operatorId
-		rebate.ReverseReason = reason
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	if deducted > 0 {
-		if err := cacheDecrUserQuota(rebate.InviterId, int64(deducted)); err != nil {
+	for _, leg := range reversed {
+		if leg.Deducted <= 0 {
+			continue
+		}
+		if err := cacheDecrUserQuota(leg.Rebate.InviterId, int64(leg.Deducted)); err != nil {
 			common.SysLog(fmt.Sprintf("failed to sync invite rebate reversal to user quota cache: %s", err.Error()))
 		}
-		RecordLog(rebate.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现被撤销：应扣 %s，实扣 %s，原因：%s",
-			logger.LogQuota(rebate.RebateQuota-rebate.ReversedQuota+deducted), logger.LogQuota(deducted), reason))
+		RecordLog(leg.Rebate.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现被撤销：应扣 %s，实扣 %s，原因：%s",
+			logger.LogQuota(leg.Rebate.RebateQuota-leg.Rebate.ReversedQuota+leg.Deducted),
+			logger.LogQuota(leg.Deducted), reason))
 	}
-	return rebate, nil
+	return reversed, nil
+}
+
+// ReversedInviteRebate 是一次冲正里的一条腿：冲正后的流水，以及实际收回的额度。
+// 两者都要给审计日志用——「该扣多少」和「真扣到多少」在返现被花掉后并不相等。
+type ReversedInviteRebate struct {
+	Rebate   *InviteRebate
+	Deducted int
+}
+
+// reverseInviteRebateLegTx 扣掉一条腿能扣的部分，返回实际收回的额度。
+// outstanding 是调用方在同一个事务里读到的未收回金额。
+func reverseInviteRebateLegTx(tx *gorm.DB, leg *InviteRebate, outstanding int, operatorId int, reason string) (int, error) {
+	var inviter User
+	if err := lockForUpdate(tx).Select("id", "quota").First(&inviter, leg.InviterId).Error; err != nil {
+		return 0, err
+	}
+	deducted := min(outstanding, max(inviter.Quota, 0))
+	previousReversed := leg.ReversedQuota
+
+	// 先占坑再扣钱：以读到的 reversed_quota 作比较并交换。并发的第二次撤销
+	// 会在这里拿到 0 行并放弃，不会去动钱包。SQLite 上 lockForUpdate 是空
+	// 操作，如果没有这道 CAS，两次并发撤销会各自读到同一份旧值并重复扣款。
+	ledger := tx.Model(&InviteRebate{}).
+		Where("id = ? AND reversed_quota = ?", leg.Id, previousReversed).
+		Updates(map[string]any{
+			"reversed_quota": gorm.Expr("reversed_quota + ?", deducted),
+			"reversed_at":    common.GetTimestamp(),
+			"reversed_by":    operatorId,
+			"reverse_reason": reason,
+		})
+	if ledger.Error != nil {
+		return 0, ledger.Error
+	}
+	if ledger.RowsAffected == 0 {
+		return 0, ErrInviteRebateNotCredited
+	}
+
+	if deducted > 0 {
+		// 条件更新兜底：即使余额在读取之后被别的并发事务動过，也扣不到负数。
+		// 影响到 0 行说明余额已不足本次扣减，整笔回滚让管理员重试。
+		result := tx.Model(&User{}).Where("id = ? AND quota >= ?", inviter.Id, deducted).
+			Update("quota", gorm.Expr("quota - ?", deducted))
+		if result.Error != nil {
+			return 0, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return 0, ErrInviteRebateBalanceChanged
+		}
+	}
+
+	leg.ReversedQuota = previousReversed + deducted
+	leg.ReversedAt = common.GetTimestamp()
+	leg.ReversedBy = operatorId
+	leg.ReverseReason = reason
+	return deducted, nil
 }
 
 // InviteRebateFilter 描述返现流水的查询条件，零值表示不限制该维度。
@@ -516,10 +649,10 @@ func resolveMemberLevelForNewUser(tx *gorm.DB, inviterId int) int {
 	return MemberLevelNormal
 }
 
-// IsInviteRebateEligible 判断某个用户是否有资格拿邀请返现。内部学员每笔充值都能
-// 返，外部用户能从下线的首充里拿到一次，因此除管理员外人人都有资格；管理员不参与
-// （返到自己账号只是同一个人内部的账目搬运）。与 creditInviteRebateTx 里的判定
-// 保持一致，前端的展示开关也走这里。
+// IsInviteRebateEligible 判断某个用户是否有资格拿邀请返现。内部学员拿比例①，
+// 外部用户拿比例②，两条腿都是每笔充值都发，因此除管理员外人人都有资格；管理员
+// 不参与（返到自己账号只是同一个人内部的账目搬运）。与 creditInviteRebateTx 里的
+// 判定保持一致，前端的展示开关也走这里。
 func IsInviteRebateEligible(userId int) bool {
 	var user User
 	if err := DB.Select("id", "role").First(&user, userId).Error; err != nil {

@@ -142,7 +142,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		return 0, errors.New("无效的 user id")
 	}
 	redemption := &Redemption{}
-	var rebateCredit *inviteRebateCredit
+	var rebateCredit []*inviteRebateCredit
 
 	keyCol := "`key`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
