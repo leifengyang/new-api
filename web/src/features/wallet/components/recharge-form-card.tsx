@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
+import { Gift, Loader2, Receipt, ShoppingCart, WalletCards } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -43,6 +43,7 @@ import {
   getPaymentIcon,
   getMinTopupAmount,
   calculatePresetPricing,
+  isSafeExternalUrl,
 } from '../lib'
 import type {
   PaymentMethod,
@@ -130,12 +131,20 @@ export function RechargeFormCard({
     }
   }
 
+  // 后台配的外部充值入口（发卡站）：它和网关渠道并列显示，但点了是直接跳出去，
+  // 不在平台上走下单接口。地址不合法时当作没配 —— 否则会渲染出一条相对链接，
+  // 把人带回平台自己的页面。
+  const externalTopupUrl =
+    topupLink && isSafeExternalUrl(topupLink) ? topupLink.trim() : ''
+  const hasExternalTopup = externalTopupUrl !== ''
+
   const hasConfigurableTopup =
     topupInfo?.enable_online_topup ||
     topupInfo?.enable_stripe_topup ||
     enableWaffoTopup ||
     enableWaffoPancakeTopup
-  const hasAnyTopup = hasConfigurableTopup || enableCreemTopup
+  const hasAnyTopup =
+    hasConfigurableTopup || enableCreemTopup || hasExternalTopup
   const hasStandardPaymentMethods =
     Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
@@ -312,79 +321,111 @@ export function RechargeFormCard({
                   </div>
                 </div>
               </div>
+            </>
+          )}
 
-              <div className='space-y-2.5 sm:space-y-3'>
-                <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                  {t('Payment Method')}
-                </Label>
-                {hasStandardPaymentMethods ? (
-                  <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
-                    {topupInfo?.pay_methods?.map((method) => {
-                      const minTopup = Math.max(
-                        method.min_topup || 0,
-                        getMinTopupAmount(topupInfo)
-                      )
-                      const disabled = minTopup > topupAmount
-                      const disabledReason = disabled
-                        ? t('Minimum topup amount: {{amount}}', {
-                            amount: minTopup,
-                          })
-                        : undefined
-                      const disabledLabel = disabled
-                        ? `${t('Minimum:')} ${minTopup}`
-                        : undefined
+          {/* 渠道那一排单独成块：外部充值入口不依赖任何网关配置，只配了它也得能显示。 */}
+          {(hasConfigurableTopup || hasExternalTopup) && (
+            <div className='space-y-2.5 sm:space-y-3'>
+              <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+                {t('Payment Method')}
+              </Label>
+              {hasStandardPaymentMethods || hasExternalTopup ? (
+                <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
+                  {topupInfo?.pay_methods?.map((method) => {
+                    const minTopup = Math.max(
+                      method.min_topup || 0,
+                      getMinTopupAmount(topupInfo)
+                    )
+                    const disabled = minTopup > topupAmount
+                    const disabledReason = disabled
+                      ? t('Minimum topup amount: {{amount}}', {
+                          amount: minTopup,
+                        })
+                      : undefined
+                    const disabledLabel = disabled
+                      ? `${t('Minimum:')} ${minTopup}`
+                      : undefined
 
-                      const button = (
-                        <Button
-                          key={method.type}
-                          variant='outline'
-                          onClick={() => onPaymentMethodSelect(method)}
-                          disabled={disabled || !!paymentLoading}
-                          title={disabledReason}
-                          aria-label={
-                            disabledReason
-                              ? `${method.name}. ${disabledReason}`
-                              : method.name
-                          }
-                          className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                        >
-                          {paymentLoading === method.type ? (
-                            <Loader2 className='h-4 w-4 animate-spin' />
-                          ) : (
-                            getPaymentIcon(
-                              method.type,
-                              'h-4 w-4',
-                              method.icon,
-                              method.name
-                            )
-                          )}
-                          <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                            <span className='max-w-full truncate'>
-                              {method.name}
-                            </span>
-                            {disabledLabel && (
-                              <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                                {disabledLabel}
-                              </span>
-                            )}
+                    const button = (
+                      <Button
+                        key={method.type}
+                        variant='outline'
+                        onClick={() => onPaymentMethodSelect(method)}
+                        disabled={disabled || !!paymentLoading}
+                        title={disabledReason}
+                        aria-label={
+                          disabledReason
+                            ? `${method.name}. ${disabledReason}`
+                            : method.name
+                        }
+                        className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                      >
+                        {paymentLoading === method.type ? (
+                          <Loader2 className='h-4 w-4 animate-spin' />
+                        ) : (
+                          getPaymentIcon(
+                            method.type,
+                            'h-4 w-4',
+                            method.icon,
+                            method.name
+                          )
+                        )}
+                        <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                          <span className='max-w-full truncate'>
+                            {method.name}
                           </span>
-                        </Button>
-                      )
+                          {disabledLabel && (
+                            <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                              {disabledLabel}
+                            </span>
+                          )}
+                        </span>
+                      </Button>
+                    )
 
-                      return disabled ? (
-                        <TooltipProvider key={method.type}>
-                          <Tooltip>
-                            <TooltipTrigger render={button} />
-                            <TooltipContent>{disabledReason}</TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        button
-                      )
-                    })}
-                  </div>
-                ) : null}
-                {!hasStandardPaymentMethods && !hasWaffoPaymentMethods && (
+                    return disabled ? (
+                      <TooltipProvider key={method.type}>
+                        <Tooltip>
+                          <TooltipTrigger render={button} />
+                          <TooltipContent>{disabledReason}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      button
+                    )
+                  })}
+                  {hasExternalTopup && (
+                    // 金额在店里选，所以这个渠道不看上面的充值金额，也不受网关
+                    // 下单状态影响：它是条链接，永远可点。
+                    <Button
+                      variant='outline'
+                      aria-label={t('Online Topup')}
+                      className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                      render={
+                        <a
+                          href={externalTopupUrl}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        />
+                      }
+                    >
+                      <ShoppingCart className='h-4 w-4' />
+                      <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                        <span className='max-w-full truncate'>
+                          {t('Online Topup')}
+                        </span>
+                        <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                          {t('Buy a code, then redeem below')}
+                        </span>
+                      </span>
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+              {!hasStandardPaymentMethods &&
+                !hasWaffoPaymentMethods &&
+                !hasExternalTopup && (
                   <Alert>
                     <AlertDescription>
                       {t(
@@ -393,89 +434,87 @@ export function RechargeFormCard({
                     </AlertDescription>
                   </Alert>
                 )}
-              </div>
-
-              {enableWaffoTopup &&
-                hasWaffoPaymentMethods &&
-                onWaffoMethodSelect && (
-                  <div className='space-y-2.5 sm:space-y-3'>
-                    <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-                      {t('Waffo Payment')}
-                    </Label>
-                    <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
-                      {waffoPayMethods?.map((method, index) => {
-                        const loadingKey = `waffo-${index}`
-                        const methodKey = `${method.payMethodType ?? 'unknown'}-${method.payMethodName ?? method.name}`
-                        const waffoMin = waffoMinTopup || 0
-                        const belowMin = waffoMin > topupAmount
-                        const disabledReason = belowMin
-                          ? t('Minimum topup amount: {{amount}}', {
-                              amount: waffoMin,
-                            })
-                          : undefined
-                        const disabledLabel = belowMin
-                          ? `${t('Minimum:')} ${waffoMin}`
-                          : undefined
-
-                        let methodIcon = getPaymentIcon('waffo')
-                        if (paymentLoading === loadingKey) {
-                          methodIcon = (
-                            <Loader2 className='h-4 w-4 animate-spin' />
-                          )
-                        } else if (method.icon) {
-                          methodIcon = (
-                            <img
-                              src={method.icon}
-                              alt={method.name}
-                              className='h-4 w-4 object-contain'
-                            />
-                          )
-                        }
-
-                        const button = (
-                          <Button
-                            key={methodKey}
-                            variant='outline'
-                            onClick={() => onWaffoMethodSelect(method, index)}
-                            disabled={belowMin || !!paymentLoading}
-                            title={disabledReason}
-                            aria-label={
-                              disabledReason
-                                ? `${method.name}. ${disabledReason}`
-                                : method.name
-                            }
-                            className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                          >
-                            {methodIcon}
-                            <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                              <span className='max-w-full truncate'>
-                                {method.name}
-                              </span>
-                              {disabledLabel && (
-                                <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                                  {disabledLabel}
-                                </span>
-                              )}
-                            </span>
-                          </Button>
-                        )
-
-                        return belowMin ? (
-                          <TooltipProvider key={methodKey}>
-                            <Tooltip>
-                              <TooltipTrigger render={button} />
-                              <TooltipContent>{disabledReason}</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          button
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-            </>
+            </div>
           )}
+
+          {hasConfigurableTopup &&
+            enableWaffoTopup &&
+            hasWaffoPaymentMethods &&
+            onWaffoMethodSelect && (
+              <div className='space-y-2.5 sm:space-y-3'>
+                <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+                  {t('Waffo Payment')}
+                </Label>
+                <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
+                  {waffoPayMethods?.map((method, index) => {
+                    const loadingKey = `waffo-${index}`
+                    const methodKey = `${method.payMethodType ?? 'unknown'}-${method.payMethodName ?? method.name}`
+                    const waffoMin = waffoMinTopup || 0
+                    const belowMin = waffoMin > topupAmount
+                    const disabledReason = belowMin
+                      ? t('Minimum topup amount: {{amount}}', {
+                          amount: waffoMin,
+                        })
+                      : undefined
+                    const disabledLabel = belowMin
+                      ? `${t('Minimum:')} ${waffoMin}`
+                      : undefined
+
+                    let methodIcon = getPaymentIcon('waffo')
+                    if (paymentLoading === loadingKey) {
+                      methodIcon = <Loader2 className='h-4 w-4 animate-spin' />
+                    } else if (method.icon) {
+                      methodIcon = (
+                        <img
+                          src={method.icon}
+                          alt={method.name}
+                          className='h-4 w-4 object-contain'
+                        />
+                      )
+                    }
+
+                    const button = (
+                      <Button
+                        key={methodKey}
+                        variant='outline'
+                        onClick={() => onWaffoMethodSelect(method, index)}
+                        disabled={belowMin || !!paymentLoading}
+                        title={disabledReason}
+                        aria-label={
+                          disabledReason
+                            ? `${method.name}. ${disabledReason}`
+                            : method.name
+                        }
+                        className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                      >
+                        {methodIcon}
+                        <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                          <span className='max-w-full truncate'>
+                            {method.name}
+                          </span>
+                          {disabledLabel && (
+                            <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                              {disabledLabel}
+                            </span>
+                          )}
+                        </span>
+                      </Button>
+                    )
+
+                    return belowMin ? (
+                      <TooltipProvider key={methodKey}>
+                        <Tooltip>
+                          <TooltipTrigger render={button} />
+                          <TooltipContent>{disabledReason}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      button
+                    )
+                  })}
+                </div>
+              </div>
+            )}
         </div>
       ) : (
         <Alert>
@@ -535,20 +574,6 @@ export function RechargeFormCard({
               {t('Redeem')}
             </Button>
           </div>
-          {topupLink && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Need a redemption code?')}{' '}
-              <a
-                href={topupLink}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
-              >
-                {t('Get one here')}
-                <ExternalLink className='h-3 w-3' />
-              </a>
-            </p>
-          )}
         </div>
       ) : (
         <Alert className='border-t'>
