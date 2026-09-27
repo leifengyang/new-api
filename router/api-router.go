@@ -188,6 +188,8 @@ func SetApiRouter(router *gin.Engine) {
 			enterpriseRoute.PUT("/members/:id/limits", controller.UpdateEnterpriseMemberLimits)
 			enterpriseRoute.POST("/members/:id/quota", controller.TransferEnterpriseMemberQuota)
 			enterpriseRoute.PUT("/members/:id/password", controller.ResetEnterpriseMemberPassword)
+			enterpriseRoute.GET("/usage", controller.GetEnterpriseUsage)
+			enterpriseRoute.GET("/logs", controller.GetEnterpriseLogs)
 		}
 
 		// Subscription billing (plans, purchase, admin management)

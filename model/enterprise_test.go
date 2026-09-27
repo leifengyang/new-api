@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -520,4 +523,263 @@ func TestResolveRegistrationAdmission(t *testing.T) {
 	admission, err = ResolveRegistrationAdmission(enterprise.AffCode)
 	require.NoError(t, err)
 	assert.Equal(t, RegistrationAdmission{InviterId: enterprise.Id}, admission)
+}
+
+// 企业用量只能看到自己的账号：别家企业名下的用户、以及不属于任何企业的用户
+// 都不能混进来；成员集合为空时必须查不到东西，而不是退化成全平台。
+func TestEnterpriseUsageStaysWithinOwnAccounts(t *testing.T) {
+	db := useEnterpriseDB(t)
+	require.NoError(t, db.AutoMigrate(&QuotaData{}))
+
+	markEnterprise(t, createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 0).Id)
+	createEnterpriseUser(t, 2, "member-a", common.RoleCommonUser, 0)
+	createEnterpriseUser(t, 3, "member-b", common.RoleCommonUser, 0)
+	createEnterpriseUser(t, 5, "foreign", common.RoleCommonUser, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id IN ?", []int{2, 3}).Update("enterprise_owner_id", 1).Error)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", 5).Update("enterprise_owner_id", 4).Error)
+
+	hour := int64(1700000000) - int64(1700000000)%3600
+	require.NoError(t, DB.Create(&[]QuotaData{
+		{UserID: 1, Username: "corp", ModelName: "gpt-4o", CreatedAt: hour, Count: 1, Quota: 100, TokenUsed: 10},
+		{UserID: 2, Username: "member-a", ModelName: "gpt-4o", CreatedAt: hour, Count: 2, Quota: 200, TokenUsed: 20},
+		{UserID: 3, Username: "member-b", ModelName: "claude", CreatedAt: hour + 3600, Count: 3, Quota: 300, TokenUsed: 30},
+		{UserID: 5, Username: "foreign", ModelName: "gpt-4o", CreatedAt: hour, Count: 9, Quota: 900, TokenUsed: 90},
+	}).Error)
+
+	memberIds, err := ListEnterpriseMemberIds(1)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int{2, 3}, memberIds)
+
+	// 含企业账号自己：它自己的请求也是这家企业的花费。
+	byMember, err := GetEnterpriseQuotaDataByMember(append(memberIds, 1), hour, hour+3600)
+	require.NoError(t, err)
+	quotaByUser := make(map[int]int, len(byMember))
+	for _, row := range byMember {
+		quotaByUser[row.UserID] = row.Quota
+	}
+	assert.Equal(t, map[int]int{1: 100, 2: 200, 3: 300}, quotaByUser)
+
+	// 只看成员（不含企业账号自己）时口径不同，且别人的 900 永远不出现。
+	byModel, err := GetEnterpriseQuotaDataByModel(memberIds, hour, hour+3600)
+	require.NoError(t, err)
+	memberTotal := 0
+	for _, row := range byModel {
+		memberTotal += row.Quota
+	}
+	assert.Equal(t, 500, memberTotal)
+
+	empty, err := GetEnterpriseQuotaDataByModel(nil, hour, hour+3600)
+	require.NoError(t, err)
+	assert.Empty(t, empty, "成员集合为空不能变成查全平台")
+
+	// 趋势按 quota_data 自带的小时桶汇总。
+	trend, err := GetEnterpriseQuotaDataTrend(append(memberIds, 1), hour, hour+3600)
+	require.NoError(t, err)
+	require.Len(t, trend, 2)
+	assert.Equal(t, hour, trend[0].CreatedAt)
+	assert.Equal(t, 300, trend[0].Quota, "企业自己 100 + member-a 200 落在同一个小时桶")
+	assert.Equal(t, 300, trend[1].Quota)
+}
+
+// 企业成员日志：范围限死在自己的成员内，渠道与 IP 在返回前就已脱敏。
+func TestEnterpriseMemberLogsAreScopedAndMasked(t *testing.T) {
+	db := useEnterpriseDB(t)
+	require.NoError(t, db.AutoMigrate(&Log{}))
+
+	markEnterprise(t, createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 0).Id)
+	createEnterpriseUser(t, 2, "member-a", common.RoleCommonUser, 0)
+	createEnterpriseUser(t, 3, "member-b", common.RoleCommonUser, 0)
+	createEnterpriseUser(t, 5, "foreign", common.RoleCommonUser, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id IN ?", []int{2, 3}).Update("enterprise_owner_id", 1).Error)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", 5).Update("enterprise_owner_id", 4).Error)
+
+	require.NoError(t, DB.Create(&[]Log{
+		{UserId: 2, Username: "member-a", Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 100,
+			CreatedAt: 1700000000, Ip: "203.0.113.7", ChannelId: 9,
+			Other: `{"admin_info":{"is_multi_key":true},"is_stream":true}`},
+		{UserId: 3, Username: "member-b", Type: LogTypeConsume, ModelName: "claude", Quota: 50,
+			CreatedAt: 1700000001, Ip: "2001:db8::1", ChannelId: 7},
+		{UserId: 5, Username: "foreign", Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 999,
+			CreatedAt: 1700000002, Ip: "198.51.100.9"},
+	}).Error)
+
+	logs, total, err := GetEnterpriseMemberLogs([]int{2, 3}, LogTypeUnknown, 0, 0, "", "", 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, logs, 2)
+
+	FormatEnterpriseMemberLogs(logs)
+	ipByUser := make(map[int]string, len(logs))
+	for _, log := range logs {
+		assert.NotEqual(t, 5, log.UserId, "别家企业的成员不能出现")
+		ipByUser[log.UserId] = log.Ip
+		assert.Zero(t, log.ChannelId, "渠道编号不下发")
+		assert.Empty(t, log.ChannelName)
+		assert.NotContains(t, log.Other, "admin_info", "平台侧诊断不随日志下发")
+	}
+	assert.Equal(t, "203.0.*.*", ipByUser[2])
+	assert.Equal(t, "2001:0db8:*:*:*:*:*:*", ipByUser[3])
+
+	// 企业名下没有成员时一条都不给。
+	emptyLogs, emptyTotal, err := GetEnterpriseMemberLogs([]int{}, LogTypeUnknown, 0, 0, "", "", 0, 10)
+	require.NoError(t, err)
+	assert.Zero(t, emptyTotal)
+	assert.Empty(t, emptyLogs)
+
+	// 额度合计只认消费日志，也只算自己的成员。
+	quota, err := SumEnterpriseMemberQuota([]int{2, 3}, 0, 0, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(150), quota)
+}
+
+func TestMaskLogIpAddress(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"203.0.113.7", "203.0.*.*"},
+		{"::ffff:203.0.113.7", "203.0.*.*"},
+		{"2001:db8::1", "2001:0db8:*:*:*:*:*:*"},
+		{"not-an-ip", "***"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, maskLogIpAddress(tc.in), "输入 %q", tc.in)
+	}
+}
+
+// 企业用量与日志新增的聚合都是 IN + GROUP BY + sum + COALESCE，方言差异（保留字、
+// 布尔、空聚合的返回类型）必须落到真实实例上验证。DSN 由本机容器提供，缺了就跳过。
+func TestEnterpriseUsageDatabaseMatrix(t *testing.T) {
+	dialects := []struct {
+		kind   string
+		env    string
+		dbType common.DatabaseType
+		open   func(string) gorm.Dialector
+	}{
+		{"mysql", "TEST_MYSQL_DSN", common.DatabaseTypeMySQL, func(dsn string) gorm.Dialector { return mysql.Open(dsn) }},
+		{"postgres", "TEST_POSTGRES_DSN", common.DatabaseTypePostgreSQL, func(dsn string) gorm.Dialector { return postgres.Open(dsn) }},
+	}
+	for _, dialect := range dialects {
+		t.Run(dialect.kind, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dsn == "" {
+				t.Skipf("%s 未配置", dialect.env)
+			}
+			db, err := gorm.Open(dialect.open(dsn), &gorm.Config{})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+
+			var version string
+			require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
+			t.Logf("%s 版本：%s", dialect.kind, version)
+
+			// 验证库是几个用例共用的，先清干净，重复跑才有一样的结果。
+			require.NoError(t, db.Migrator().DropTable(&Log{}, &QuotaData{}, &User{}, &UserSession{}))
+			require.NoError(t, db.AutoMigrate(&User{}, &Log{}, &QuotaData{}))
+
+			previousDB, previousLogDB := DB, LOG_DB
+			previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
+			previousCache := common.RedisEnabled
+			DB, LOG_DB = db, db
+			common.SetDatabaseTypes(dialect.dbType, dialect.dbType)
+			common.RedisEnabled = false
+			// 反引号还是双引号由 initCol() 在真实启动时定下，这里换方言也得跟着换，
+			// 否则 PostgreSQL 会收到 MySQL 风格的反引号。
+			initCol()
+			t.Cleanup(func() {
+				DB, LOG_DB = previousDB, previousLogDB
+				common.SetDatabaseTypes(previousMain, previousLog)
+				common.RedisEnabled = previousCache
+				initCol()
+			})
+
+			markEnterprise(t, createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 0).Id)
+			createEnterpriseUser(t, 2, "member-a", common.RoleCommonUser, 0)
+			createEnterpriseUser(t, 3, "member-b", common.RoleCommonUser, 0)
+			createEnterpriseUser(t, 5, "foreign", common.RoleCommonUser, 0)
+			require.NoError(t, DB.Model(&User{}).Where("id IN ?", []int{2, 3}).Update("enterprise_owner_id", 1).Error)
+			require.NoError(t, DB.Model(&User{}).Where("id = ?", 5).Update("enterprise_owner_id", 4).Error)
+
+			hour := int64(1700000000) - int64(1700000000)%3600
+			require.NoError(t, DB.Create(&[]QuotaData{
+				{UserID: 1, Username: "corp", ModelName: "gpt-4o", CreatedAt: hour, Count: 1, Quota: 100, TokenUsed: 10},
+				{UserID: 2, Username: "member-a", ModelName: "gpt-4o", CreatedAt: hour, Count: 2, Quota: 200, TokenUsed: 20},
+				{UserID: 3, Username: "member-b", ModelName: "claude", CreatedAt: hour + 3600, Count: 3, Quota: 300, TokenUsed: 30},
+				{UserID: 5, Username: "foreign", ModelName: "gpt-4o", CreatedAt: hour, Count: 9, Quota: 900, TokenUsed: 90},
+			}).Error)
+
+			memberIds, err := ListEnterpriseMemberIds(1)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []int{2, 3}, memberIds)
+
+			byMember, err := GetEnterpriseQuotaDataByMember(append(memberIds, 1), hour, hour+3600)
+			require.NoError(t, err)
+			quotaByUser := make(map[int]int, len(byMember))
+			for _, row := range byMember {
+				quotaByUser[row.UserID] = row.Quota
+			}
+			assert.Equal(t, map[int]int{1: 100, 2: 200, 3: 300}, quotaByUser)
+
+			byModel, err := GetEnterpriseQuotaDataByModel(memberIds, hour, hour+3600)
+			require.NoError(t, err)
+			require.Len(t, byModel, 2)
+			assert.Equal(t, "claude", byModel[0].ModelName, "按额度倒序")
+			assert.Equal(t, 300, byModel[0].Quota)
+			assert.Equal(t, 200, byModel[1].Quota)
+
+			trend, err := GetEnterpriseQuotaDataTrend(append(memberIds, 1), hour, hour+3600)
+			require.NoError(t, err)
+			require.Len(t, trend, 2)
+			assert.Equal(t, hour, trend[0].CreatedAt)
+			assert.Equal(t, 300, trend[0].Quota)
+
+			empty, err := GetEnterpriseQuotaDataByModel([]int{}, hour, hour+3600)
+			require.NoError(t, err)
+			assert.Empty(t, empty, "成员集合为空不能退化成全平台")
+
+			require.NoError(t, DB.Create(&[]Log{
+				{UserId: 2, Username: "member-a", Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 100,
+					CreatedAt: 1700000000, Ip: "203.0.113.7", ChannelId: 9, Group: "default",
+					Other: `{"admin_info":{"is_multi_key":true},"is_stream":true}`},
+				{UserId: 3, Username: "member-b", Type: LogTypeConsume, ModelName: "claude", Quota: 50,
+					CreatedAt: 1700000001, Ip: "2001:db8::1", ChannelId: 7, Group: "vip"},
+				{UserId: 5, Username: "foreign", Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 999,
+					CreatedAt: 1700000002, Ip: "198.51.100.9", Group: "default"},
+			}).Error)
+
+			logs, total, err := GetEnterpriseMemberLogs(memberIds, LogTypeUnknown, 0, 0, "", "", 0, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), total)
+			require.Len(t, logs, 2)
+			FormatEnterpriseMemberLogs(logs)
+			for _, log := range logs {
+				assert.NotEqual(t, 5, log.UserId, "别家企业的成员不能出现")
+				assert.Zero(t, log.ChannelId)
+				assert.Empty(t, log.ChannelName)
+				assert.NotContains(t, log.Other, "admin_info")
+			}
+
+			// 模型名过滤与分组过滤在各方言下的等值比较。
+			filtered, filteredTotal, err := GetEnterpriseMemberLogs(memberIds, LogTypeConsume, 0, 0, "gpt-4o", "", 0, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), filteredTotal)
+			require.Len(t, filtered, 1)
+			grouped, groupedTotal, err := GetEnterpriseMemberLogs(memberIds, LogTypeUnknown, 0, 0, "", "vip", 0, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), groupedTotal)
+			require.Len(t, grouped, 1)
+
+			quota, err := SumEnterpriseMemberQuota(memberIds, 0, 0, "", "")
+			require.NoError(t, err)
+			assert.Equal(t, int64(150), quota)
+			// 空聚合：COALESCE 让没有命中的筛选也返回 0，而不是 NULL 扫描失败。
+			quota, err = SumEnterpriseMemberQuota(memberIds, 0, 0, "no-such-model", "")
+			require.NoError(t, err)
+			assert.Zero(t, quota)
+		})
+	}
 }

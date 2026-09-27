@@ -170,6 +170,51 @@ func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*Quota
 	return quotaDatas, err
 }
 
+// enterpriseQuotaDataQuery 收敛企业用量的公共条件：只看给定用户集合、给定时间窗。
+// 用户集合为空表示「这个企业名下没有任何账号」，必须返回 0 行 —— 一旦退化成
+// 不带 user_id 的条件，查出来的就是全平台用量。
+func enterpriseQuotaDataQuery(userIds []int, startTime int64, endTime int64) *gorm.DB {
+	query := DB.Table("quota_data").
+		Where("created_at >= ? and created_at <= ?", startTime, endTime)
+	if len(userIds) == 0 {
+		return query.Where("1 = 0")
+	}
+	return query.Where("user_id IN ?", userIds)
+}
+
+func GetEnterpriseQuotaDataByModel(userIds []int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	var quotaDatas []*QuotaData
+	err = enterpriseQuotaDataQuery(userIds, startTime, endTime).
+		Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Group("model_name").
+		Order("quota desc").
+		Find(&quotaDatas).Error
+	return quotaDatas, err
+}
+
+// GetEnterpriseQuotaDataByMember 按用户聚合。username 取的是写入时的快照，成员改
+// 过名字会拆成两行，调用方按 user_id 再合并一次。
+func GetEnterpriseQuotaDataByMember(userIds []int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	var quotaDatas []*QuotaData
+	err = enterpriseQuotaDataQuery(userIds, startTime, endTime).
+		Select("user_id, username, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Group("user_id, username").
+		Find(&quotaDatas).Error
+	return quotaDatas, err
+}
+
+// GetEnterpriseQuotaDataTrend 按 quota_data 自带的小时桶返回，前端再按本地时区
+// 折算成天，口径与平台的用量看板一致。
+func GetEnterpriseQuotaDataTrend(userIds []int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+	var quotaDatas []*QuotaData
+	err = enterpriseQuotaDataQuery(userIds, startTime, endTime).
+		Select("created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Group("created_at").
+		Order("created_at").
+		Find(&quotaDatas).Error
+	return quotaDatas, err
+}
+
 func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaData []*QuotaData, err error) {
 	if username != "" {
 		return GetQuotaDataByUsername(username, startTime, endTime)
