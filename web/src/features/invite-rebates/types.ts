@@ -33,6 +33,12 @@ export const inviteRebateSchema = z.object({
   inviter_name: z.string(),
   invitee_id: z.number(),
   invitee_name: z.string(),
+  /**
+   * Which leg of the top-up this row pays. One top-up writes at most two rows:
+   * `direct` for the paying user's own inviter, `upline` for the internal
+   * member found further up the chain when that inviter is an external user.
+   */
+  leg: z.string(),
   source: z.string(),
   source_ref: z.string(),
   base_quota: z.number(),
@@ -101,14 +107,19 @@ export interface SelfInviteRebatesData {
     page_size: number
   }
   summary: InviteRebateSummary
+  /** Rate applied to an internal member's direct invitees. */
   rate_basis_points: number
+  /** Rate applied to an external user's direct invitees. */
+  external_rate_basis_points: number
+  /** Rate paid to the internal member above an external user. */
+  internal_referrer_rate_basis_points: number
   /** Whether the administrator has the rebate programme switched on. */
   rebate_enabled: boolean
   member_level: number
   /**
    * Whether this member takes part in the programme at all. Only
-   * administrators are excluded; an external user still earns a rebate, just
-   * only on each invitee's first top-up.
+   * administrators are excluded; every other member earns a rebate on every
+   * top-up of the users they invited directly.
    */
   rebate_available: boolean
 }

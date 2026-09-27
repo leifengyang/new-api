@@ -34,29 +34,40 @@ import { SettingsPageProvider } from '../../components/settings-page-context'
 import { InviteRebateSettingsSection } from '../invite-rebate-settings-section'
 
 const SAVE_LABEL = 'Save invite rebate settings'
-const RATE_LABEL = 'Rebate rate (%)'
+const DIRECT_LABEL = 'Internal member rate (%)'
+const EXTERNAL_LABEL = 'External user rate (%)'
+const UPLINE_LABEL = 'Upline member rate (%)'
 const TOGGLE_LABEL = 'Enable invite rebate'
 
-function Fixture(props: { enabled?: boolean; rateBasisPoints?: number }) {
+type Defaults = {
+  enabled: boolean
+  rateBasisPoints: number
+  externalRateBasisPoints: number
+  internalReferrerRateBasisPoints: number
+}
+
+const DEFAULTS: Defaults = {
+  enabled: true,
+  rateBasisPoints: 1000,
+  externalRateBasisPoints: 100,
+  internalReferrerRateBasisPoints: 100,
+}
+
+function Fixture(props: Partial<Defaults>) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
   return (
     <>
       <div ref={setContainer} />
       <SettingsPageProvider actionsContainer={container}>
         <InviteRebateSettingsSection
-          defaultValues={{
-            enabled: props.enabled ?? true,
-            rateBasisPoints: props.rateBasisPoints ?? 1000,
-          }}
+          defaultValues={{ ...DEFAULTS, ...props }}
         />
       </SettingsPageProvider>
     </>
   )
 }
 
-async function renderSection(
-  props: { enabled?: boolean; rateBasisPoints?: number } = {}
-) {
+async function renderSection(props: Partial<Defaults> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -69,13 +80,17 @@ async function renderSection(
       <RouterProvider router={router} />
     </QueryClientProvider>
   )
-  // The rate input only exists while the rebate is enabled, so wait on the
+  // The rate inputs only exist while the rebate is enabled, so wait on the
   // toggle and let each case query the fields it cares about.
   await screen.findByRole('switch', { name: TOGGLE_LABEL })
 }
 
 function saveButton() {
   return screen.getByRole('button', { name: SAVE_LABEL })
+}
+
+function rateInput(label: string) {
+  return screen.getByRole('spinbutton', { name: label })
 }
 
 beforeEach(() => {
@@ -88,7 +103,7 @@ beforeEach(() => {
 test('a rate typed as percent is saved as basis points', async () => {
   const user = userEvent.setup()
   await renderSection({ rateBasisPoints: 1000 })
-  const input = screen.getByRole('spinbutton', { name: RATE_LABEL })
+  const input = rateInput(DIRECT_LABEL)
   expect(input).toHaveValue(10)
 
   await user.clear(input)
@@ -101,6 +116,46 @@ test('a rate typed as percent is saved as basis points', async () => {
     expect(api.put).toHaveBeenCalledWith('/api/option/', {
       key: 'invite_rebate_setting.rate_basis_points',
       value: '1250',
+    })
+  )
+})
+
+// The three legs are independent settings; editing one must not push the other
+// two back at the server, or a stale value in the form would silently overwrite
+// a rate another administrator just changed.
+test('editing one rate saves only that rate', async () => {
+  const user = userEvent.setup()
+  await renderSection()
+  const external = rateInput(EXTERNAL_LABEL)
+  expect(external).toHaveValue(1)
+  expect(rateInput(UPLINE_LABEL)).toHaveValue(1)
+
+  await user.clear(external)
+  await user.type(external, '2.5')
+  await user.tab()
+  await user.click(saveButton())
+
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  expect(api.put).toHaveBeenCalledWith('/api/option/', {
+    key: 'invite_rebate_setting.external_rate_basis_points',
+    value: '250',
+  })
+})
+
+test('the upline rate saves under its own option key', async () => {
+  const user = userEvent.setup()
+  await renderSection()
+  const upline = rateInput(UPLINE_LABEL)
+
+  await user.clear(upline)
+  await user.type(upline, '3')
+  await user.tab()
+  await user.click(saveButton())
+
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith('/api/option/', {
+      key: 'invite_rebate_setting.internal_referrer_rate_basis_points',
+      value: '300',
     })
   )
 })
@@ -127,9 +182,9 @@ test('turning the rebate off saves the boolean as a string', async () => {
   )
 })
 
-test('the rate field is hidden while the rebate is disabled', async () => {
+test('the rate fields are hidden while the rebate is disabled', async () => {
   await renderSection({ enabled: false })
-  expect(
-    screen.queryByRole('spinbutton', { name: RATE_LABEL })
-  ).not.toBeInTheDocument()
+  for (const label of [DIRECT_LABEL, EXTERNAL_LABEL, UPLINE_LABEL]) {
+    expect(screen.queryByRole('spinbutton', { name: label })).toBeNull()
+  }
 })

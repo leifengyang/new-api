@@ -50,12 +50,19 @@ import {
   percentToBasisPoints,
 } from './invite-rebate-rate'
 
+const ratePercent = z.coerce
+  .number()
+  .min(0)
+  .max(MAX_INVITE_REBATE_RATE_BASIS_POINTS / 100)
+
 const schema = z.object({
   enabled: z.boolean(),
-  ratePercent: z.coerce
-    .number()
-    .min(0)
-    .max(MAX_INVITE_REBATE_RATE_BASIS_POINTS / 100),
+  /** 内部学员的直属下线充值，返给该内部学员。 */
+  directPercent: ratePercent,
+  /** 外部用户的直属下线充值，返给该外部用户。 */
+  externalPercent: ratePercent,
+  /** 外部用户的直属下线充值，再返给其上层第一个内部学员。 */
+  uplinePercent: ratePercent,
 })
 
 type Values = z.infer<typeof schema>
@@ -64,8 +71,48 @@ type InviteRebateSettingsSectionProps = {
   defaultValues: {
     enabled: boolean
     rateBasisPoints: number
+    externalRateBasisPoints: number
+    internalReferrerRateBasisPoints: number
   }
 }
+
+/**
+ * 三个比例各自对应一条腿，`key` 是落库的选项名，`field` 是表单字段。
+ * 顺序就是产品口径里的①②③，改这里也请顺手看一眼后端
+ * setting/operation_setting/invite_rebate_setting.go。
+ */
+const RATE_FIELDS = [
+  {
+    key: 'invite_rebate_setting.rate_basis_points',
+    field: 'directPercent',
+    defaultKey: 'rateBasisPoints',
+    label: 'Internal member rate (%)',
+    description:
+      'Share of every top-up made by an internal member’s direct invitees that goes back to that member.',
+  },
+  {
+    key: 'invite_rebate_setting.external_rate_basis_points',
+    field: 'externalPercent',
+    defaultKey: 'externalRateBasisPoints',
+    label: 'External user rate (%)',
+    description:
+      'Share of every top-up made by an external user’s direct invitees that goes back to that user.',
+  },
+  {
+    key: 'invite_rebate_setting.internal_referrer_rate_basis_points',
+    field: 'uplinePercent',
+    defaultKey: 'internalReferrerRateBasisPoints',
+    label: 'Upline member rate (%)',
+    description:
+      'Extra share of every top-up made by an external user’s direct invitees that goes to the first internal member above that user.',
+  },
+] as const satisfies ReadonlyArray<{
+  key: string
+  field: keyof Values
+  defaultKey: keyof InviteRebateSettingsSectionProps['defaultValues']
+  label: string
+  description: string
+}>
 
 export function InviteRebateSettingsSection(
   props: InviteRebateSettingsSectionProps
@@ -77,16 +124,20 @@ export function InviteRebateSettingsSection(
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
     defaultValues: {
       enabled: props.defaultValues.enabled,
-      ratePercent: basisPointsToPercent(props.defaultValues.rateBasisPoints),
+      directPercent: basisPointsToPercent(props.defaultValues.rateBasisPoints),
+      externalPercent: basisPointsToPercent(
+        props.defaultValues.externalRateBasisPoints
+      ),
+      uplinePercent: basisPointsToPercent(
+        props.defaultValues.internalReferrerRateBasisPoints
+      ),
     },
   })
 
   const { isDirty, isSubmitting } = form.formState
   const enabled = form.watch('enabled')
-  const ratePercent = form.watch('ratePercent')
 
   async function onSubmit(values: Values) {
-    const rateBasisPoints = percentToBasisPoints(values.ratePercent)
     const updates: Array<{ key: string; value: string }> = []
 
     if (values.enabled !== props.defaultValues.enabled) {
@@ -96,11 +147,11 @@ export function InviteRebateSettingsSection(
       })
     }
 
-    if (rateBasisPoints !== props.defaultValues.rateBasisPoints) {
-      updates.push({
-        key: 'invite_rebate_setting.rate_basis_points',
-        value: String(rateBasisPoints),
-      })
+    for (const rate of RATE_FIELDS) {
+      const basisPoints = percentToBasisPoints(values[rate.field])
+      if (basisPoints !== props.defaultValues[rate.defaultKey]) {
+        updates.push({ key: rate.key, value: String(basisPoints) })
+      }
     }
 
     if (updates.length === 0) {
@@ -120,7 +171,7 @@ export function InviteRebateSettingsSection(
       <Alert>
         <AlertDescription>
           {t(
-            'The registration-time inviter and invitee rewards were replaced by this rebate. Internal members earn it from every top-up of the users they invited directly; external users earn it once, from the first top-up of each user they invite.'
+            'The registration-time inviter and invitee rewards were replaced by this rebate. Every top-up pays up to two people: the direct inviter of the paying user, and — when that inviter is an external user — the first internal member above them. Administrators never earn a rebate.'
           )}
         </AlertDescription>
       </Alert>
@@ -157,38 +208,42 @@ export function InviteRebateSettingsSection(
             )}
           />
 
-          {enabled && (
-            <FormField
-              control={form.control}
-              name='ratePercent'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Rebate rate (%)')}</FormLabel>
-                  <FormControl>
-                    <SafeNumberInput
-                      field={field}
-                      min={0}
-                      max={MAX_INVITE_REBATE_RATE_BASIS_POINTS / 100}
-                      step={0.01}
-                      disabled={updateOption.isPending || isSubmitting}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Share of a top-up credited to the inviter: every top-up for internal members, only the first one for external users. Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying without changing who is an internal member.',
-                      {
-                        rate: formatInviteRebatePercent(
-                          percentToBasisPoints(ratePercent)
-                        ),
-                        basisPoints: String(percentToBasisPoints(ratePercent)),
-                      }
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          )}
+          {enabled &&
+            RATE_FIELDS.map((rate) => (
+              <FormField
+                key={rate.field}
+                control={form.control}
+                name={rate.field}
+                render={({ field }) => {
+                  const basisPoints = percentToBasisPoints(field.value)
+                  return (
+                    <FormItem>
+                      <FormLabel>{t(rate.label)}</FormLabel>
+                      <FormControl>
+                        <SafeNumberInput
+                          field={field}
+                          min={0}
+                          max={MAX_INVITE_REBATE_RATE_BASIS_POINTS / 100}
+                          step={0.01}
+                          disabled={updateOption.isPending || isSubmitting}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(rate.description)}{' '}
+                        {t(
+                          'Currently {{rate}} ({{basisPoints}} basis points). Set to 0 to stop paying that leg without changing who is an internal member.',
+                          {
+                            rate: formatInviteRebatePercent(basisPoints),
+                            basisPoints: String(basisPoints),
+                          }
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
+              />
+            ))}
         </SettingsForm>
       </Form>
     </SettingsSection>

@@ -58,6 +58,7 @@ function makeRebate(overrides: Partial<InviteRebate> = {}): InviteRebate {
     // 后端已经脱敏，前端拿到的就是这个名字。
     invitee_id: 3,
     invitee_name: 'b***b',
+    leg: 'direct',
     source: 'epay',
     source_ref: 'trade-1',
     base_quota: 5000000,
@@ -88,6 +89,8 @@ function makeSelfData(
       rebate_count: items.length,
     },
     rate_basis_points: 1000,
+    external_rate_basis_points: 100,
+    internal_referrer_rate_basis_points: 100,
     rebate_enabled: true,
     member_level: INTERNAL,
     rebate_available: true,
@@ -139,10 +142,10 @@ it('summarises the rebates of an internal member and lists the masked downline',
   const user = userEvent.setup()
 
   expect(await screen.findByText('Internal Member')).toBeInTheDocument()
-  // 内部学员的每笔充值都返，与外部学员的首充口径区分开。
+  // 内部学员两条腿都拿：自己直属下线的充值走 ①，下线再带来的用户走 ③。
   expect(
     screen.getByText(
-      'You earn 10% of every top-up made by the members you invited.'
+      'You earn 10% of every top-up made by the members you invited, plus 1% of every top-up made by the members they invite.'
     )
   ).toBeInTheDocument()
   // 累计返现、返现笔数、邀请人数。
@@ -160,9 +163,11 @@ it('summarises the rebates of an internal member and lists the masked downline',
   expect(within(dialog).getByText('+$1')).toBeInTheDocument()
   expect(
     within(dialog).getByText(
-      'Every rebate credited for a top-up made by someone you invited.'
+      'Every rebate credited to you, and the top-up it came from.'
     )
   ).toBeInTheDocument()
+  // 内部学员看到的那条腿是直属下线带来的。
+  expect(within(dialog).getByText('Direct invitee')).toBeInTheDocument()
 
   await waitFor(() => {
     const selfUrl = get.mock.calls
@@ -182,14 +187,19 @@ it('tells an external member only their own rule, never the internal one', async
     })
   )
 
+  // 外部用户拿的是比例②，不是内部学员的 ①。
   expect(
     await screen.findByText(
-      'You earn 10% of the first top-up made by each user you invite.'
+      'You earn 1% of every top-up made by the members you invited.'
     )
   ).toBeInTheDocument()
   expect(screen.queryByText('Internal Member')).not.toBeInTheDocument()
-  // 外部用户不该知道内部会员每笔充值都返。
-  expect(screen.queryByText(/internal members? earn/i)).toBeNull()
+  // 外部用户不该知道内部会员还能多拿一条腿。
+  expect(
+    screen.queryByText(
+      /plus .* of every top-up made by the members they invite/i
+    )
+  ).toBeNull()
   // 没有明细可看时不显示入口。
   expect(screen.queryByRole('button', { name: 'Details' })).toBeNull()
 })

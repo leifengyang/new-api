@@ -79,7 +79,7 @@ export function ReverseRebateDialog() {
       description={
         reversingRow
           ? t(
-              'The {{amount}} credited to {{inviter}} is deducted from their balance. If their balance is lower, only what is left is recovered and the rest stays recorded as outstanding.',
+              'The {{amount}} credited to {{inviter}} is deducted from their balance. Every other rebate issued for the same top-up is reversed with it, each deducted from the member who received it. If a balance is lower, only what is left is recovered and the rest stays recorded as outstanding.',
               {
                 amount: formatQuota(reversingRow.rebate_quota),
                 inviter: reversingRow.inviter_name,

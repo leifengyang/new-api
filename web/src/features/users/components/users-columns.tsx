@@ -244,8 +244,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
         cell: ({ row }) => {
           const level = getUserMemberLevel(row.original)
 
-          // 说明文案讲的是内部学员「每笔都返」这条口径，挂到外部用户身上是错的
-          // （外部只返首充）；外部、以及后端还没定义的新等级只渲染徽章本身。
+          // 说明文案讲的是内部学员多拿一条腿这条口径，挂到外部用户身上是错的；
+          // 外部、以及后端还没定义的新等级只渲染徽章本身。
           if (level !== USER_MEMBER_LEVEL.INTERNAL) {
             return (
               <BadgeCell>
@@ -264,7 +264,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
               <TooltipContent>
                 <p className='text-xs'>
                   {t(
-                    'Internal members earn an invite rebate from the top-ups of the users they invite directly.'
+                    'They earn an invite rebate from the top-ups of the users they invite directly, plus a share of the top-ups made by the users those invitees bring in.'
                   )}
                 </p>
               </TooltipContent>

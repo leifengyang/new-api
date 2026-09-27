@@ -205,6 +205,12 @@ const BILLING_SECTIONS = [
           enabled: settings['invite_rebate_setting.enabled'] ?? true,
           rateBasisPoints:
             settings['invite_rebate_setting.rate_basis_points'] ?? 1000,
+          externalRateBasisPoints:
+            settings['invite_rebate_setting.external_rate_basis_points'] ?? 100,
+          internalReferrerRateBasisPoints:
+            settings[
+              'invite_rebate_setting.internal_referrer_rate_basis_points'
+            ] ?? 100,
         }}
       />
     ),

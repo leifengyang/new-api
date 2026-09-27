@@ -45,6 +45,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import {
   INVITE_REBATE_STATUS,
   INVITE_REBATE_STATUSES,
+  getInviteRebateLegLabel,
   getInviteRebateSourceLabel,
   getSkipReasonLabel,
 } from '../constants'
@@ -142,6 +143,19 @@ export function useInviteRebatesColumns(): ColumnDef<InviteRebate>[] {
           />
         ),
         size: 180,
+      },
+      {
+        accessorKey: 'leg',
+        header: t('Rebate Type'),
+        cell: ({ row }) => (
+          <span className='text-sm'>
+            {getInviteRebateLegLabel(row.original.leg, t)}
+          </span>
+        ),
+        // 这一列只读：筛选走后端，而列表接口目前只认 source / status。
+        enableSorting: false,
+        enableColumnFilter: false,
+        size: 140,
       },
       {
         accessorKey: 'source',

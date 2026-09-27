@@ -75,25 +75,32 @@ export function SelfRebateCard({
     (data?.member_level ?? USER_MEMBER_LEVEL.EXTERNAL) ===
     USER_MEMBER_LEVEL.INTERNAL
   const canEarn = data?.rebate_available === true
-  const rate = data?.rate_basis_points ?? 0
+  // 内部学员和外部用户拿的是两个独立比例：自己直属下线那一笔走 ①/②，再往上一层
+  // 走 ③。
+  const directRate = isInternal
+    ? (data?.rate_basis_points ?? 0)
+    : (data?.external_rate_basis_points ?? 0)
+  const uplineRate = data?.internal_referrer_rate_basis_points ?? 0
   const rebateCount = summary?.rebate_count ?? 0
 
   // 总开关、管理员不参与、内部与外部两种返现口径要分开讲，否则用户只看到一串 0
-  // 却不知道卡在哪一步。外部用户只讲他们自己的首充口径，内部会员每笔都返这件事
-  // 不能让他们知道。
-  let note = t(
-    'You earn {{rate}} of every top-up made by the members you invited.',
-    { rate: formatInviteRebatePercent(rate) }
-  )
+  // 却不知道卡在哪一步。外部用户只讲他们自己的口径，内部学员多拿 ③ 这件事不能
+  // 让他们知道。
+  let note = isInternal
+    ? t(
+        'You earn {{direct}} of every top-up made by the members you invited, plus {{upline}} of every top-up made by the members they invite.',
+        {
+          direct: formatInviteRebatePercent(directRate),
+          upline: formatInviteRebatePercent(uplineRate),
+        }
+      )
+    : t('You earn {{rate}} of every top-up made by the members you invited.', {
+        rate: formatInviteRebatePercent(directRate),
+      })
   if (!data?.rebate_enabled) {
     note = t('Invite rebates are currently disabled.')
   } else if (!canEarn) {
     note = t('Administrators do not earn invite rebates.')
-  } else if (!isInternal) {
-    note = t(
-      'You earn {{rate}} of the first top-up made by each user you invite.',
-      { rate: formatInviteRebatePercent(rate) }
-    )
   }
 
   return (
