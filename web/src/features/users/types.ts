@@ -55,6 +55,16 @@ export const userSchema = z.object({
   inviter_id: z.number().optional(),
   /** 0 = external user, 1 = internal member. Absent on payloads that omit it. */
   member_level: z.number().optional(),
+  /**
+   * 「企业账号」标记：被标记的账号可以进自己的企业控制台。只影响这一件事——
+   * 角色仍是普通用户，打不开任何管理端页面。
+   *
+   * 后台列表接口直接序列化 model.User，这一列是 0/1 的整数；账号自己的
+   * /api/user/self 回的是布尔值。读取一律走 isEnterpriseAccount()。
+   */
+  is_enterprise: z.union([z.boolean(), z.number()]).optional(),
+  /** 成员所属的企业账号 id，0 表示不属于任何企业。只有平台管理员能改。 */
+  enterprise_owner_id: z.number().optional(),
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
   role: userRoleSchema,

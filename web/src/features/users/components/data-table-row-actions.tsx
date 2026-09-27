@@ -30,6 +30,8 @@ import {
   CreditCard,
   GraduationCap,
   UserRoundMinus,
+  Building,
+  Building2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -55,6 +57,7 @@ import {
   manageUser,
   resetUserPasskey,
   resetUserTwoFA,
+  updateUserEnterprise,
   updateUserMemberLevel,
 } from '../api'
 import {
@@ -63,6 +66,8 @@ import {
   USER_MEMBER_LEVEL,
   ERROR_MESSAGES,
   getUserMemberLevel,
+  isEnterpriseAccount,
+  isEnterpriseMember,
   isUserDeleted,
 } from '../constants'
 import { getUserActionMessage } from '../lib'
@@ -86,6 +91,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     null
   )
   const [memberLevelPending, setMemberLevelPending] = useState(false)
+  // 标记 / 取消企业账号，走的是和会员等级同一套「先确认再执行」的流程：
+  // 取消标记会把名下成员全部移出并把余额退回，值得先问一句。
+  const [enterpriseTarget, setEnterpriseTarget] = useState<boolean | null>(null)
+  const [enterprisePending, setEnterprisePending] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -169,11 +178,54 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     }
   }
 
+  const handleEnterprise = async (isEnterprise: boolean) => {
+    setEnterprisePending(true)
+    try {
+      const result = await updateUserEnterprise(user.id, isEnterprise)
+      if (result.success) {
+        const released = result.data?.released_members ?? 0
+        if (isEnterprise) {
+          toast.success(
+            t('Marked {{username}} as an enterprise account', {
+              username: user.username,
+            })
+          )
+        } else if (released > 0) {
+          toast.success(
+            t(
+              'Cancelled the enterprise account for {{username}} and released {{count}} members',
+              { username: user.username, count: released }
+            )
+          )
+        } else {
+          toast.success(
+            t('Cancelled the enterprise account for {{username}}', {
+              username: user.username,
+            })
+          )
+        }
+        triggerRefresh()
+      } else {
+        handleServerError(result, t('Failed to update the enterprise account'))
+      }
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+    } finally {
+      setEnterprisePending(false)
+      setEnterpriseTarget(null)
+    }
+  }
+
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
   const isRoot = user.role === USER_ROLE.ROOT
   const isInternalMember =
     getUserMemberLevel(user) === USER_MEMBER_LEVEL.INTERNAL
+  const isEnterprise = isEnterpriseAccount(user)
+  // 只有普通用户可以当企业账号（服务端同样只放普通用户），成员也不能再被标记，
+  // 所以这两种账号上干脆不显示这个入口。
+  const canToggleEnterprise =
+    isEnterprise || (!isAdmin && !isEnterpriseMember(user))
 
   if (isUserDeleted(user)) {
     return null
@@ -266,6 +318,33 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
+
+        {canToggleEnterprise &&
+          (isEnterprise ? (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                setEnterpriseTarget(false)
+              }}
+            >
+              {t('Cancel enterprise account')}
+              <DropdownMenuShortcut>
+                <Building size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                setEnterpriseTarget(true)
+              }}
+            >
+              {t('Mark as enterprise account')}
+              <DropdownMenuShortcut>
+                <Building2 size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          ))}
 
         <DropdownMenuItem
           onSelect={(event) => {
@@ -373,6 +452,41 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         handleConfirm={() => {
           if (memberLevelTarget !== null && !memberLevelPending) {
             void handleMemberLevel(memberLevelTarget)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={enterpriseTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEnterpriseTarget(null)
+        }}
+        title={
+          enterpriseTarget
+            ? t('Mark {{username}} as an enterprise account?', {
+                username: user.username,
+              })
+            : t('Cancel the enterprise account for {{username}}?', {
+                username: user.username,
+              })
+        }
+        desc={
+          enterpriseTarget
+            ? t(
+                'They keep their role: this only opens an enterprise console where they can create members, hand out quota from their own balance, and narrow what each member can use. Members are ordinary platform accounts that administrators still see and manage.'
+              )
+            : t(
+                'Every member moves out of this enterprise and whatever is left in their wallets goes back to this account. Nothing is deleted and no rebate is reversed, but they can no longer open the console.'
+              )
+        }
+        // 「取消企业账号」里的「取消」是取消这个标记，不是取消对话框；确认按钮
+        // 沿用同一个词容易看错，所以两处都只说 Confirm，由标题说明要做什么。
+        confirmText={enterprisePending ? t('Saving...') : t('Confirm')}
+        destructive={enterpriseTarget === false}
+        isLoading={enterprisePending}
+        handleConfirm={() => {
+          if (enterpriseTarget !== null && !enterprisePending) {
+            void handleEnterprise(enterpriseTarget)
           }
         }}
       />

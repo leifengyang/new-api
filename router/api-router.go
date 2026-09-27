@@ -169,7 +169,25 @@ func SetApiRouter(router *gin.Engine) {
 				// 会员等级（内部 / 外部身份）：决定谁有资格拿邀请返现
 				adminRoute.PUT("/member_level", controller.UpdateUserMemberLevel)
 				adminRoute.POST("/member_level/batch", controller.UpdateUsersMemberLevelBatch)
+
+				// 企业账号标记：与会员等级同一类操作，只有平台管理员能改。
+				adminRoute.PUT("/enterprise", controller.UpdateUserEnterprise)
 			}
+		}
+
+		// 企业控制台：企业账号自己管理名下成员。每个 handler 都在服务端把查询
+		// 收窄到「自己的成员」，前端传什么 id 都不构成授权依据。
+		enterpriseRoute := apiRouter.Group("/enterprise")
+		enterpriseRoute.Use(middleware.UserAuth(), middleware.EnterpriseAuth())
+		{
+			enterpriseRoute.GET("/profile", controller.GetEnterpriseProfile)
+			enterpriseRoute.GET("/members", controller.GetEnterpriseMembers)
+			enterpriseRoute.POST("/members", controller.CreateEnterpriseMember)
+			enterpriseRoute.GET("/members/:id/options", controller.GetEnterpriseMemberOptions)
+			enterpriseRoute.PUT("/members/:id/status", controller.UpdateEnterpriseMemberStatus)
+			enterpriseRoute.PUT("/members/:id/limits", controller.UpdateEnterpriseMemberLimits)
+			enterpriseRoute.POST("/members/:id/quota", controller.TransferEnterpriseMemberQuota)
+			enterpriseRoute.PUT("/members/:id/password", controller.ResetEnterpriseMemberPassword)
 		}
 
 		// Subscription billing (plans, purchase, admin management)

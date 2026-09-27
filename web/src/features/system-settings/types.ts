@@ -412,6 +412,8 @@ export type SecuritySettings = {
   'fetch_setting.allowed_ports': number[]
   'fetch_setting.apply_ip_filter_for_domain': boolean
   'token_setting.max_user_tokens': number
+  /** 一个企业账号最多能带多少成员，服务端按 1~10000 收敛。 */
+  EnterpriseMemberLimit: number
 }
 
 export type UpstreamChannel = {

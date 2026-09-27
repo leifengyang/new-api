@@ -20,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -51,6 +50,20 @@ func Distribute() func(c *gin.Context) {
 			return
 		}
 		_, pinned, _ := constraints.ResolvedPin()
+
+		// 企业给成员限定的模型白名单。
+		//
+		// 与令牌的模型限制不同，这一条刻意放在 pinned 之外：pin 锁的是渠道，模型
+		// 仍然来自请求体，所以「有 pin 就跳过」等于给成员留了一条绕过白名单的路。
+		// 正常流程不会因此被拦——pinned 的任务请求带的是原任务的模型，成员当初能
+		// 建成那个任务，就说明它本来就在白名单里。模型为空时不判：pinned 请求允许
+		// 不带模型（比如插件自己决定模型），空名字不是「用了别的模型」。
+		if modelRequest.Model != "" &&
+			!service.ModelNameMatchesLimit(service.EnterpriseModelLimitSet(c), modelRequest.Model) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+			return
+		}
+
 		if !pinned {
 			// Select a channel for the user
 			// check token model mapping
@@ -73,6 +86,14 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 
+			// 企业给成员限定的模型白名单。放在这里而不是各转接入口，是因为所有
+			// 走渠道路由的请求都要经过这段选路前的检查；企业限制只能收紧，
+			// 因此它和上面的令牌限制是同一条「都不放行就拒绝」的关系。
+			if !service.ModelNameMatchesLimit(service.EnterpriseModelLimitSet(c), modelRequest.Model) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+				return
+			}
+
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
@@ -88,7 +109,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						if !service.GroupInUserUsableGroups(usingGroup, service.EnterpriseGroupLimitsFromContext(c), playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
@@ -515,21 +536,24 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 // (modifiers and legacy aliases stripped) are all accepted. The Responses
 // WebSocket relay shares this rule so both transports admit the same names.
 func TokenModelLimitAllows(limit map[string]bool, model string) bool {
-	if limit[model] {
-		return true
+	// 令牌没配限制时维持原有语义：一张不存在的白名单不放行任何模型。
+	// 企业的模型白名单走的是相反约定（nil = 不受限），两者都归一化在 service 里，
+	// 这里必须自己挡住 nil 才不会把「没限制」翻转成「全放行」。
+	if limit == nil {
+		return false
 	}
-	if formatted := ratio_setting.FormatMatchingModelName(model); limit[formatted] {
-		return true
-	}
-	return limit[ratio_setting.RoutingMatchModelName(model)]
+	return service.ModelNameMatchesLimit(limit, model)
 }
 
 // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
 // 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
 // modelRequest.Model 为空而误报 "This token has no access to model"。
 // 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
+//
+// 企业的模型白名单在同一处校验，会踩同一个坑（拿任务 id 取结果的接口本身不带
+// model），所以企业限了模型的成员同样要回填，否则成员查自己的视频任务会被误判。
 func getTaskOriginModelName(c *gin.Context) string {
-	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) && service.EnterpriseModelLimitSet(c) == nil {
 		return ""
 	}
 

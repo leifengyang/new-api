@@ -80,4 +80,17 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyUserIsEnterprise marks the caller as an enterprise account in this
+	// request. It is the only thing EnterpriseAuth trusts, so every dashboard
+	// entry point must go through UserBase.WriteContext.
+	ContextKeyUserIsEnterprise ContextKey = "user_is_enterprise"
+	// ContextKeyEnterpriseGroupLimits is the enterprise's group whitelist for the
+	// caller: a nil slice means no restriction, an empty slice means nothing is
+	// allowed. The distinction matters, so callers must not normalize one into
+	// the other.
+	ContextKeyEnterpriseGroupLimits ContextKey = "enterprise_group_limits"
+	// ContextKeyEnterpriseModelLimits is the enterprise's model whitelist for the
+	// caller, with the same nil-versus-empty meaning as the group limits.
+	ContextKeyEnterpriseModelLimits ContextKey = "enterprise_model_limits"
 )

@@ -42,6 +42,8 @@ const defaultSecuritySettings: SecuritySettings = {
   'fetch_setting.allowed_ports': [],
   'fetch_setting.apply_ip_filter_for_domain': false,
   'token_setting.max_user_tokens': 1000,
+  // 与服务端 common.EnterpriseMemberLimit 的初始值一致。
+  EnterpriseMemberLimit: 100,
 }
 
 export function SecuritySettings() {

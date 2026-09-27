@@ -38,6 +38,7 @@ const ROOT_VIEW_KEY = '__root'
  *   groups) when the URL belongs to a registered drill-in workspace.
  * - Otherwise returns the root navigation, narrowed by:
  *     · admin-only group visibility (role-based);
+ *     · enterprise-console visibility (the `is_enterprise` account flag);
  *     · `useSidebarConfig` (admin × user `sidebar_modules` overlay).
  *
  * Nested views are intentionally NOT passed through `useSidebarConfig`
@@ -48,6 +49,7 @@ export function useSidebarView(): ResolvedSidebarView {
   const { t } = useTranslation()
   const pathname = useLocation({ select: (l) => l.pathname })
   const userRole = useAuthStore((s) => s.auth.user?.role)
+  const isEnterprise = useAuthStore((s) => s.auth.user?.is_enterprise === true)
   const rootSidebarData = useSidebarData()
   const configFilteredRoot = useSidebarConfig(rootSidebarData.navGroups)
 
@@ -55,14 +57,20 @@ export function useSidebarView(): ResolvedSidebarView {
     const role = userRole ?? ROLE.GUEST
     const isAdmin = role >= ROLE.ADMIN
     return configFilteredRoot
-      .filter((group) => (group.id === 'admin' ? isAdmin : true))
+      .filter((group) => {
+        if (group.id === 'admin') return isAdmin
+        // 企业控制台只对打了标记的账号出现。这里只是渲染开关：即使有人手工
+        // 敲 /enterprise，路由的 beforeLoad 和服务端也会各自再挡一次。
+        if (group.id === 'enterprise') return isEnterprise
+        return true
+      })
       .map((group) => {
         const items = group.items.filter(
           (item) => item.requiredRole === undefined || role >= item.requiredRole
         )
         return items.length === group.items.length ? group : { ...group, items }
       })
-  }, [configFilteredRoot, userRole])
+  }, [configFilteredRoot, userRole, isEnterprise])
 
   const view = resolveSidebarView(pathname)
 

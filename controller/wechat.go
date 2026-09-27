@@ -96,7 +96,7 @@ func WeChatAuth(c *gin.Context) {
 		if common.RegisterEnabled {
 			// 微信这条路径没有携带邀请码的通道，仅邀请注册开启时它拿不到准入凭证，
 			// 因此一律拒绝自助建号；已绑定用户的登录不受影响。
-			if _, err := model.ResolveRegistrationInviter(""); err != nil {
+			if _, err := model.ResolveRegistrationAdmission(""); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": i18n.T(c, i18n.MsgUserInvitationRequired),

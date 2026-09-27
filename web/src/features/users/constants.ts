@@ -142,6 +142,27 @@ export const getUserMemberLevel = (user: UserType): number =>
   user.member_level ?? USER_MEMBER_LEVEL.EXTERNAL
 
 // ============================================================================
+// Enterprise Account Flag
+// ============================================================================
+// 平台管理员给账号打的一个标记，决定这个账号能不能进自己的企业控制台。标记本身
+// 不改变角色：被标记的账号仍然是普通用户，打不开任何管理端页面。取消标记时，
+// 名下的成员会被移出、余额退回，这一步由服务端完成。
+
+/**
+ * 后台用户列表直接序列化 model.User，这一列到前端是 0/1 的整数；而账号自己的
+ * /api/user/self 回的是布尔值。两种形态都要认，所以一律走这个判断，别直接比。
+ */
+export const isEnterpriseAccount = (user: UserType): boolean =>
+  user.is_enterprise === true || user.is_enterprise === 1
+
+/**
+ * 这个账号是不是某家企业的成员。一个用户只能属于一个企业，而且成员不能再被标记
+ * 成企业账号（服务端会拒），所以标记入口对成员不开放。
+ */
+export const isEnterpriseMember = (user: UserType): boolean =>
+  (user.enterprise_owner_id ?? 0) > 0
+
+// ============================================================================
 // Default Values
 // ============================================================================
 

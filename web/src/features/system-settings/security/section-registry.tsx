@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { EnterpriseSection } from '../request-limits/enterprise-section'
 import { RateLimitSection } from '../request-limits/rate-limit-section'
 import { SSRFSection } from '../request-limits/ssrf-section'
 import { TokenLimitSection } from '../request-limits/token-limit-section'
@@ -73,6 +74,17 @@ const SECURITY_SECTIONS = [
         defaultValues={{
           'token_setting.max_user_tokens':
             settings['token_setting.max_user_tokens'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'enterprise',
+    titleKey: 'Enterprise',
+    build: (settings: SecuritySettings) => (
+      <EnterpriseSection
+        defaultValues={{
+          EnterpriseMemberLimit: settings.EnterpriseMemberLimit,
         }}
       />
     ),

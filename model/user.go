@@ -91,43 +91,50 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id                   int                        `json:"id"`
-	Username             string                     `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password             string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
-	HasPassword          bool                       `json:"-" gorm:"-:all"`
-	OriginalPassword     string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName          string                     `json:"display_name" gorm:"index" validate:"max=20"`
-	Role                 int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status               int                        `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email                string                     `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId             string                     `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId            string                     `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId               string                     `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId             string                     `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId           string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode     string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken          *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	AccessTokenCreatedAt *int64                     `json:"-" gorm:"type:bigint;column:access_token_created_at"`
-	Quota                int                        `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota            int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount         int                        `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group                string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode              string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount             int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota             int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota      int                        `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviteRebateQuota    int                        `json:"invite_rebate_quota" gorm:"-:all"`                               // 累计邀请返现，仅用户列表按页填充
-	InviterId            int                        `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	MemberLevel          int                        `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
-	DeletedAt            gorm.DeletedAt             `gorm:"index"`
-	LinuxDOId            string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting              string                     `json:"setting" gorm:"type:text;column:setting"`
-	Remark               string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer       string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt            int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
-	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
-	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+	Id                   int     `json:"id"`
+	Username             string  `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password             string  `json:"password" gorm:"not null;" validate:"min=8,max=128"`
+	HasPassword          bool    `json:"-" gorm:"-:all"`
+	OriginalPassword     string  `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName          string  `json:"display_name" gorm:"index" validate:"max=20"`
+	Role                 int     `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status               int     `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email                string  `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId             string  `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId            string  `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId               string  `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId             string  `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId           string  `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode     string  `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken          *string `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	AccessTokenCreatedAt *int64  `json:"-" gorm:"type:bigint;column:access_token_created_at"`
+	Quota                int     `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota            int     `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount         int     `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group                string  `json:"group" gorm:"type:varchar(64);default:'default'"`
+	AffCode              string  `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount             int     `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota             int     `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota      int     `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviteRebateQuota    int     `json:"invite_rebate_quota" gorm:"-:all"`                               // 累计邀请返现，仅用户列表按页填充
+	InviterId            int     `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	MemberLevel          int     `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
+	IsEnterprise         int     `json:"is_enterprise" gorm:"type:int;default:0;column:is_enterprise"`
+	// 成员所属的企业账号 id；0 表示不属于任何企业。归属只有平台管理员能改。
+	EnterpriseOwnerId int `json:"enterprise_owner_id" gorm:"type:int;default:0;column:enterprise_owner_id;index"`
+	// 企业给成员下的可见性收紧项，JSON 数组文本，空串表示不限。企业只能收紧：
+	// 生效范围永远是「平台允许 ∩ 这里列出的」，见 service.NarrowGroupsByEnterprise。
+	EnterpriseGroupLimits string                     `json:"enterprise_group_limits" gorm:"type:text;column:enterprise_group_limits"`
+	EnterpriseModelLimits string                     `json:"enterprise_model_limits" gorm:"type:text;column:enterprise_model_limits"`
+	DeletedAt             gorm.DeletedAt             `gorm:"index"`
+	LinuxDOId             string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting               string                     `json:"setting" gorm:"type:text;column:setting"`
+	Remark                string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer        string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt             int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt           int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	AuthVersion           int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
+	AdminPermissions      map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -142,6 +149,10 @@ func (user *User) ToBaseUser() *UserBase {
 		Email:       user.Email,
 		AuthVersion: user.AuthVersion,
 		CacheSchema: userCacheSchemaVersion,
+
+		IsEnterprise:          user.IsEnterprise,
+		EnterpriseGroupLimits: user.EnterpriseGroupLimits,
+		EnterpriseModelLimits: user.EnterpriseModelLimits,
 	}
 	return cache
 }
@@ -738,8 +749,9 @@ func (user *User) Insert(inviterId int) error {
 	return nil
 }
 
-func (user *User) finishInsert(inviterId int) {
-	// 用户创建成功后，根据角色初始化边栏配置
+// InitUserSidebarConfig 按角色初始化新账号的边栏配置。企业管理员代建的成员建完
+// 就能登录，同样需要这一步，所以从 finishInsert 里单独拆出来。
+func InitUserSidebarConfig(user *User) {
 	// 需要重新获取用户以确保有正确的ID和Role
 	var createdUser User
 	if err := DB.Where("username = ?", user.Username).First(&createdUser).Error; err == nil {
@@ -753,6 +765,10 @@ func (user *User) finishInsert(inviterId int) {
 			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
 		}
 	}
+}
+
+func (user *User) finishInsert(inviterId int) {
+	InitUserSidebarConfig(user)
 
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
@@ -778,11 +794,25 @@ func (user *User) FinishInsert(inviterId int) {
 // This is used for OAuth registration where user creation and binding need to be atomic.
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	return user.insertWithTx(tx, inviterId, common.QuotaForNewUser)
+}
+
+// insertWithTx 是建号的公共实现，quota 显式传入：自助注册走 QuotaForNewUser
+// 这个平台赠额，企业管理员代建的账号则是 0——那是平台为新注册用户准备的见面礼，
+// 不该按企业管理员的一次点击就发一份，否则成员上限就成了刷赠额的口子。
+func (user *User) insertWithTx(tx *gorm.DB, inviterId int, quota int) error {
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		user.Quota = common.QuotaForNewUser
+		// 企业名下的账号同样走这条建号路径，上限判定必须跟插入在同一笔事务里，
+		// 否则并发注册可以同时越过成员上限。
+		if user.EnterpriseOwnerId != 0 {
+			if err := guardEnterpriseMemberCapacityTx(tx, user.EnterpriseOwnerId); err != nil {
+				return err
+			}
+		}
+		user.Quota = quota
 		user.AffCode = common.GetRandomString(4)
 		user.MemberLevel = resolveMemberLevelForNewUser(tx, inviterId)
 
@@ -883,6 +913,13 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_history",
 		"member_level",
 		"auth_version",
+		// 企业归属与可见性收缩只能由企业控制台 / 平台管理员改。自助改资料
+		// （PUT /api/user/self）把请求体解进 User 结构体后走的就是这条路，
+		// 不挡住的话成员能给自己写 is_enterprise 或摘掉企业的限制。
+		"is_enterprise",
+		"enterprise_owner_id",
+		"enterprise_group_limits",
+		"enterprise_model_limits",
 	).Updates(newUser).Error; err != nil {
 		return err
 	}

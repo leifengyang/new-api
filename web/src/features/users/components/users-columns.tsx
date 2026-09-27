@@ -42,10 +42,12 @@ import {
   USER_ROLES,
   USER_MEMBER_LEVEL,
   getUserMemberLevel,
+  isEnterpriseAccount,
   isUserDeleted,
 } from '../constants'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
+import { EnterpriseBadge } from './enterprise-badge'
 import { MemberLevelBadge } from './member-level-badge'
 import { UserQuotaCell } from './user-quota-cell'
 
@@ -276,6 +278,21 @@ export function useUsersColumns(): ColumnDef<User>[] {
         },
         enableSorting: false,
         size: 140,
+        meta: { mobileHidden: true },
+      },
+      {
+        id: 'enterprise',
+        header: t('Enterprise'),
+        // 没有列筛选：服务端的用户搜索没有这个条件，筛选器只会筛当前这一页，
+        // 那是假的。要看有哪些企业账号，用操作菜单里的标记动作即可。
+        cell: ({ row }) =>
+          isEnterpriseAccount(row.original) ? (
+            <BadgeCell>
+              <EnterpriseBadge />
+            </BadgeCell>
+          ) : null,
+        enableSorting: false,
+        size: 120,
         meta: { mobileHidden: true },
       },
       {

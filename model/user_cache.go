@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 2
+const userCacheSchemaVersion = 3
 
 type UserBase struct {
 	Id          int    `json:"id"`
@@ -24,6 +24,41 @@ type UserBase struct {
 	Setting     string `json:"setting"`
 	AuthVersion int64  `json:"-"`
 	CacheSchema int    `json:"-"`
+
+	IsEnterprise int `json:"is_enterprise"`
+	// 企业给成员下的可见性收紧项，原样带上数据库里的 JSON 文本，
+	// 由下面的访问器解析。放进缓存结构体的是原始值而不是解析结果，
+	// 是为了让缓存命中时不重复解析。
+	EnterpriseGroupLimits string `json:"enterprise_group_limits"`
+	EnterpriseModelLimits string `json:"enterprise_model_limits"`
+}
+
+// parseEnterpriseLimits 解析企业白名单列。空列表示企业没做限制（nil）；
+// 内容损坏时返回空切片，也就是「什么都不放行」——企业限制只允许收紧，
+// 读坏了必须往严的方向倒，不能因为解析失败反而放开。
+func parseEnterpriseLimits(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var limits []string
+	if err := common.UnmarshalJsonStr(raw, &limits); err != nil {
+		common.SysError(fmt.Sprintf("failed to parse enterprise limits %q: %s", raw, err.Error()))
+		return []string{}
+	}
+	if len(limits) == 0 {
+		return []string{}
+	}
+	return limits
+}
+
+// GetEnterpriseGroupLimits 返回企业为该成员限定的可用分组，nil 表示不受限。
+func (user *UserBase) GetEnterpriseGroupLimits() []string {
+	return parseEnterpriseLimits(user.EnterpriseGroupLimits)
+}
+
+// GetEnterpriseModelLimits 返回企业为该成员限定的可用模型，nil 表示不受限。
+func (user *UserBase) GetEnterpriseModelLimits() []string {
+	return parseEnterpriseLimits(user.EnterpriseModelLimits)
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -33,6 +68,9 @@ func (user *UserBase) WriteContext(c *gin.Context) {
 	common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
 	common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 	common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
+	common.SetContextKey(c, constant.ContextKeyUserIsEnterprise, user.IsEnterprise == EnterpriseFlagYes)
+	common.SetContextKey(c, constant.ContextKeyEnterpriseGroupLimits, user.GetEnterpriseGroupLimits())
+	common.SetContextKey(c, constant.ContextKeyEnterpriseModelLimits, user.GetEnterpriseModelLimits())
 }
 
 func (user *UserBase) GetSetting() dto.UserSetting {

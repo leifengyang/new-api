@@ -231,11 +231,16 @@ func Register(c *gin.Context) {
 	}
 	// 邀请制准入放在读取其余字段之前：拿不到有效邀请码的人不该有机会试探用户名是否
 	// 存在，也不该白白触发邮箱验证码校验。
-	inviterId, err := model.ResolveRegistrationInviter(user.AffCode)
+	admission, err := model.ResolveRegistrationAdmission(user.AffCode)
 	if err != nil {
+		if errors.Is(err, model.ErrEnterpriseMemberLimitReached) {
+			common.ApiErrorMsg(c, "该公司的成员数量已达上限，请联系公司管理员")
+			return
+		}
 		common.ApiErrorI18n(c, i18n.MsgUserInvitationRequired)
 		return
 	}
+	inviterId := admission.InviterId
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeEmail(user.Email)
 	if user.Username == "" {
@@ -285,6 +290,9 @@ func Register(c *gin.Context) {
 		DisplayName: user.Username,
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
+		// 企业邀请码进来的新用户直接挂到企业名下；此时 inviterId 为 0，
+		// 两者互斥由 ResolveRegistrationAdmission 保证。
+		EnterpriseOwnerId: admission.EnterpriseOwnerId,
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
@@ -527,6 +535,9 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,
 		"member_level":      user.MemberLevel,
+		// 前端据此决定要不要显示企业控制台入口。它只是一枚用于渲染的标记，
+		// 真正的准入判定在服务端（middleware.EnterpriseAuth + 每个查询的归属收窄）。
+		"is_enterprise": user.IsEnterprise == model.EnterpriseFlagYes,
 		"linux_do_id":       user.LinuxDOId,
 		"setting":           user.Setting,
 		"stripe_customer":   user.StripeCustomer,
@@ -635,7 +646,8 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	enterpriseGroupLimits := service.EnterpriseGroupLimitsFromContext(c)
+	groups := service.GetUserUsableGroups(user.Group, enterpriseGroupLimits)
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {
@@ -645,17 +657,18 @@ func GetUserModels(c *gin.Context) {
 		}
 	case group == "auto":
 		if _, ok := groups[group]; ok {
-			groupsToQuery = service.GetUserAutoGroup(user.Group)
+			groupsToQuery = service.GetUserAutoGroup(user.Group, enterpriseGroupLimits)
 		}
 	default:
 		if _, ok := groups[group]; ok {
 			groupsToQuery = []string{group}
 		}
 	}
+	// 模型清单先按分组取并集，再按企业的模型白名单收窄：白名单只能做减法。
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.GetGroupsEnabledModels(groupsToQuery),
+		"data":    service.FilterModelsByEnterpriseLimits(service.GetGroupsEnabledModels(groupsToQuery), c),
 	})
 }
 
