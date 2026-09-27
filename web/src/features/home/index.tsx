@@ -26,15 +26,16 @@ import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { SimpleHome } from './components/simple-home'
 import { useHomePageContent } from './hooks'
-import { TownExperience } from './town/town-experience'
+
+import '@/styles/simple-home.css'
 
 export function Home() {
   const { i18n, t } = useTranslation()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const { resolvedTheme } = useTheme()
-  const { auth } = useAuthStore()
-  const isAuthenticated = !!auth.user
+  const isAuthenticated = useAuthStore((state) => !!state.auth.user)
   const { content, isLoaded, isUrl } = useHomePageContent()
 
   const syncIframePreferences = useCallback(() => {
@@ -121,13 +122,9 @@ export function Home() {
   }
 
   return (
-    <div className='aurora-home dark'>
-      <PublicLayout
-        showMainContainer={false}
-        showThemeSwitch={false}
-        showNotifications={false}
-      >
-        <TownExperience isAuthenticated={isAuthenticated} />
+    <div className='simple-home'>
+      <PublicLayout showMainContainer={false} showNotifications={false}>
+        <SimpleHome isAuthenticated={isAuthenticated} />
         <Footer />
       </PublicLayout>
     </div>
