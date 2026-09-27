@@ -145,8 +145,13 @@ export function RechargeFormCard({
     enableWaffoPancakeTopup
   const hasAnyTopup =
     hasConfigurableTopup || enableCreemTopup || hasExternalTopup
-  const hasStandardPaymentMethods =
-    Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
+  // 服务端的 pay_methods 只是一份静态配置列表（默认支付宝/微信/自定义1），跟网关
+  // 是否真的接通无关：一个网关都没启用时它照样非空。所以必须连同网关开关一起判断，
+  // 否则一个只挂了外部发卡站的部署会冒出一排点了没反应的支付宝按钮。
+  const hasGatewayPaymentMethods =
+    hasConfigurableTopup &&
+    Array.isArray(topupInfo?.pay_methods) &&
+    topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
@@ -330,71 +335,72 @@ export function RechargeFormCard({
               <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
                 {t('Payment Method')}
               </Label>
-              {hasStandardPaymentMethods || hasExternalTopup ? (
+              {hasGatewayPaymentMethods || hasExternalTopup ? (
                 <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
-                  {topupInfo?.pay_methods?.map((method) => {
-                    const minTopup = Math.max(
-                      method.min_topup || 0,
-                      getMinTopupAmount(topupInfo)
-                    )
-                    const disabled = minTopup > topupAmount
-                    const disabledReason = disabled
-                      ? t('Minimum topup amount: {{amount}}', {
-                          amount: minTopup,
-                        })
-                      : undefined
-                    const disabledLabel = disabled
-                      ? `${t('Minimum:')} ${minTopup}`
-                      : undefined
+                  {hasGatewayPaymentMethods &&
+                    topupInfo?.pay_methods?.map((method) => {
+                      const minTopup = Math.max(
+                        method.min_topup || 0,
+                        getMinTopupAmount(topupInfo)
+                      )
+                      const disabled = minTopup > topupAmount
+                      const disabledReason = disabled
+                        ? t('Minimum topup amount: {{amount}}', {
+                            amount: minTopup,
+                          })
+                        : undefined
+                      const disabledLabel = disabled
+                        ? `${t('Minimum:')} ${minTopup}`
+                        : undefined
 
-                    const button = (
-                      <Button
-                        key={method.type}
-                        variant='outline'
-                        onClick={() => onPaymentMethodSelect(method)}
-                        disabled={disabled || !!paymentLoading}
-                        title={disabledReason}
-                        aria-label={
-                          disabledReason
-                            ? `${method.name}. ${disabledReason}`
-                            : method.name
-                        }
-                        className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                      >
-                        {paymentLoading === method.type ? (
-                          <Loader2 className='h-4 w-4 animate-spin' />
-                        ) : (
-                          getPaymentIcon(
-                            method.type,
-                            'h-4 w-4',
-                            method.icon,
-                            method.name
-                          )
-                        )}
-                        <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                          <span className='max-w-full truncate'>
-                            {method.name}
-                          </span>
-                          {disabledLabel && (
-                            <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                              {disabledLabel}
-                            </span>
+                      const button = (
+                        <Button
+                          key={method.type}
+                          variant='outline'
+                          onClick={() => onPaymentMethodSelect(method)}
+                          disabled={disabled || !!paymentLoading}
+                          title={disabledReason}
+                          aria-label={
+                            disabledReason
+                              ? `${method.name}. ${disabledReason}`
+                              : method.name
+                          }
+                          className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
+                        >
+                          {paymentLoading === method.type ? (
+                            <Loader2 className='h-4 w-4 animate-spin' />
+                          ) : (
+                            getPaymentIcon(
+                              method.type,
+                              'h-4 w-4',
+                              method.icon,
+                              method.name
+                            )
                           )}
-                        </span>
-                      </Button>
-                    )
+                          <span className='flex min-w-0 flex-col items-start gap-0.5'>
+                            <span className='max-w-full truncate'>
+                              {method.name}
+                            </span>
+                            {disabledLabel && (
+                              <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
+                                {disabledLabel}
+                              </span>
+                            )}
+                          </span>
+                        </Button>
+                      )
 
-                    return disabled ? (
-                      <TooltipProvider key={method.type}>
-                        <Tooltip>
-                          <TooltipTrigger render={button} />
-                          <TooltipContent>{disabledReason}</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ) : (
-                      button
-                    )
-                  })}
+                      return disabled ? (
+                        <TooltipProvider key={method.type}>
+                          <Tooltip>
+                            <TooltipTrigger render={button} />
+                            <TooltipContent>{disabledReason}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        button
+                      )
+                    })}
                   {hasExternalTopup && (
                     // 金额在店里选，所以这个渠道不看上面的充值金额，也不受网关
                     // 下单状态影响：它是条链接，永远可点。
@@ -423,7 +429,7 @@ export function RechargeFormCard({
                   )}
                 </div>
               ) : null}
-              {!hasStandardPaymentMethods &&
+              {!hasGatewayPaymentMethods &&
                 !hasWaffoPaymentMethods &&
                 !hasExternalTopup && (
                   <Alert>
