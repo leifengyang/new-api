@@ -41,6 +41,12 @@ export interface AuthUser {
   request_count?: number
   aff_code?: string
   aff_count?: number
+  /**
+   * 平台管理员给账号打的「企业账号」标记。只用来决定要不要显示企业控制台
+   * 入口，不参与授权：真正的准入在服务端（EnterpriseAuth 中间件 + 每个查询
+   * 按归属收窄）。
+   */
+  is_enterprise?: boolean
   aff_quota?: number
   aff_history_quota?: number
   inviter_id?: number

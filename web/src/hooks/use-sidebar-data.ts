@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   Box,
+  Building2,
   ClipboardList,
   CreditCard,
   FileText,
@@ -126,6 +127,20 @@ export function useSidebarData(): SidebarData {
             title: t('Security & Access'),
             url: '/security',
             icon: ShieldCheck,
+          },
+        ],
+      },
+      // 企业控制台：只有被平台管理员打了「企业账号」标记的账号看得见
+      // （见 use-sidebar-view）。刻意不进 sidebar_modules 配置 —— 那不是平台
+      // 管理员的开关，而是租户自己的控制台，不该被侧边栏模块开关关掉。
+      {
+        id: 'enterprise',
+        title: t('Enterprise'),
+        items: [
+          {
+            title: t('Enterprise Console'),
+            url: '/enterprise',
+            icon: Building2,
           },
         ],
       },

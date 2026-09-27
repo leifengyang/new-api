@@ -832,4 +832,13 @@ export const STATIC_I18N_KEYS = [
   'Waffo Pancake',
   'Redemption Code',
   'Manual Adjustment',
+  // 企业空间（成员控制台的错误提示，以及设置页的保存按钮）。
+  'Failed to load the enterprise account',
+  'Failed to load members',
+  'Failed to create the member',
+  'Failed to update the member status',
+  'Failed to save the visible range',
+  'Failed to transfer quota',
+  'Failed to reset the password',
+  'Save enterprise limits',
 ] as const

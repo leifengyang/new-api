@@ -171,6 +171,26 @@ export async function updateUserMemberLevel(
 }
 
 /**
+ * 给账号打上或取消「企业账号」标记。
+ *
+ * 单独一个接口而不是并进通用的用户更新：取消标记会把名下成员全部移出并把余额
+ * 退回，是一个有连带后果的操作，服务端要在事务里按自己的规则处理（只有普通
+ * 用户可以被标记、已经是别人成员的不行），不适合让通用更新去写这一列。
+ *
+ * 返回里带 `released_members`：取消标记时被移出的成员数。
+ */
+export async function updateUserEnterprise(
+  id: number,
+  isEnterprise: boolean
+): Promise<ApiResponse<{ released_members?: number }>> {
+  const res = await api.put('/api/user/enterprise', {
+    id,
+    is_enterprise: isEnterprise,
+  })
+  return res.data
+}
+
+/**
  * Set the member level for many users at once, for migrating existing
  * students. Returns how many rows the server actually updated.
  */
