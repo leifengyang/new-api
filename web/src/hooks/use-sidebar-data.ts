@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  BarChart3,
   Box,
   Building2,
   ClipboardList,
@@ -141,6 +142,16 @@ export function useSidebarData(): SidebarData {
             title: t('Enterprise Console'),
             url: '/enterprise',
             icon: Building2,
+          },
+          {
+            title: t('Usage'),
+            url: '/enterprise/usage',
+            icon: BarChart3,
+          },
+          {
+            title: t('Member Logs'),
+            url: '/enterprise/logs',
+            icon: FileText,
           },
         ],
       },

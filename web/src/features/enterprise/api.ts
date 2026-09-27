@@ -24,6 +24,10 @@ import type {
   EnterpriseApiResponse,
   EnterpriseMemberOptions,
   EnterpriseProfile,
+  EnterpriseUsageRange,
+  EnterpriseUsageResponse,
+  GetEnterpriseLogsParams,
+  GetEnterpriseLogsResponse,
   GetEnterpriseMembersParams,
   GetEnterpriseMembersResponse,
 } from './types'
@@ -109,5 +113,48 @@ export async function resetEnterpriseMemberPassword(
   const res = await api.put(`/api/enterprise/members/${memberId}/password`, {
     password,
   })
+  return res.data
+}
+
+/**
+ * 企业用量聚合。时间窗由调用方给出（秒级时间戳），服务端缺省是最近 7 天、
+ * 上限一年；带 memberId 时下钻到单个成员，此时企业账号自己的用量不计入。
+ */
+export async function getEnterpriseUsage(
+  range: EnterpriseUsageRange,
+  memberId?: number
+): Promise<EnterpriseUsageResponse> {
+  const query = new URLSearchParams({
+    start_timestamp: String(range.start),
+    end_timestamp: String(range.end),
+  })
+  if (memberId !== undefined) query.set('member_id', String(memberId))
+  const res = await api.get(`/api/enterprise/usage?${query.toString()}`)
+  return res.data
+}
+
+/** 本企业成员的原始日志。渠道与 IP 由服务端脱敏后再下发。 */
+export async function getEnterpriseLogs(
+  params: GetEnterpriseLogsParams
+): Promise<GetEnterpriseLogsResponse> {
+  const {
+    p = 1,
+    page_size = 20,
+    type,
+    model_name,
+    group,
+    start_timestamp,
+    end_timestamp,
+  } = params
+  const query = new URLSearchParams({
+    p: String(p),
+    page_size: String(page_size),
+    start_timestamp: String(start_timestamp),
+    end_timestamp: String(end_timestamp),
+  })
+  if (type) query.set('type', type)
+  if (model_name) query.set('model_name', model_name)
+  if (group) query.set('group', group)
+  const res = await api.get(`/api/enterprise/logs?${query.toString()}`)
   return res.data
 }

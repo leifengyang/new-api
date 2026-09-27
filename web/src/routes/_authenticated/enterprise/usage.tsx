@@ -16,18 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { EnterpriseConsole } from './components/enterprise-console'
-import { EnterpriseLogsPanel } from './components/enterprise-logs-panel'
-import { EnterpriseUsagePanel } from './components/enterprise-usage-panel'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-export function Enterprise() {
-  return <EnterpriseConsole />
-}
+import { EnterpriseUsage } from '@/features/enterprise'
+import { useAuthStore } from '@/stores/auth-store'
 
-export function EnterpriseUsage() {
-  return <EnterpriseUsagePanel />
-}
+export const Route = createFileRoute('/_authenticated/enterprise/usage')({
+  // 与成员页同一条准入：企业账号标记没打开就不给看。真正的授权在服务端
+  // （EnterpriseAuth 中间件 + 每个查询按归属收窄），改前端状态越不过它。
+  beforeLoad: () => {
+    const { auth } = useAuthStore.getState()
 
-export function EnterpriseLogs() {
-  return <EnterpriseLogsPanel />
-}
+    if (!auth.user?.is_enterprise) {
+      throw redirect({
+        to: '/403',
+      })
+    }
+  },
+  component: EnterpriseUsage,
+})

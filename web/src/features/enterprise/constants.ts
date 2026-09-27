@@ -61,4 +61,6 @@ export const ERROR_MESSAGES = {
   UPDATE_LIMITS_FAILED: 'Failed to save the visible range',
   TRANSFER_QUOTA_FAILED: 'Failed to transfer quota',
   RESET_PASSWORD_FAILED: 'Failed to reset the password',
+  LOAD_USAGE_FAILED: 'Failed to load usage',
+  LOAD_LOGS_FAILED: 'Failed to load logs',
 } as const

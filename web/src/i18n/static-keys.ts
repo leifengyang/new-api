@@ -840,5 +840,7 @@ export const STATIC_I18N_KEYS = [
   'Failed to save the visible range',
   'Failed to transfer quota',
   'Failed to reset the password',
+  'Failed to load usage',
+  'Failed to load logs',
   'Save enterprise limits',
 ] as const
