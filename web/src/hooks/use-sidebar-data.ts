@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   BarChart3,
+  Bird,
   Box,
   Building2,
   ClipboardList,
@@ -107,6 +108,11 @@ export function useSidebarData(): SidebarData {
             activeUrls: ['/usage-logs/drawing'],
             configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
             icon: ListTodo,
+          },
+          {
+            title: t('Degradation Watch'),
+            url: '/degradation-watch',
+            icon: Bird,
           },
         ],
       },

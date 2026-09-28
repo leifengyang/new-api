@@ -16,13 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-// Maps backend system task type constants to i18n source keys. Unknown/future
-// types fall back to their raw identifier so the panel never shows blank.
-export const SYSTEM_TASK_TYPE_LABEL: Record<string, string> = {
-  log_cleanup: 'Log cleanup',
-  channel_test: 'Batch channel test',
-  model_update: 'Batch upstream model update',
-  midjourney_poll: 'Drawing task polling',
-  async_task_poll: 'Async task polling',
-  degradation_watch: 'Degradation watch',
+import type { DegradationWatchRecord } from '../types'
+
+export const WALL_PAGE_SIZE = 12
+
+/**
+ * Merges the wall's first page with pages loaded through "Load more". The
+ * wall refetches on an interval, so newer records can arrive at the top while
+ * older pages are already loaded; ids keep the union free of duplicates.
+ */
+export function mergeRecords(
+  head: DegradationWatchRecord[],
+  tail: DegradationWatchRecord[]
+): DegradationWatchRecord[] {
+  const seen = new Set(head.map((record) => record.id))
+  return [...head, ...tail.filter((record) => !seen.has(record.id))]
 }
