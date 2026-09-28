@@ -392,6 +392,16 @@ export type OperationsSettings = {
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'hour' | 'minute' | '5min'
   'perf_metrics_setting.retention_days': number
+  'degradation_watch_setting.enabled': boolean
+  'degradation_watch_setting.group': string
+  'degradation_watch_setting.model': string
+  'degradation_watch_setting.reasoning_effort': string
+  'degradation_watch_setting.interval_minutes': number
+  'degradation_watch_setting.timeout_seconds': number
+  'degradation_watch_setting.retention_per_channel': number
+  'degradation_watch_setting.prompt': string
+  /** JSON object, channel id → alias shown on the wall. */
+  'degradation_watch_setting.channel_aliases': string
 }
 
 export type SecuritySettings = {

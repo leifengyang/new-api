@@ -25,6 +25,7 @@ import { PerformanceSection } from '../maintenance/performance-section'
 import { UpdateCheckerSection } from '../maintenance/update-checker-section'
 import type { OperationsSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { DegradationWatchSettingsSection } from './degradation-watch-settings-section'
 
 const OPERATIONS_SECTIONS = [
   {
@@ -89,6 +90,28 @@ const OPERATIONS_SECTIONS = [
           WorkerAllowHttpImageRequestEnabled:
             settings.WorkerAllowHttpImageRequestEnabled,
         }}
+      />
+    ),
+  },
+  {
+    id: 'degradation-watch',
+    titleKey: 'Degradation Watch',
+    build: (settings: OperationsSettings) => (
+      <DegradationWatchSettingsSection
+        defaultValues={{
+          enabled: settings['degradation_watch_setting.enabled'],
+          group: settings['degradation_watch_setting.group'],
+          model: settings['degradation_watch_setting.model'],
+          reasoningEffort:
+            settings['degradation_watch_setting.reasoning_effort'],
+          intervalMinutes:
+            settings['degradation_watch_setting.interval_minutes'],
+          timeoutSeconds: settings['degradation_watch_setting.timeout_seconds'],
+          retentionPerChannel:
+            settings['degradation_watch_setting.retention_per_channel'],
+          prompt: settings['degradation_watch_setting.prompt'],
+        }}
+        aliasesJson={settings['degradation_watch_setting.channel_aliases']}
       />
     ),
   },

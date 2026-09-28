@@ -56,6 +56,15 @@ const defaultOperationsSettings: OperationsSettings = {
   'perf_metrics_setting.flush_interval': 5,
   'perf_metrics_setting.bucket_time': 'hour',
   'perf_metrics_setting.retention_days': 0,
+  'degradation_watch_setting.enabled': false,
+  'degradation_watch_setting.group': 'GPT-企业',
+  'degradation_watch_setting.model': 'gpt-6-astra',
+  'degradation_watch_setting.reasoning_effort': 'medium',
+  'degradation_watch_setting.interval_minutes': 30,
+  'degradation_watch_setting.timeout_seconds': 600,
+  'degradation_watch_setting.retention_per_channel': 200,
+  'degradation_watch_setting.prompt': '',
+  'degradation_watch_setting.channel_aliases': '{}',
 }
 
 export function OperationsSettings() {
