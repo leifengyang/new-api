@@ -218,6 +218,40 @@ func UpdateOption(c *gin.Context) {
 				operation_setting.MaxInviteRebateRateBasisPoints))
 			return
 		}
+	case operation_setting.DegradationWatchIntervalKey,
+		operation_setting.DegradationWatchTimeoutKey,
+		operation_setting.DegradationWatchRetentionKey:
+		value, err := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		valid := err == nil
+		if valid {
+			switch option.Key {
+			case operation_setting.DegradationWatchIntervalKey:
+				valid = operation_setting.IsValidDegradationWatchIntervalMinutes(value)
+			case operation_setting.DegradationWatchTimeoutKey:
+				valid = operation_setting.IsValidDegradationWatchTimeoutSeconds(value)
+			default:
+				valid = operation_setting.IsValidDegradationWatchRetentionPerChannel(value)
+			}
+		}
+		if !valid {
+			common.ApiErrorMsg(c, fmt.Sprintf("降智检测参数超出范围：间隔 %d–%d 分钟，超时 %d–%d 秒，保留 %d–%d 条",
+				operation_setting.MinDegradationWatchIntervalMinutes, operation_setting.MaxDegradationWatchIntervalMinutes,
+				operation_setting.MinDegradationWatchTimeoutSeconds, operation_setting.MaxDegradationWatchTimeoutSeconds,
+				operation_setting.MinDegradationWatchRetentionPerChan, operation_setting.MaxDegradationWatchRetentionPerChan))
+			return
+		}
+	case operation_setting.DegradationWatchPromptKey:
+		if len([]rune(option.Value.(string))) > operation_setting.MaxDegradationWatchPromptLength {
+			common.ApiErrorMsg(c, fmt.Sprintf("提示词不能超过 %d 个字符", operation_setting.MaxDegradationWatchPromptLength))
+			return
+		}
+	case operation_setting.DegradationWatchAliasKey:
+		// 配置加载器遇到坏 JSON 会静默跳过，这里先拦下来，免得「保存成功」却没生效。
+		var aliases map[string]string
+		if err := common.UnmarshalJsonStr(option.Value.(string), &aliases); err != nil {
+			common.ApiErrorMsg(c, "渠道别名必须是「渠道 ID → 别名」的 JSON 对象")
+			return
+		}
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
 			common.ApiErrorMsg(c, "合规确认字段不允许通过通用设置接口修改")

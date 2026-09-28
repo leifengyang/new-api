@@ -345,6 +345,19 @@ func SetApiRouter(router *gin.Engine) {
 			inviteRebateRoute.GET("/", controller.GetAllInviteRebates)
 			inviteRebateRoute.POST("/reverse", controller.ReverseInviteRebate)
 		}
+		// 降智检测：所有登录用户看检测墙（按别名脱敏），管理员可隐藏作品，
+		// 超级管理员管理渠道别名与手动触发（设置本身走 /api/option）。
+		degradationWatchRoute := apiRouter.Group("/degradation_watch")
+		degradationWatchRoute.Use(middleware.UserAuth())
+		{
+			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)
+			degradationWatchRoute.GET("/records", controller.GetDegradationWatchRecords)
+			degradationWatchRoute.GET("/records/:id/html", controller.GetDegradationWatchRecordHtml)
+			degradationWatchRoute.GET("/prompt", controller.GetDegradationWatchPrompt)
+			degradationWatchRoute.PUT("/records/:id/hidden", middleware.AdminAuth(), controller.SetDegradationWatchRecordHidden)
+			degradationWatchRoute.GET("/channels", middleware.RootAuth(), controller.GetDegradationWatchChannels)
+			degradationWatchRoute.POST("/run", middleware.RootAuth(), controller.RunDegradationWatch)
+		}
 		apiRouter.GET("/audit", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), controller.GetAuditLogs)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)
 		logRoute := apiRouter.Group("/log")
