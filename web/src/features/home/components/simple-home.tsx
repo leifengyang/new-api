@@ -22,6 +22,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
+import { HeroTerminalDemo } from './hero-terminal-demo'
+
 export function SimpleHome(props: { isAuthenticated: boolean }) {
   const { t } = useTranslation()
 
@@ -39,7 +41,6 @@ export function SimpleHome(props: { isAuthenticated: boolean }) {
             <Button
               size='lg'
               role='link'
-              className='simple-home-primary'
               render={
                 <Link to={props.isAuthenticated ? '/dashboard' : '/sign-in'} />
               }
@@ -52,7 +53,6 @@ export function SimpleHome(props: { isAuthenticated: boolean }) {
               variant='outline'
               role='link'
               size='lg'
-              className='simple-home-secondary'
               render={<Link to='/pricing' />}
             >
               {t('Explore models')}
@@ -64,23 +64,9 @@ export function SimpleHome(props: { isAuthenticated: boolean }) {
           </p>
         </div>
 
-        <div className='simple-home-art' aria-hidden='true'>
-          <div className='simple-home-sculpture'>
-            <img
-              src='/images/intelligence-loop.svg'
-              width='640'
-              height='560'
-              alt=''
-              fetchPriority='high'
-            />
-          </div>
-          <span className='simple-home-art-label simple-home-art-label-top'>
-            {t('One connection')}
-          </span>
-          <span className='simple-home-art-label simple-home-art-label-bottom'>
-            {t('Room for possibility')}
-          </span>
-        </div>
+        {/* Kept after the copy column so the primary action stays the first
+            focusable element on the page; the card's own tab strip follows it. */}
+        <HeroTerminalDemo className='simple-home-terminal' />
       </section>
 
       <section
