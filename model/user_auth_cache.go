@@ -42,20 +42,11 @@ func userAuthFenceTTLSeconds() int {
 	return cacheTTL + extra
 }
 
-func writeUserCache(user *UserBase, includeQuota bool) error {
-	if user == nil || user.Id <= 0 || !common.RedisEnabled {
-		return nil
-	}
-	user.CacheSchema = userCacheSchemaVersion
-	if user.AuthVersion <= 0 {
-		return fmt.Errorf("invalid user auth version")
-	}
-	includeQuotaArg := "0"
-	if includeQuota {
-		includeQuotaArg = "1"
-	}
-	ttl := userCacheTTLSeconds()
-	const script = `
+// 缓存哈希必须写入 UserBase 的每一个字段：RedisHGetObj 只按哈希里存在的字段
+// 赋值，哈希里没有的列会留成零值。漏项不会报错，表现为某个入口静默失效——
+// 企业标记和它的两组白名单（成员的分组/模型限制）漏掉时，鉴权中间件会拿到
+// 未打标记的用户，企业控制台直接 403。
+const userCacheWriteScript = `
 local incoming = tonumber(ARGV[1])
 local pending = tonumber(redis.call('GET', KEYS[2]) or '0')
 local committed = tonumber(redis.call('GET', KEYS[3]) or '0')
@@ -75,16 +66,33 @@ end
 redis.call('HSET', KEYS[1],
   'Id', ARGV[2], 'Group', ARGV[3], 'Email', ARGV[4],
   'Status', ARGV[5], 'Role', ARGV[6], 'Username', ARGV[7],
-  'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9])
+  'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9],
+  'IsEnterprise', ARGV[13], 'EnterpriseGroupLimits', ARGV[14],
+  'EnterpriseModelLimits', ARGV[15])
 if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
   redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
 end
 redis.call('EXPIRE', KEYS[1], ARGV[12])
 return 1`
-	result, err := common.RDB.Eval(context.Background(), script,
+
+func writeUserCache(user *UserBase, includeQuota bool) error {
+	if user == nil || user.Id <= 0 || !common.RedisEnabled {
+		return nil
+	}
+	user.CacheSchema = userCacheSchemaVersion
+	if user.AuthVersion <= 0 {
+		return fmt.Errorf("invalid user auth version")
+	}
+	includeQuotaArg := "0"
+	if includeQuota {
+		includeQuotaArg = "1"
+	}
+	ttl := userCacheTTLSeconds()
+	result, err := common.RDB.Eval(context.Background(), userCacheWriteScript,
 		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
 		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
 		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		user.IsEnterprise, user.EnterpriseGroupLimits, user.EnterpriseModelLimits,
 	).Int()
 	if err != nil {
 		return err

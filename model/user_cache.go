@@ -11,7 +11,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 3
+// 版本号在缓存哈希的字段集合变化时必须 +1：旧版本代码写下的哈希同样带着它当时的
+// 版本号，只比对版本是分辨不出「字段缺失」的，那批条目会一直被当成有效缓存读到
+// 下次过期。3 → 4 是因为补上了 IsEnterprise 和企业白名单三列。
+const userCacheSchemaVersion = 4
 
 type UserBase struct {
 	Id          int    `json:"id"`
