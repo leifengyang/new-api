@@ -100,4 +100,32 @@ describe('simple home navigation', () => {
       screen.getByRole('link', { name: zh.translation['Explore models'] })
     ).toHaveAttribute('href', '/pricing')
   })
+
+  it('renders the API terminal beside the copy, in place of the artwork', async () => {
+    await renderHome(false)
+    const tabs = screen.getAllByRole('button')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Chat',
+      'Responses',
+      'Claude',
+      'Gemini',
+    ])
+    // The hero's second column is the terminal, not the removed illustration.
+    expect(document.querySelector('.simple-home-art')).toBeNull()
+    expect(
+      document.querySelector('img[src$="intelligence-loop.svg"]')
+    ).toBeNull()
+    expect(screen.getByText('/v1/chat/completions')).toBeVisible()
+    expect(screen.getByText('200 ok')).toBeVisible()
+  })
+
+  it('keeps the primary action ahead of the terminal in the tab order', async () => {
+    const user = await renderHome(false)
+    await user.tab()
+    expect(screen.getByRole('link', { name: 'Start creating' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('link', { name: 'Explore models' })).toHaveFocus()
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getAllByRole('button')[0])
+  })
 })
