@@ -2,12 +2,15 @@ package model
 
 import (
 	"errors"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -220,4 +223,74 @@ func TestUserAuthVersionFenceAndCommittedFloorAreMonotonic(t *testing.T) {
 	committed, err = common.RDB.Get(t.Context(), getUserAuthVersionKey(userID)).Result()
 	require.NoError(t, err)
 	assert.Equal(t, "5", committed)
+}
+
+// 鉴权中间件读的是 Redis 里的用户缓存，不是数据库行。缓存哈希漏写企业那三列时，
+// UserBase.IsEnterprise 拿来是零值，EnterpriseAuth 就会给一个真打了标记的账号
+// 返 403 —— 这正是「能进控制台页面、但 /api/enterprise/profile 报权限不足」的原因。
+func TestUserCacheRoundTripsTheEnterpriseColumns(t *testing.T) {
+	truncateTables(t)
+	useUserCacheMiniRedis(t)
+
+	enterprise := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 100)
+	markEnterprise(t, enterprise.Id)
+	// 两组白名单也走同一个哈希，漏写会让成员的限制静默失效（该收窄的没收窄）。
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", enterprise.Id).Updates(map[string]any{
+		"enterprise_group_limits": `["vip"]`,
+		"enterprise_model_limits": `["gpt-4o"]`,
+	}).Error)
+
+	// 取数据库里的权威快照，再让缓存从零重建一次。
+	authoritative, err := GetUserById(enterprise.Id, false)
+	require.NoError(t, err)
+	require.NoError(t, populateUserCache(*authoritative))
+
+	cached, err := cacheGetUserBase(enterprise.Id)
+	require.NoError(t, err)
+	assert.Equal(t, EnterpriseFlagYes, cached.IsEnterprise, "企业标记必须落进缓存哈希")
+	assert.Equal(t, []string{"vip"}, cached.GetEnterpriseGroupLimits())
+	assert.Equal(t, []string{"gpt-4o"}, cached.GetEnterpriseModelLimits())
+
+	// 中间件真正依赖的那一步：标记写进上下文后必须放行。
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	cached.WriteContext(c)
+	assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyUserIsEnterprise),
+		"缓存里的企业标记要能变成上下文里的通行证")
+
+	// 没打标记的账号不能被缓存放行。
+	plain := createEnterpriseUser(t, 2, "plain", common.RoleCommonUser, 0)
+	require.NoError(t, populateUserCache(*plain))
+	plainCached, err := cacheGetUserBase(plain.Id)
+	require.NoError(t, err)
+	assert.Equal(t, EnterpriseFlagNo, plainCached.IsEnterprise)
+	plainCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	plainCached.WriteContext(plainCtx)
+	assert.False(t, common.GetContextKeyBool(plainCtx, constant.ContextKeyUserIsEnterprise))
+}
+
+// 旧版本代码写下的哈希带着当时的版本号，字段却是缺的；版本号不比它更能说明问题。
+// 这次字段集合变了就必须让那批条目失效，否则升级后仍会读到没有企业列的老条目。
+func TestUserCacheRejectsEntriesFromThePreviousFieldSet(t *testing.T) {
+	truncateTables(t)
+	server := useUserCacheMiniRedis(t)
+
+	user := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 0)
+	markEnterprise(t, user.Id)
+
+	const cacheKey = "user:1"
+	// 模拟旧代码写的哈希：字段齐全，但没有企业那三列，版本号是当年的 3。
+	server.HSet(cacheKey, "Id", "1", "Group", "default", "Email", "",
+		"Status", "1", "Role", "1", "Username", "corp", "Setting", "",
+		"AuthVersion", "1", "CacheSchema", "3", "Quota", "0")
+
+	_, err := cacheGetUserBase(user.Id)
+	assert.Error(t, err, "字段集合变过的旧条目必须被拒绝，改从数据库重建")
+
+	// 重建之后读到的就是补齐了的新条目。
+	authoritative, err := GetUserById(user.Id, false)
+	require.NoError(t, err)
+	require.NoError(t, populateUserCache(*authoritative))
+	cached, err := cacheGetUserBase(user.Id)
+	require.NoError(t, err)
+	assert.Equal(t, EnterpriseFlagYes, cached.IsEnterprise)
 }
