@@ -780,6 +780,19 @@ func TestEnterpriseUsageDatabaseMatrix(t *testing.T) {
 			quota, err = SumEnterpriseMemberQuota(memberIds, 0, 0, "no-such-model", "")
 			require.NoError(t, err)
 			assert.Zero(t, quota)
+
+			// GetSelfUserById 的列清单是拼出来的 SELECT，输出要给 /api/user/self、
+			// 登录和刷新三处共用。这里在各方言上确认它真的把 is_enterprise 读了出来
+			// —— 这一列漏了不报错，只会静默变零值，前端就永远看不到企业控制台入口。
+			profile, err := GetSelfUserById(1)
+			require.NoError(t, err)
+			assert.Equal(t, EnterpriseFlagYes, profile.IsEnterprise)
+			assert.Equal(t, "corp", profile.Username)
+			assert.Equal(t, common.RoleCommonUser, profile.Role)
+
+			plain, err := GetSelfUserById(2)
+			require.NoError(t, err)
+			assert.Equal(t, EnterpriseFlagNo, plain.IsEnterprise, "没打标记的账号不能被算成企业账号")
 		})
 	}
 }

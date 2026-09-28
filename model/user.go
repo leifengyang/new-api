@@ -575,6 +575,10 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 
 // GetSelfUserById reads dashboard profile data and password existence in one
 // query. The password hash and management access token are never selected.
+//
+// 这份列清单必须覆盖 controller.buildSelfUserData 要输出到 /api/user/self、
+// 登录和刷新响应里的每一个字段：漏掉的那一列不会报错，只会以零值出现在 DTO 里，
+// 表现为前端一直看不到某个开关。加字段时两处要一起改。
 func GetSelfUserById(id int) (*User, error) {
 	if id == 0 {
 		return nil, errors.New("id 为空！")
@@ -587,8 +591,8 @@ func GetSelfUserById(id int) (*User, error) {
 		"id", "username", "display_name", "role", "status", "email",
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
-		"aff_quota", "aff_history", "inviter_id", "member_level", "linux_do_id", "setting",
-		"stripe_customer", "auth_version",
+		"aff_quota", "aff_history", "inviter_id", "member_level", "is_enterprise",
+		"linux_do_id", "setting", "stripe_customer", "auth_version",
 		"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password",
 	}).First(&profile, "id = ?", id).Error
 	profile.User.HasPassword = profile.HasPassword

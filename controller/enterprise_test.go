@@ -294,6 +294,38 @@ func TestGetEnterpriseProfileExposesInviteCode(t *testing.T) {
 	assert.False(t, decodeEnterpriseResponse(t, recorder)["success"].(bool))
 }
 
+// 前端靠 /api/user/self 里的 is_enterprise 决定要不要显示企业控制台入口。
+// GetSelfUserById 用的是手写列清单，漏列不会报错、只会静默变成零值，所以这里
+// 从接口这一层盯住它 —— 单独测 model 层拿不到这个回归。
+func TestGetSelfReportsTheEnterpriseFlag(t *testing.T) {
+	db := useEnterpriseControllerDB(t)
+	newEnterpriseAccount(t, db, 1, 0)
+	createEnterpriseTestUser(t, db, 2, "plain2", common.RoleCommonUser, 0)
+
+	for _, test := range []struct {
+		name     string
+		userId   int
+		username string
+		expected bool
+	}{
+		{"打了标记的企业账号", 1, "corp1", true},
+		{"没打标记的普通账号", 2, "plain2", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c, recorder := newEnterpriseRequest(http.MethodGet, "/api/user/self", "", test.userId, nil)
+			GetSelf(c)
+
+			payload := decodeEnterpriseResponse(t, recorder)
+			require.True(t, payload["success"].(bool), "响应：%s", recorder.Body.String())
+			data := payload["data"].(map[string]any)
+			assert.Equal(t, test.expected, data["is_enterprise"])
+			// 同一份 DTO 的邻居字段不能因为这一列而错位。
+			assert.Equal(t, test.username, data["username"])
+			assert.EqualValues(t, common.RoleCommonUser, data["role"])
+		})
+	}
+}
+
 func TestSummariseLimitsAndJsonLimitsOrNull(t *testing.T) {
 	assert.Equal(t, "all", summariseLimits(nil))
 	assert.Equal(t, "none", summariseLimits([]string{}))
