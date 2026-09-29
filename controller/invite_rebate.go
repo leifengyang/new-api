@@ -259,14 +259,20 @@ func GetSelfInviteRebates(c *gin.Context) {
 		return
 	}
 	rebateSetting := operation_setting.GetInviteRebateSetting()
+	// 身份与审核状态一次读出：分成两次查会让卡片有几率显示自相矛盾的组合
+	// （比如按外部用户的文案说明，却顶着内部学员的徽章）。
+	profile := model.GetUserRebateProfile(userId)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, gin.H{
 		"page":             pageInfo,
 		"summary":          summary,
 		"rebate_enabled":   rebateSetting.Enabled,
-		"member_level":     model.GetUserMemberLevel(userId),
+		"member_level":     profile.MemberLevel,
 		"rebate_available": model.IsInviteRebateEligible(userId),
+		// 审核状态只在本人是内部学员时才有意义，但一并下发：前端要在「未通过」时
+		// 显示冻结说明，而外部用户拿到的这个值不改变任何展示。
+		"rebate_review_status": profile.RebateReviewStatus,
 		// 三个比例都下发：本人是内部学员就用 ① 和 ③，是外部用户就用 ②，由前端按
 		// 会员等级挑，文案要说清自己这两条腿各按多少返。多给的两个数字不泄露别人
 		// 的身份，只是同一份公开配置的另外两项。
@@ -337,5 +343,78 @@ func UpdateUsersMemberLevelBatch(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data":    affected,
+	})
+}
+
+type updateRebateReviewRequest struct {
+	Id     int    `json:"id"`
+	Status string `json:"rebate_review_status"`
+}
+
+type updateRebateReviewBatchRequest struct {
+	Ids    []int  `json:"ids"`
+	Status string `json:"rebate_review_status"`
+}
+
+// UpdateUserRebateReview 管理员审核单个内部学员的返现：通过后冻结中的返现一次性
+// 解冻入账，暂不通过只是换个标记，冻结照旧（之后还能改成通过）。
+func UpdateUserRebateReview(c *gin.Context) {
+	req := updateRebateReviewRequest{}
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的参数")
+		return
+	}
+	released, err := model.UpdateUserRebateReviewStatus(req.Id, req.Status)
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			common.ApiErrorMsg(c, "用户不存在")
+		default:
+			common.ApiError(c, err)
+		}
+		return
+	}
+
+	username, _ := model.GetUsernameById(req.Id, true)
+	recordManageAudit(c, "user.rebate_review_update", map[string]any{
+		"target_user_id": req.Id,
+		"username":       username,
+		"review_status":  req.Status,
+		// 这次审核实际解冻到账的条数。改成通过却没解冻出东西（本来就没有冻结的
+		// 流水）是正常情况，记 0 便于日后对账时区分「没解冻」和「没记录」。
+		"released": released,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    released,
+	})
+}
+
+// UpdateUsersRebateReviewBatch 管理员批量审核。整批用同一个状态，通过时逐个
+// 解冻各自冻结中的流水。
+func UpdateUsersRebateReviewBatch(c *gin.Context) {
+	req := updateRebateReviewBatchRequest{}
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorMsg(c, "无效的参数")
+		return
+	}
+	affected, released, err := model.UpdateUsersRebateReviewStatusByBatch(req.Ids, req.Status)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	recordManageAudit(c, "user.rebate_review_batch", map[string]any{
+		"count":         affected,
+		"released":      released,
+		"requested":     len(req.Ids),
+		"ids":           append([]int{}, req.Ids[:min(len(req.Ids), 100)]...),
+		"review_status": req.Status,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    released,
 	})
 }

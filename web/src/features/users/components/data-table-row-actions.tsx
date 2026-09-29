@@ -32,6 +32,10 @@ import {
   UserRoundMinus,
   Building,
   Building2,
+  ClipboardCheck,
+  CircleCheck,
+  CircleSlash,
+  CircleDashed,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -44,6 +48,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Tooltip,
@@ -59,12 +66,15 @@ import {
   resetUserTwoFA,
   updateUserEnterprise,
   updateUserMemberLevel,
+  updateUserRebateReview,
 } from '../api'
 import {
   USER_STATUS,
   USER_ROLE,
   USER_MEMBER_LEVEL,
+  REBATE_REVIEW_STATUS,
   ERROR_MESSAGES,
+  getRebateReviewStatus,
   getUserMemberLevel,
   isEnterpriseAccount,
   isEnterpriseMember,
@@ -78,6 +88,36 @@ import { useUsers } from './users-provider'
 interface DataTableRowActionsProps {
   row: Row<User>
 }
+
+/**
+ * 三种审核结果各自的成功提示。未通过和未审核对钱的效果一样——都继续冻结——所以
+ * 文案只讲状态变了，不提钱；真正的放行只发生在 approved 且确实有冻结行的时候。
+ */
+const REBATE_REVIEW_MESSAGES: Record<string, string> = {
+  [REBATE_REVIEW_STATUS.APPROVED]:
+    'Approved the rebate review for {{username}}',
+  [REBATE_REVIEW_STATUS.REJECTED]: 'Set {{username}} to not approved',
+  [REBATE_REVIEW_STATUS.PENDING]: 'Set {{username}} back to pending review',
+}
+
+/** 「审核」子菜单里的三项，顺序就是从严到宽再回到未审核。 */
+const REBATE_REVIEW_MENU_ITEMS = [
+  {
+    status: REBATE_REVIEW_STATUS.APPROVED,
+    labelKey: 'Approve',
+    icon: CircleCheck,
+  },
+  {
+    status: REBATE_REVIEW_STATUS.REJECTED,
+    labelKey: 'Not Approved',
+    icon: CircleSlash,
+  },
+  {
+    status: REBATE_REVIEW_STATUS.PENDING,
+    labelKey: 'Pending Review',
+    icon: CircleDashed,
+  },
+] as const
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
@@ -95,6 +135,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   // 取消标记会把名下成员全部移出并把余额退回，值得先问一句。
   const [enterpriseTarget, setEnterpriseTarget] = useState<boolean | null>(null)
   const [enterprisePending, setEnterprisePending] = useState(false)
+  // 返现审核。改成 approved 会把该账号名下所有冻结的返现一次性放行，是一个动钱
+  // 的动作，所以跟企业标记一样先弹确认再执行。
+  const [rebateReviewTarget, setRebateReviewTarget] = useState<string | null>(
+    null
+  )
+  const [rebateReviewPending, setRebateReviewPending] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -216,11 +262,46 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     }
   }
 
+  const handleRebateReview = async (status: string) => {
+    setRebateReviewPending(true)
+    try {
+      const result = await updateUserRebateReview(user.id, status)
+      if (result.success) {
+        // 服务端回来的 data 是这一次真正放行的返现行数。通过审核时顺带说出来，
+        // 管理员才知道刚才那一下到底动没动钱。
+        const released = result.data ?? 0
+        if (status === REBATE_REVIEW_STATUS.APPROVED && released > 0) {
+          toast.success(
+            t(
+              'Approved the rebate review for {{username}} and released {{count}} rebates',
+              { username: user.username, count: released }
+            )
+          )
+        } else {
+          toast.success(
+            t(REBATE_REVIEW_MESSAGES[status] ?? 'Rebate review updated', {
+              username: user.username,
+            })
+          )
+        }
+        triggerRefresh()
+      } else {
+        handleServerError(result, t('Failed to update the rebate review'))
+      }
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+    } finally {
+      setRebateReviewPending(false)
+      setRebateReviewTarget(null)
+    }
+  }
+
   const isDisabled = user.status === USER_STATUS.DISABLED
   const isAdmin = user.role >= USER_ROLE.ADMIN
   const isRoot = user.role === USER_ROLE.ROOT
   const isInternalMember =
     getUserMemberLevel(user) === USER_MEMBER_LEVEL.INTERNAL
+  const currentRebateReviewStatus = getRebateReviewStatus(user)
   const isEnterprise = isEnterpriseAccount(user)
   // 只有普通用户可以当企业账号（服务端同样只放普通用户），成员也不能再被标记，
   // 所以这两种账号上干脆不显示这个入口。
@@ -317,6 +398,38 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               <GraduationCap size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
+        )}
+
+        {/* 返现审核入口。只有内部会员有返现可审——外部账号不参与返现，审核状态
+            对它没有任何作用，所以这一类账号上不显示这一项。 */}
+        {isInternalMember && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              {t('Review')}
+              <DropdownMenuShortcut>
+                <ClipboardCheck size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className='w-48'>
+              {REBATE_REVIEW_MENU_ITEMS.map((item) => (
+                <DropdownMenuItem
+                  key={item.status}
+                  // 当前状态那一项留在菜单里但点不动：它同时也是「现在是哪一个」
+                  // 的提示，比把当前项藏起来更好认。
+                  disabled={currentRebateReviewStatus === item.status}
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setRebateReviewTarget(item.status)
+                  }}
+                >
+                  {t(item.labelKey)}
+                  <DropdownMenuShortcut>
+                    <item.icon size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         )}
 
         {canToggleEnterprise &&
@@ -452,6 +565,38 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         handleConfirm={() => {
           if (memberLevelTarget !== null && !memberLevelPending) {
             void handleMemberLevel(memberLevelTarget)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={rebateReviewTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRebateReviewTarget(null)
+        }}
+        title={
+          rebateReviewTarget === REBATE_REVIEW_STATUS.APPROVED
+            ? t('Approve the rebate review for {{username}}?', {
+                username: user.username,
+              })
+            : t('Change the rebate review for {{username}}?', {
+                username: user.username,
+              })
+        }
+        desc={
+          rebateReviewTarget === REBATE_REVIEW_STATUS.APPROVED
+            ? t(
+                'Every frozen rebate this member has earned is credited to their balance right away. Their wallet has a ceiling: any rebate that would go past it is left recorded but not credited, and the rest are still released.'
+              )
+            : t(
+                'Their rebates stay frozen and nothing is credited. Rebates already credited are not taken back — use the ledger reversal if you need to claw one back.'
+              )
+        }
+        confirmText={rebateReviewPending ? t('Saving...') : t('Confirm')}
+        isLoading={rebateReviewPending}
+        handleConfirm={() => {
+          if (rebateReviewTarget !== null && !rebateReviewPending) {
+            void handleRebateReview(rebateReviewTarget)
           }
         }}
       />

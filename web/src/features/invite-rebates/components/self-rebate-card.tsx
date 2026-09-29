@@ -28,7 +28,10 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatInviteRebatePercent } from '@/features/system-settings/general/invite-rebate-rate'
 import { MemberLevelBadge } from '@/features/users/components/member-level-badge'
-import { USER_MEMBER_LEVEL } from '@/features/users/constants'
+import {
+  REBATE_REVIEW_STATUS,
+  USER_MEMBER_LEVEL,
+} from '@/features/users/constants'
 import { formatQuota } from '@/lib/format'
 
 import { useSelfInviteRebates } from '../hooks/use-self-invite-rebates'
@@ -44,7 +47,8 @@ interface SelfRebateCardProps {
 /**
  * The member's view of the invite rebate programme. Rebates land on the balance
  * as they are earned, so there is nothing to claim here — this card reports
- * what came in and where it came from.
+ * what came in and where it came from. An internal member whose review has not
+ * passed sees what is waiting instead, held in the frozen column.
  */
 export function SelfRebateCard({
   affiliateLink,
@@ -82,6 +86,28 @@ export function SelfRebateCard({
     : (data?.external_rate_basis_points ?? 0)
   const uplineRate = data?.internal_referrer_rate_basis_points ?? 0
   const rebateCount = summary?.rebate_count ?? 0
+  const frozenQuota = summary?.frozen_quota ?? 0
+  // 内部学员的返现要审核通过才能动用。未通过之前，算出来的返现依旧按笔记着，但
+  // 钱不进余额——所以这里先看身份，再看审核状态，外部账号不显示这些。
+  const isRebateFrozenHere =
+    isInternal && data?.rebate_review_status !== REBATE_REVIEW_STATUS.APPROVED
+
+  // 「累计返现」只算已入账的部分，冻结的不算进去——它还没到账。冻结金额单列一格，
+  // 标成警告色，免得学员把两笔钱看成同一笔。
+  const stats: { label: string; value: string; tone?: 'warning' }[] = [
+    { label: t('Total Earned'), value: formatQuota(summary?.total_quota ?? 0) },
+    ...(isRebateFrozenHere
+      ? [
+          {
+            label: t('Frozen'),
+            value: formatQuota(frozenQuota),
+            tone: 'warning' as const,
+          },
+        ]
+      : []),
+    { label: t('Rebates'), value: String(rebateCount) },
+    { label: t('Invites'), value: String(inviteCount) },
+  ]
 
   // 总开关、管理员不参与、内部与外部两种返现口径要分开讲，否则用户只看到一串 0
   // 却不知道卡在哪一步。外部用户只讲他们自己的口径，内部学员多拿 ③ 这件事不能
@@ -101,6 +127,11 @@ export function SelfRebateCard({
     note = t('Invite rebates are currently disabled.')
   } else if (!canEarn) {
     note = t('Administrators do not earn invite rebates.')
+  } else if (isRebateFrozenHere) {
+    // 冻结这件事比比例更要紧，会让人以为钱已经到账了，所以盖掉比例那段说明。
+    note = t(
+      'Rebates are credited once your review has passed. Until then they stay frozen.'
+    )
   }
 
   return (
@@ -128,17 +159,26 @@ export function SelfRebateCard({
           </div>
         </div>
 
-        <div className='grid grid-cols-3 gap-1.5 text-center'>
-          {[
-            [t('Total Earned'), formatQuota(summary?.total_quota ?? 0)],
-            [t('Rebates'), String(rebateCount)],
-            [t('Invites'), String(inviteCount)],
-          ].map(([label, value]) => (
+        {/* 冻结金额只在真有冻结的时候才占一列，否则这一格永远是 0，看不出重点。 */}
+        <div
+          className={`grid gap-1.5 text-center ${
+            isRebateFrozenHere ? 'grid-cols-4' : 'grid-cols-3'
+          }`}
+        >
+          {stats.map(({ label, value, tone }) => (
             <div key={label}>
-              <div className='text-muted-foreground truncate text-[10px] font-medium tracking-wider uppercase'>
+              <div
+                className={`truncate text-[10px] font-medium tracking-wider uppercase ${
+                  tone === 'warning' ? 'text-warning' : 'text-muted-foreground'
+                }`}
+              >
                 {label}
               </div>
-              <div className='mt-0.5 truncate text-sm font-semibold tabular-nums'>
+              <div
+                className={`mt-0.5 truncate text-sm font-semibold tabular-nums ${
+                  tone === 'warning' ? 'text-warning' : ''
+                }`}
+              >
                 {value}
               </div>
             </div>
@@ -159,7 +199,7 @@ export function SelfRebateCard({
             tooltip={t('Copy referral link')}
             aria-label={t('Copy referral link')}
           />
-          {rebateCount > 0 && (
+          {(rebateCount > 0 || frozenQuota > 0) && (
             <Button
               variant='outline'
               onClick={() => setDetailsOpen(true)}

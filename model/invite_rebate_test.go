@@ -75,19 +75,28 @@ func createInviteRebateUser(t *testing.T, db *gorm.DB, id int, role int, memberL
 
 // createNamedInviteRebateUser 与 createInviteRebateUser 相同，但指定用户名，
 // 供按名字检索的用例构造可辨认的账号。
+//
+// 内部学员一律建成「已通过审核」：审核引入之前写的用例要验的是返现怎么算，
+// 不是审核闸门，让它们统统变成冻结会把返现本身淹没掉。要验冻结的用例自己
+// 用 setRebateReviewStatus 改回 pending（或 rejected）。
 func createNamedInviteRebateUser(t *testing.T, db *gorm.DB, id int, username string, role int, memberLevel int, inviterId int) *User {
 	t.Helper()
+	reviewStatus := RebateReviewPending
+	if memberLevel == MemberLevelInternal {
+		reviewStatus = RebateReviewApproved
+	}
 	user := &User{
-		Id:          id,
-		Username:    username,
-		DisplayName: username,
-		Password:    "$2a$10$placeholderplaceholderplaceholderplaceholderplaceholde",
-		Role:        role,
-		Status:      common.UserStatusEnabled,
-		MemberLevel: memberLevel,
-		InviterId:   inviterId,
-		AffCode:     fmt.Sprintf("aff%d", id),
-		Email:       fmt.Sprintf("user%d@example.com", id),
+		Id:                 id,
+		Username:           username,
+		DisplayName:        username,
+		Password:           "$2a$10$placeholderplaceholderplaceholderplaceholderplaceholde",
+		Role:               role,
+		Status:             common.UserStatusEnabled,
+		MemberLevel:        memberLevel,
+		InviterId:          inviterId,
+		AffCode:            fmt.Sprintf("aff%d", id),
+		Email:              fmt.Sprintf("user%d@example.com", id),
+		RebateReviewStatus: reviewStatus,
 	}
 	require.NoError(t, db.Create(user).Error)
 	return user
@@ -144,6 +153,23 @@ func requireAffCount(t *testing.T, db *gorm.DB, userId int, expected int) {
 	var user User
 	require.NoError(t, db.Select("aff_count").First(&user, userId).Error)
 	assert.Equal(t, expected, user.AffCount)
+}
+
+// setRebateReviewStatus 直接把审核状态写进库。用例要构造的是「管理员已经审过」的
+// 存量状态，走正规接口会顺带解冻，那不是这里想验的东西。
+func setRebateReviewStatus(t *testing.T, db *gorm.DB, userId int, status string) {
+	t.Helper()
+	require.NoError(t, db.Model(&User{}).Where("id = ?", userId).
+		Update("rebate_review_status", status).Error)
+}
+
+// requireRebateStatus 断言某条腿的状态。按来源与收款人定位，比按 id 更贴近用例的
+// 说法（「发给 1 的那条腿冻结了」）。
+func requireRebateStatus(t *testing.T, db *gorm.DB, inviterId int, sourceRef string, expected string) {
+	t.Helper()
+	var rebate InviteRebate
+	require.NoError(t, db.Where("inviter_id = ? AND source_ref = ?", inviterId, sourceRef).First(&rebate).Error)
+	assert.Equal(t, expected, rebate.Status)
 }
 
 func TestCreditInviteRebateAppliesConfiguredRate(t *testing.T) {
@@ -835,7 +861,7 @@ func TestUpdateUsersMemberLevelByBatch(t *testing.T) {
 	assert.EqualValues(t, 3, affected)
 
 	for id := 1; id <= 3; id++ {
-		assert.Equal(t, MemberLevelInternal, GetUserMemberLevel(id))
+		assert.Equal(t, MemberLevelInternal, GetUserRebateProfile(id).MemberLevel)
 		assert.True(t, IsInviteRebateEligible(id))
 	}
 
@@ -846,6 +872,385 @@ func TestUpdateUsersMemberLevelByBatch(t *testing.T) {
 	assert.Error(t, err)
 	assert.Error(t, UpdateUserMemberLevel(1, -1))
 	assert.ErrorIs(t, UpdateUserMemberLevel(999, MemberLevelInternal), gorm.ErrRecordNotFound)
+}
+
+// 内部学员没审核通过时，返现只落账不入账：流水记下来、余额一分不加。
+// 这是整个审核功能的起点，两条腿（直属①与上层③）都要挡住。
+func TestCreditInviteRebateFreezesUnreviewedInternalInviter(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	// 1 是内部学员，没审过；2 是他拉来的外部用户。
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+
+	// 冻结的腿不返回 credit：调用方按「没有钱要补进缓存」处理。
+	assert.Nil(t, creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-frozen"))
+	requireQuota(t, db, 1, 0)
+
+	var rebate InviteRebate
+	require.NoError(t, db.Where("inviter_id = ?", 1).First(&rebate).Error)
+	assert.Equal(t, InviteRebateStatusFrozen, rebate.Status)
+	assert.Equal(t, 10000, rebate.RebateQuota)
+	assert.Equal(t, 100000, rebate.BaseQuota)
+	// 冻结不是「发不出去」：基数比例照记，解冻时按原额入账。
+	assert.Empty(t, rebate.SkipReason)
+	assert.Zero(t, rebate.OutstandingQuota()-10000)
+
+	// 累计返现与冻结额分开算：冻结期间累计返现还是 0，钱在冻结那一栏。
+	summary, err := GetInviteRebateSummary(1)
+	require.NoError(t, err)
+	assert.Zero(t, summary.TotalQuota)
+	assert.Zero(t, summary.RebateCount)
+	assert.Equal(t, 10000, summary.FrozenQuota)
+
+	// 第三条腿同理：外部用户 4 的下线充值，往上找到的内部学员 3 也拿不到钱。
+	createInviteRebateUser(t, db, 3, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 4, common.RoleCommonUser, MemberLevelNormal, 3)
+	createInviteRebateUser(t, db, 5, common.RoleCommonUser, MemberLevelNormal, 4)
+	setRebateReviewStatus(t, db, 3, RebateReviewPending)
+	setInviteRebateRates(t, true, 1000, 1000, 2000)
+
+	creditRebateInTx(t, 5, 100000, InviteRebateSourceEpay, "trade-upline")
+	// 4 是外部用户，按比例②照常入账；3 是外部用户的上级内部学员，冻结。
+	requireQuota(t, db, 4, 10000)
+	requireQuota(t, db, 3, 0)
+	requireRebateStatus(t, db, 4, "trade-upline", InviteRebateStatusCredited)
+	requireRebateStatus(t, db, 3, "trade-upline", InviteRebateStatusFrozen)
+}
+
+// 外部用户不受审核影响：无论审核状态是什么，按比例②直接到账。
+func TestCreditInviteRebateLeavesExternalInviterUnfrozen(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	// 即便这一行上挂着一个不可能的审核状态，外部用户也不该被冻结。
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+
+	credit := soleRebate(t, creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-ext"))
+	assert.Equal(t, 10000, credit.Quota)
+	requireQuota(t, db, 1, 10000)
+	requireRebateStatus(t, db, 1, "trade-ext", InviteRebateStatusCredited)
+
+	summary, err := GetInviteRebateSummary(1)
+	require.NoError(t, err)
+	assert.Equal(t, 10000, summary.TotalQuota)
+	assert.Zero(t, summary.FrozenQuota)
+}
+
+// 管理员不参与返现，审核状态也管不到他：连流水都不产生。
+func TestCreditInviteRebateIgnoresReviewStatusForAdministrators(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleAdminUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewApproved)
+
+	assert.Nil(t, creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-admin"))
+	requireQuota(t, db, 1, 0)
+	var count int64
+	require.NoError(t, db.Model(&InviteRebate{}).Where("inviter_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+// 审核通过：冻结的每一笔一次性解冻入账，缓存与日志在提交后补上。
+func TestUpdateUserRebateReviewStatusReleasesFrozenRebates(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-a")
+	creditRebateInTx(t, 2, 50000, InviteRebateSourceEpay, "trade-b")
+	requireQuota(t, db, 1, 0)
+
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Equal(t, 2, released)
+	requireQuota(t, db, 1, 15000)
+	requireRebateStatus(t, db, 1, "trade-a", InviteRebateStatusCredited)
+	requireRebateStatus(t, db, 1, "trade-b", InviteRebateStatusCredited)
+
+	var profile RebateProfile
+	profile = GetUserRebateProfile(1)
+	assert.Equal(t, RebateReviewApproved, profile.RebateReviewStatus)
+
+	summary, err := GetInviteRebateSummary(1)
+	require.NoError(t, err)
+	assert.Equal(t, 15000, summary.TotalQuota)
+	assert.Zero(t, summary.FrozenQuota)
+	assert.EqualValues(t, 2, summary.RebateCount)
+
+	// 已经解冻过再点一次通过是空操作：不能重复加钱。
+	released, err = UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 15000)
+
+	// 解冻写入的是一条系统日志，学员在日志里能看到钱到账。
+	var logs []Log
+	require.NoError(t, db.Where("user_id = ? AND type = ?", 1, LogTypeSystem).Find(&logs).Error)
+	assert.Len(t, logs, 2)
+}
+
+// 暂不通过和未审核一样冻结，只是展示不同：状态改了，钱照样不动。
+func TestUpdateUserRebateReviewStatusRejectedKeepsFrozen(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-rej")
+
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewRejected)
+	require.NoError(t, err)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 0)
+	requireRebateStatus(t, db, 1, "trade-rej", InviteRebateStatusFrozen)
+	assert.Equal(t, RebateReviewRejected, GetUserRebateProfile(1).RebateReviewStatus)
+
+	// 之后的新返现继续冻结。
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-rej-2")
+	requireQuota(t, db, 1, 0)
+
+	// 改成通过，两笔一起到账。
+	released, err = UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Equal(t, 2, released)
+	requireQuota(t, db, 1, 20000)
+}
+
+// 撤回审核：新返现重新冻结，已经到账的钱不收回。
+func TestUpdateUserRebateReviewStatusRevokeKeepsCreditedMoney(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewApproved)
+
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-before")
+	requireQuota(t, db, 1, 10000)
+
+	// 撤回审核：余额留在学员手里，只有之后的返现会冻结。
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewPending)
+	require.NoError(t, err)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 10000)
+	requireRebateStatus(t, db, 1, "trade-before", InviteRebateStatusCredited)
+
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-after")
+	requireQuota(t, db, 1, 10000)
+	requireRebateStatus(t, db, 1, "trade-after", InviteRebateStatusFrozen)
+}
+
+// 审核通过时钱包已到上限：那一笔改写成 skipped 留档，其余的照常解冻。
+// 一条卡住不能拖累整批——「解冻」的语义是把钱交出去，交出去的不能因为后面
+// 某一条失败而收回。
+func TestReleaseFrozenInviteRebatesSkipsWhenWalletIsFull(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-1")
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-2")
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-3")
+
+	// 只留得下第一笔的空间。
+	require.NoError(t, db.Model(&User{}).Where("id = ?", 1).
+		Update("quota", common.MaxWalletQuota-10000).Error)
+
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Equal(t, 1, released)
+	requireQuota(t, db, 1, common.MaxWalletQuota)
+
+	requireRebateStatus(t, db, 1, "trade-1", InviteRebateStatusCredited)
+	// 触顶的两笔按与发放路径一致的口径落成 skipped，基数比例保留，方便管理员
+	// 看出「本该返多少」。
+	for _, ref := range []string{"trade-2", "trade-3"} {
+		var rebate InviteRebate
+		require.NoError(t, db.Where("inviter_id = ? AND source_ref = ?", 1, ref).First(&rebate).Error)
+		assert.Equal(t, InviteRebateStatusSkipped, rebate.Status, ref)
+		assert.Equal(t, InviteRebateSkipWalletLimit, rebate.SkipReason, ref)
+		assert.Zero(t, rebate.RebateQuota, ref)
+		assert.Equal(t, 100000, rebate.BaseQuota, ref)
+	}
+
+	// 重新点一次通过不会把这笔 skipped 的钱再发一次。
+	released, err = UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, common.MaxWalletQuota)
+}
+
+// 批量审核：整批同一个状态，通过时逐个人解冻各自的冻结流水。
+func TestUpdateUsersRebateReviewStatusByBatch(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	for id := 1; id <= 3; id++ {
+		createInviteRebateUser(t, db, id, common.RoleCommonUser, MemberLevelInternal, 0)
+		setRebateReviewStatus(t, db, id, RebateReviewPending)
+	}
+	for id := 11; id <= 13; id++ {
+		createInviteRebateUser(t, db, id, common.RoleCommonUser, MemberLevelNormal, id-10)
+	}
+	creditRebateInTx(t, 11, 100000, InviteRebateSourceEpay, "trade-11")
+	creditRebateInTx(t, 12, 100000, InviteRebateSourceEpay, "trade-12")
+	creditRebateInTx(t, 13, 100000, InviteRebateSourceEpay, "trade-13")
+	requireQuota(t, db, 1, 0)
+
+	affected, released, err := UpdateUsersRebateReviewStatusByBatch([]int{1, 2, 3}, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, affected)
+	assert.Equal(t, 3, released)
+	for id := 1; id <= 3; id++ {
+		requireQuota(t, db, id, 10000)
+		assert.Equal(t, RebateReviewApproved, GetUserRebateProfile(id).RebateReviewStatus)
+	}
+
+	// 无效取值、空选择、超长批量都被拦住，避免把状态刷成未定义值或拼出超长 IN。
+	_, _, err = UpdateUsersRebateReviewStatusByBatch([]int{1}, "maybe")
+	assert.Error(t, err)
+	_, _, err = UpdateUsersRebateReviewStatusByBatch(nil, RebateReviewApproved)
+	assert.Error(t, err)
+	tooMany := make([]int, maxMemberLevelBatchSize+1)
+	for i := range tooMany {
+		tooMany[i] = i + 1
+	}
+	_, _, err = UpdateUsersRebateReviewStatusByBatch(tooMany, RebateReviewApproved)
+	assert.Error(t, err)
+	_, err = UpdateUserRebateReviewStatus(1, "")
+	assert.Error(t, err)
+	_, err = UpdateUserRebateReviewStatus(1, "approved ")
+	assert.Error(t, err)
+	_, err = UpdateUserRebateReviewStatus(9999, RebateReviewApproved)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	// 重复 id 只算一次解冻，不能借着重复把同一笔试着发两遍。
+	affected, released, err = UpdateUsersRebateReviewStatusByBatch([]int{1, 1}, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, affected)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 10000)
+
+	// 批量改成暂不通过：只改状态，钱不动。
+	affected, released, err = UpdateUsersRebateReviewStatusByBatch([]int{1, 2}, RebateReviewRejected)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, affected)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 10000)
+}
+
+// 冻结中的腿可以被作废：这是管理员对一笔不该发的返现的最终处理。冻结腿钱还在
+// 平台手里，作废不扣任何人余额，但要落成 reversed 并记下原因与操作人，否则
+// 审核通过时它会被解冻入账——把一笔管理员已经否掉的返现发出去。
+func TestReverseInviteRebateVoidsFrozenLeg(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-void")
+
+	var frozen InviteRebate
+	require.NoError(t, db.Where("inviter_id = ?", 1).First(&frozen).Error)
+	require.Equal(t, InviteRebateStatusFrozen, frozen.Status)
+
+	reversed, err := ReverseInviteRebate(frozen.Id, 7, "该笔不应发放")
+	require.NoError(t, err)
+	leg := soleReversed(t, reversed)
+	assert.Zero(t, leg.Deducted)
+	assert.Zero(t, leg.Rebate.ReversedQuota)
+	requireQuota(t, db, 1, 0)
+
+	var stored InviteRebate
+	require.NoError(t, db.First(&stored, frozen.Id).Error)
+	assert.Equal(t, InviteRebateStatusReversed, stored.Status)
+	assert.Equal(t, "该笔不应发放", stored.ReverseReason)
+	assert.Equal(t, 7, stored.ReversedBy)
+	assert.NotZero(t, stored.ReversedAt)
+	// 作废的冻结腿不再计入冻结额：学员那边看到的冻结金额要跟着掉下去。
+	summary, err := GetInviteRebateSummary(1)
+	require.NoError(t, err)
+	assert.Zero(t, summary.FrozenQuota)
+	assert.Zero(t, summary.TotalQuota)
+
+	// 已作废的腿没有第二次。
+	_, err = ReverseInviteRebate(frozen.Id, 7, "再撤一次")
+	assert.ErrorIs(t, err, ErrInviteRebateNotCredited)
+
+	// 作废之后审核通过，那笔钱不会被解冻发出去。
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Zero(t, released)
+	requireQuota(t, db, 1, 0)
+}
+
+// 一笔充值同时发出已入账的腿和冻结的腿时，冲正必须一起处理：已入账的扣钱，
+// 冻结的直接作废。留下任何一条都会让这笔账收不干净。
+func TestReverseInviteRebateHandlesCreditedAndFrozenLegsTogether(t *testing.T) {
+	db := useInviteRebateDB(t)
+	// 1 是外部用户（审核状态与他无关），10 是上级内部学员（冻结）。
+	createInviteRebateUser(t, db, 10, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelNormal, 10)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 10, RebateReviewPending)
+	setInviteRebateRates(t, true, 1000, 1000, 2000)
+
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-mixed")
+	requireQuota(t, db, 1, 10000)
+	requireQuota(t, db, 10, 0)
+
+	// 从冻结的那条腿入手撤销，已入账的那条也要被一起冲掉。
+	var frozenLeg InviteRebate
+	require.NoError(t, db.Where("inviter_id = ?", 10).First(&frozenLeg).Error)
+	require.Equal(t, InviteRebateStatusFrozen, frozenLeg.Status)
+
+	reversed, err := ReverseInviteRebate(frozenLeg.Id, 7, "整笔作废")
+	require.NoError(t, err)
+	require.Len(t, reversed, 2)
+	byInviter := make(map[int]int, 2)
+	for _, leg := range reversed {
+		byInviter[leg.Rebate.InviterId] = leg.Deducted
+	}
+	assert.Equal(t, 10000, byInviter[1])
+	assert.Zero(t, byInviter[10])
+	requireQuota(t, db, 1, 0)
+	requireQuota(t, db, 10, 0)
+	requireRebateStatus(t, db, 10, "trade-mixed", InviteRebateStatusReversed)
+	requireRebateStatus(t, db, 1, "trade-mixed", InviteRebateStatusCredited)
+}
+
+// 内部学员改成外部用户：冻结流水与审核状态原样保留，新返现按外部比例直接到账；
+// 那些旧流水只有等他变回内部学员并通过审核才会解冻。
+func TestMemberLevelChangeLeavesFrozenRebatesUntouched(t *testing.T) {
+	db := useInviteRebateDB(t)
+	setInviteRebateSetting(t, true, 1000)
+	createInviteRebateUser(t, db, 1, common.RoleCommonUser, MemberLevelInternal, 0)
+	createInviteRebateUser(t, db, 2, common.RoleCommonUser, MemberLevelNormal, 1)
+	setRebateReviewStatus(t, db, 1, RebateReviewPending)
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-old")
+	requireQuota(t, db, 1, 0)
+
+	require.NoError(t, UpdateUserMemberLevel(1, MemberLevelNormal))
+	// 审核状态跟着这个人走，不会因为身份变了就被重置。
+	assert.Equal(t, RebateReviewPending, GetUserRebateProfile(1).RebateReviewStatus)
+	requireRebateStatus(t, db, 1, "trade-old", InviteRebateStatusFrozen)
+
+	// 外部身份下的新返现直接入账。
+	creditRebateInTx(t, 2, 100000, InviteRebateSourceEpay, "trade-new")
+	requireQuota(t, db, 1, 10000)
+	requireRebateStatus(t, db, 1, "trade-new", InviteRebateStatusCredited)
+
+	// 此刻点通过：只有那条冻结的旧流水会被解冻。
+	released, err := UpdateUserRebateReviewStatus(1, RebateReviewApproved)
+	require.NoError(t, err)
+	assert.Equal(t, 1, released)
+	requireQuota(t, db, 1, 20000)
 }
 
 func TestGetUsernamesByIdsIncludesDeletedUsers(t *testing.T) {
@@ -894,7 +1299,7 @@ func TestUserListFillsCumulativeInviteRebate(t *testing.T) {
 	}
 
 	// 搜索是另一条查询路径，同样要填上。
-	found, _, err := SearchUsers("user1", "", nil, nil, nil, nil, 0, 10)
+	found, _, err := SearchUsers("user1", "", nil, nil, nil, nil, "", 0, 10)
 	require.NoError(t, err)
 	require.Len(t, found, 1)
 	assert.Equal(t, 1, found[0].Id)
@@ -1039,10 +1444,11 @@ func TestGetInviteRebatesKeywordMatchesBothSidesByName(t *testing.T) {
 
 // ── 三库矩阵 ────────────────────────────────────────────────────────────────
 //
-// 返现模块带来两处 schema 变更（users.member_level 列、invite_rebates 表及其
-// (source, source_ref) 复合唯一索引），查询里又用到了 LIKE ... ESCAPE 和
-// COALESCE(SUM(bigint))。这些写法在 SQLite / MySQL / PostgreSQL 上的行为并不
-// 一致，只能在真实的三个库上验证，所以下面这组用例必须逐个方言各跑一遍。
+// 返现模块带来三处 schema 变更（users.member_level 列、users.rebate_review_status
+// 列、invite_rebates 表及其 (source, source_ref) 复合唯一索引），查询里又用到了
+// LIKE ... ESCAPE 和 COALESCE(SUM(bigint))。这些写法在 SQLite / MySQL /
+// PostgreSQL 上的行为并不一致，只能在真实的三个库上验证，所以下面这组用例必须
+// 逐个方言各跑一遍。
 
 // useInviteRebateMatrixDB 为指定方言准备一个干净的库。SQLite 每次新建文件库；
 // MySQL / PostgreSQL 复用 TEST_MYSQL_DSN / TEST_POSTGRES_DSN 指向的实例，并先
@@ -1115,6 +1521,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 			t.Run("member_level_column_and_indexes", func(t *testing.T) {
 				assert.True(t, db.Migrator().HasTable(&InviteRebate{}))
 				assert.True(t, db.Migrator().HasColumn(&User{}, "member_level"))
+				assert.True(t, db.Migrator().HasColumn(&User{}, "rebate_review_status"))
 				assert.True(t, db.Migrator().HasColumn(&InviteRebate{}, "leg"))
 				// 唯一索引必须带上 inviter_id：只按 (source, source_ref) 去重时，
 				// 一笔充值的第二条腿会被自己的防重索引挡掉。
@@ -1307,7 +1714,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				createInviteRebateUser(t, db, 33, common.RoleCommonUser, MemberLevelNormal, 0)
 
 				internal := MemberLevelInternal
-				users, total, err := SearchUsers("user3", "", nil, nil, &internal, nil, 0, 50)
+				users, total, err := SearchUsers("user3", "", nil, nil, &internal, nil, "", 0, 50)
 				require.NoError(t, err)
 				assert.EqualValues(t, 1, total)
 				require.Len(t, users, 1)
@@ -1315,7 +1722,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, MemberLevelInternal, users[0].MemberLevel)
 
 				external := MemberLevelNormal
-				_, total, err = SearchUsers("user3", "", nil, nil, &external, nil, 0, 50)
+				_, total, err = SearchUsers("user3", "", nil, nil, &external, nil, "", 0, 50)
 				require.NoError(t, err)
 				assert.EqualValues(t, 2, total)
 
@@ -1357,7 +1764,7 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				assertRebateColumn(t, users)
 
 				// 列表有两条查询路径，搜索那条也要填。
-				found, _, err := SearchUsers("user5", "", nil, nil, nil, nil, 0, 10)
+				found, _, err := SearchUsers("user5", "", nil, nil, nil, nil, "", 0, 10)
 				require.NoError(t, err)
 				assertRebateColumn(t, found)
 			})
@@ -1389,6 +1796,112 @@ func TestInviteRebateDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Where("source_ref = ?", "trade-full").First(&skipped).Error)
 				assert.Equal(t, InviteRebateStatusSkipped, skipped.Status)
 				assert.Equal(t, InviteRebateSkipWalletLimit, skipped.SkipReason)
+			})
+
+			// 返现审核闸门要跨方言成立：默认值把存量行补成 pending、字符串状态
+			// 原样存取、按状态筛选是等值的字符串比较、被作废的冻结腿不再计入
+			// 冻结额。这几处在三个库上的默认值表达与聚合写法都不一样。
+			t.Run("rebate_review_gate", func(t *testing.T) {
+				// 默认值必须由库来补：存量用户没有这一列，AutoMigrate 加列后的
+				// 取值就是这个 default。写成没有默认值的 varchar 会让存量行落成
+				// 空串，而空串不是三个合法取值中的任何一个。
+				legacy := &User{
+					Id:       191,
+					Username: "user191",
+					Password: "$2a$10$placeholderplaceholderplaceholderplaceholderplaceholde",
+					Role:     common.RoleCommonUser,
+					Status:   common.UserStatusEnabled,
+					AffCode:  "aff191",
+				}
+				require.NoError(t, db.Create(legacy).Error)
+				var stored User
+				require.NoError(t, db.First(&stored, 191).Error)
+				assert.Equal(t, RebateReviewPending, stored.RebateReviewStatus)
+
+				// 外部用户与内部学员都建出来，两者对审核闸门的反应不同。
+				// 用户名带上 gate 前缀：矩阵里子用例之间不清表，按关键字检索
+				// 必须只捞到自己这两个账号，退回到 user%d 这种公共前缀就会把
+				// 别的子用例建的号一起数进来。
+				createNamedInviteRebateUser(t, db, 101, "gateusr101", common.RoleCommonUser, MemberLevelInternal, 0)
+				createNamedInviteRebateUser(t, db, 102, "gateusr102", common.RoleCommonUser, MemberLevelNormal, 101)
+				// 用例的起点是「没审过」，所以显式写回去——建号的辅助函数默认
+				// 把内部学员建成已通过，好让与审核无关的老用例保持原样。
+				setRebateReviewStatus(t, db, 101, RebateReviewPending)
+
+				// pending 期间两条腿都不动钱，累计 0、冻结等于原额。
+				require.Nil(t, creditRebateInTx(t, 102, 100000, InviteRebateSourceEpay, "trade-review-1"))
+				requireQuota(t, db, 101, 0)
+				summary, err := GetInviteRebateSummary(101)
+				require.NoError(t, err)
+				assert.Zero(t, summary.TotalQuota)
+				assert.Equal(t, 10000, summary.FrozenQuota)
+				assert.Zero(t, summary.RebateCount)
+
+				// 按审核状态筛选走的是字符串等值比较，跑在三个库上都不该有引号
+				// 或大小写上的出入。
+				internal := MemberLevelInternal
+				users, total, err := SearchUsers("gateusr", "", nil, nil, &internal, nil, RebateReviewPending, 0, 50)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+				require.Len(t, users, 1)
+				assert.Equal(t, 101, users[0].Id)
+
+				_, total, err = SearchUsers("gateusr", "", nil, nil, &internal, nil, RebateReviewApproved, 0, 50)
+				require.NoError(t, err)
+				assert.Zero(t, total)
+
+				// 已冻结的流水能被状态筛选捞出来——管理端的「只看冻结」就靠它。
+				frozenRows, total, err := GetInviteRebates(InviteRebateFilter{Status: InviteRebateStatusFrozen}, 0, 10)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, total)
+				require.Len(t, frozenRows, 1)
+				assert.Equal(t, InviteRebateStatusFrozen, frozenRows[0].Status)
+
+				// 通过审核：冻结的这笔按原额入账，两个聚合各自归位。
+				released, err := UpdateUserRebateReviewStatus(101, RebateReviewApproved)
+				require.NoError(t, err)
+				assert.Equal(t, 1, released)
+				requireQuota(t, db, 101, 10000)
+				requireRebateStatus(t, db, 101, "trade-review-1", InviteRebateStatusCredited)
+
+				summary, err = GetInviteRebateSummary(101)
+				require.NoError(t, err)
+				assert.Equal(t, 10000, summary.TotalQuota)
+				assert.Zero(t, summary.FrozenQuota)
+				assert.EqualValues(t, 1, summary.RebateCount)
+
+				// 再冻结一笔后把它作废：冻结额要跟着掉下去，而且作废之后审核通过
+				// 不会再把它解冻发出去。CAS 认的是 status = frozen，在三个库上
+				// 都必须命中。
+				_, err = UpdateUserRebateReviewStatus(101, RebateReviewPending)
+				require.NoError(t, err)
+				creditRebateInTx(t, 102, 100000, InviteRebateSourceEpay, "trade-review-2")
+				var frozen InviteRebate
+				require.NoError(t, db.Where("source_ref = ?", "trade-review-2").First(&frozen).Error)
+				require.Equal(t, InviteRebateStatusFrozen, frozen.Status)
+
+				reversed, err := ReverseInviteRebate(frozen.Id, 7, "三库验证")
+				require.NoError(t, err)
+				assert.Zero(t, soleReversed(t, reversed).Deducted)
+
+				summary, err = GetInviteRebateSummary(101)
+				require.NoError(t, err)
+				assert.Zero(t, summary.FrozenQuota)
+				assert.Equal(t, 10000, summary.TotalQuota)
+
+				released, err = UpdateUserRebateReviewStatus(101, RebateReviewApproved)
+				require.NoError(t, err)
+				assert.Zero(t, released)
+				requireQuota(t, db, 101, 10000)
+
+				// 审核状态回读要与写入的一致，中间不能被列宽截断——rejected 比
+				// approved 短，但 approved 与 pending 的长短也不同，一次写一次读
+				// 才能确认 varchar 的宽度够用。
+				for _, status := range []string{RebateReviewRejected, RebateReviewPending, RebateReviewApproved} {
+					_, err := UpdateUserRebateReviewStatus(101, status)
+					require.NoError(t, err)
+					assert.Equal(t, status, GetUserRebateProfile(101).RebateReviewStatus)
+				}
 			})
 
 			// 邀请人数回填要跨方言成立：一条 GROUP BY 聚合加一批按 id 的 UPDATE，

@@ -68,6 +68,7 @@ export async function searchUsers(
     status = '',
     member_level = '',
     is_enterprise = '',
+    rebate_review_status = '',
     p = 1,
     page_size = 10,
     sort_by,
@@ -80,6 +81,9 @@ export async function searchUsers(
   if (status) queryParams.set('status', status)
   if (member_level) queryParams.set('member_level', member_level)
   if (is_enterprise) queryParams.set('is_enterprise', is_enterprise)
+  if (rebate_review_status) {
+    queryParams.set('rebate_review_status', rebate_review_status)
+  }
   queryParams.set('p', String(p))
   queryParams.set('page_size', String(page_size))
   if (sort_by) queryParams.set('sort_by', sort_by)
@@ -203,6 +207,38 @@ export async function updateUsersMemberLevelBatch(
   const res = await api.post('/api/user/member_level/batch', {
     ids,
     member_level: memberLevel,
+  })
+  return res.data
+}
+
+/**
+ * 改一个内部会员的返现审核状态。
+ *
+ * 单独一个接口而不是并进通用的用户更新：改成 approved 会顺手把这个账号名下所有
+ * 冻结的返现一次性放行——入账、同步缓存、写日志都发生在同一个事务里，不是一个
+ * 单纯改字段的动作，不能让通用更新去写这一列。
+ *
+ * 返回的 `data` 是这一次真正放行的返现行数，0 也是正常结果（本来就没有冻结的）。
+ */
+export async function updateUserRebateReview(
+  id: number,
+  status: string
+): Promise<ApiResponse<number>> {
+  const res = await api.put('/api/user/rebate_review', {
+    id,
+    rebate_review_status: status,
+  })
+  return res.data
+}
+
+/** 批量改返现审核状态，同样返回放行的行数。 */
+export async function updateUsersRebateReviewBatch(
+  ids: number[],
+  status: string
+): Promise<ApiResponse<number>> {
+  const res = await api.post('/api/user/rebate_review/batch', {
+    ids,
+    rebate_review_status: status,
   })
   return res.data
 }

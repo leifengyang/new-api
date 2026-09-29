@@ -170,6 +170,10 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.PUT("/member_level", controller.UpdateUserMemberLevel)
 				adminRoute.POST("/member_level/batch", controller.UpdateUsersMemberLevelBatch)
 
+				// 内部学员的返现审核：通过后把冻结中的返现一次性解冻入账
+				adminRoute.PUT("/rebate_review", controller.UpdateUserRebateReview)
+				adminRoute.POST("/rebate_review/batch", controller.UpdateUsersRebateReviewBatch)
+
 				// 企业账号标记：与会员等级同一类操作，只有平台管理员能改。
 				adminRoute.PUT("/enterprise", controller.UpdateUserEnterprise)
 			}

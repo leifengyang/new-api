@@ -32,6 +32,24 @@ func IsValidMemberLevel(level int) bool {
 	return level == MemberLevelNormal || level == MemberLevelInternal
 }
 
+// 内部学员的返现审核状态。只有内部学员的返现需要审核：外部用户按比例②直接到账，
+// 管理员不参与返现，两者都不看这一列。审核只挡「钱到不到手」，不改变身份本身。
+const (
+	RebateReviewPending  = "pending"  // 未审核（默认，也是存量用户的初始状态）
+	RebateReviewApproved = "approved" // 已通过
+	RebateReviewRejected = "rejected" // 暂不通过：与未审核同样冻结，只是展示不同
+)
+
+func IsValidRebateReviewStatus(status string) bool {
+	return status == RebateReviewPending || status == RebateReviewApproved || status == RebateReviewRejected
+}
+
+// RebateReviewHoldsRebates 判断这个审核状态下内部学员的返现是否应当被冻结。
+// 只有明确通过才放行，未审核与暂不通过一视同仁。
+func RebateReviewHoldsRebates(status string) bool {
+	return status != RebateReviewApproved
+}
+
 var userSortColumns = map[string]string{
 	"id":            "id",
 	"username":      "username",
@@ -119,7 +137,11 @@ type User struct {
 	InviteRebateQuota    int     `json:"invite_rebate_quota" gorm:"-:all"`                               // 累计邀请返现，仅用户列表按页填充
 	InviterId            int     `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
 	MemberLevel          int     `json:"member_level" gorm:"type:int;default:0;column:member_level"` // 0=普通(外部) 1=内部学员
-	IsEnterprise         int     `json:"is_enterprise" gorm:"type:int;default:0;column:is_enterprise"`
+	// 内部学员的返现审核状态（pending / approved / rejected）。列默认值同时承担
+	// 存量行的回填：老用户加列后一律变成 pending，不需要额外的数据迁移。用 varchar
+	// 而非 bool，理由与 member_level 相同：布尔默认值标签会让 AutoMigrate 反复 ALTER。
+	RebateReviewStatus string `json:"rebate_review_status" gorm:"type:varchar(16);not null;default:pending;column:rebate_review_status"`
+	IsEnterprise       int    `json:"is_enterprise" gorm:"type:int;default:0;column:is_enterprise"`
 	// 成员所属的企业账号 id；0 表示不属于任何企业。归属只有平台管理员能改。
 	EnterpriseOwnerId int `json:"enterprise_owner_id" gorm:"type:int;default:0;column:enterprise_owner_id;index"`
 	// 企业给成员下的可见性收紧项，JSON 数组文本，空串表示不限。企业只能收紧：
@@ -480,7 +502,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, memberLevel *int, isEnterprise *int, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, memberLevel *int, isEnterprise *int, rebateReviewStatus string, startIdx int, num int, sortOptions ...UserSortOptions) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -530,6 +552,11 @@ func SearchUsers(keyword string, group string, role *int, status *int, memberLev
 	}
 	if isEnterprise != nil {
 		query = query.Where("is_enterprise = ?", *isEnterprise)
+	}
+	// 返现审核状态筛选。管理员最常用的就是「只看未审核」，所以这里只传状态本身，
+	// 由前端把「未审核」翻成 pending；空串表示不筛。
+	if rebateReviewStatus != "" {
+		query = query.Where("rebate_review_status = ?", rebateReviewStatus)
 	}
 
 	// 获取总数
@@ -592,6 +619,7 @@ func GetSelfUserById(id int) (*User, error) {
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "member_level", "is_enterprise",
+		"rebate_review_status",
 		"linux_do_id", "setting", "stripe_customer", "auth_version",
 		"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password",
 	}).First(&profile, "id = ?", id).Error
@@ -919,6 +947,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		"aff_quota",
 		"aff_history",
 		"member_level",
+		"rebate_review_status",
 		"auth_version",
 		// 企业归属与可见性收缩只能由企业控制台 / 平台管理员改。自助改资料
 		// （PUT /api/user/self）把请求体解进 User 结构体后走的就是这条路，

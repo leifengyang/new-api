@@ -36,6 +36,7 @@ import { getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserMemberLevelOptions,
+  getUserRebateReviewOptions,
   getUserStatusOptions,
   getUserRoleOptions,
   isUserDeleted,
@@ -86,6 +87,11 @@ export function UsersTable() {
       { columnId: 'group', searchKey: 'group', type: 'string' },
       { columnId: 'member_level', searchKey: 'member_level', type: 'array' },
       { columnId: 'enterprise', searchKey: 'enterprise', type: 'array' },
+      {
+        columnId: 'rebate_review_status',
+        searchKey: 'rebate_review_status',
+        type: 'array',
+      },
     ],
   })
   const statusFilter =
@@ -107,6 +113,9 @@ export function UsersTable() {
     (columnFilters.find((filter) => filter.id === 'enterprise')?.value as
       | string[]
       | undefined) ?? []
+  const rebateReviewFilter =
+    (columnFilters.find((filter) => filter.id === 'rebate_review_status')
+      ?.value as string[] | undefined) ?? []
 
   const sortParams = useMemo(() => {
     const activeSort = sorting[0]
@@ -142,6 +151,7 @@ export function UsersTable() {
       groupFilter,
       memberLevelFilter,
       enterpriseFilter,
+      rebateReviewFilter,
       sortParams,
       refreshTrigger,
     ],
@@ -152,7 +162,8 @@ export function UsersTable() {
         roleFilter.length > 0 ||
         Boolean(groupFilter) ||
         memberLevelFilter.length > 0 ||
-        enterpriseFilter.length > 0
+        enterpriseFilter.length > 0 ||
+        rebateReviewFilter.length > 0
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
@@ -169,6 +180,7 @@ export function UsersTable() {
               group: groupFilter,
               member_level: memberLevelFilter[0] ?? '',
               is_enterprise: enterpriseFilter[0] ?? '',
+              rebate_review_status: rebateReviewFilter[0] ?? '',
             })
           : await getUsers(params)
 
@@ -265,6 +277,14 @@ export function UsersTable() {
             columnId: 'enterprise',
             title: t('Enterprise'),
             options: [{ label: t('Enterprise Account'), value: '1' }],
+            singleSelect: true,
+          },
+          {
+            // 同样是服务端条件。未通过 = 未审核或暂不通过，钱的效果一样，
+            // 但这里是按状态精确匹配，所以两个值分开列。
+            columnId: 'rebate_review_status',
+            title: t('Rebate Review'),
+            options: getUserRebateReviewOptions(t),
             singleSelect: true,
           },
         ],

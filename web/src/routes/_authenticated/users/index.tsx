@@ -46,6 +46,12 @@ const usersSearchSchema = z.object({
     .array(z.enum(['0', '1']))
     .optional()
     .catch([]),
+  // 返现审核状态。管理员最常用的是「只看未审核」，前端勾选后翻成 pending 传给
+  // 服务端；其余两个值放在这里是为了让手写的 URL 也能筛。
+  rebate_review_status: z
+    .array(z.enum(['pending', 'approved', 'rejected']))
+    .optional()
+    .catch([]),
 })
 
 export const Route = createFileRoute('/_authenticated/users/')({

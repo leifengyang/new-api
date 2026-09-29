@@ -89,9 +89,15 @@ export interface GetInviteRebatesResponse {
 
 /** Cumulative rebates for one inviter, returned by the self endpoint. */
 export interface InviteRebateSummary {
+  /** Credited rebates only — a frozen or reversed leg is not counted here. */
   total_quota: number
   reversed_quota: number
   rebate_count: number
+  /**
+   * Rebates worked out but held back because this member's rebate review has
+   * not passed. Released into `total_quota` once an administrator approves.
+   */
+  frozen_quota: number
 }
 
 /**
@@ -116,6 +122,12 @@ export interface SelfInviteRebatesData {
   /** Whether the administrator has the rebate programme switched on. */
   rebate_enabled: boolean
   member_level: number
+  /**
+   * This member's rebate review state. Only an internal member can be held
+   * back, and only `approved` lets the money through — `pending` and
+   * `rejected` both keep new rebates frozen.
+   */
+  rebate_review_status: string
   /**
    * Whether this member takes part in the programme at all. Only
    * administrators are excluded; every other member earns a rebate on every

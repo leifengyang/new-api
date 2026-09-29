@@ -28,6 +28,14 @@ const (
 const (
 	InviteRebateStatusCredited = "credited"
 	InviteRebateStatusSkipped  = "skipped"
+	// InviteRebateStatusFrozen 表示这笔返现已经算出、也已落账，但钱还留在平台
+	// 手里：收款人是内部学员且审核未通过。审核通过时整批解冻入账，审核期间
+	// 它既不算余额也不算累计返现。
+	InviteRebateStatusFrozen = "frozen"
+	// InviteRebateStatusReversed 表示这条腿已被作废。已入账的腿冲正后是这个
+	// 状态（钱扣回多少记在 ReversedQuota 里）；冻结中的腿被作废时不扣任何
+	// 余额，只是从冻结队列里移出去。
+	InviteRebateStatusReversed = "reversed"
 )
 
 // 返现的腿。一笔充值最多产生两条腿，各自对应一个独立比例、可以发给不同的人：
@@ -117,6 +125,12 @@ func (rebate *InviteRebate) OutstandingQuota() int {
 	return rebate.RebateQuota - rebate.ReversedQuota
 }
 
+// isReversibleInviteRebateStatus 判断这个状态的流水还能不能被撤销。已入账的腿
+// 要扣钱，冻结的腿只要作废；已被冲正的腿没有第二次，skipped 的腿从来没入过账。
+func isReversibleInviteRebateStatus(status string) bool {
+	return status == InviteRebateStatusCredited || status == InviteRebateStatusFrozen
+}
+
 // inviteRebateCredit 携带事务提交后需要落地的邀请人入账信息。余额缓存
 // （Redis 存在时）是预扣费的权威值，授信必须在提交后补增量；日志同理，
 // 它走独立连接，放进事务里既会拖长持锁时间，也会在单连接池下与事务争用
@@ -175,7 +189,7 @@ func creditInviteRebateTx(tx *gorm.DB, inviteeId int, baseQuota int, source stri
 	}
 
 	var inviter User
-	if err := tx.Select("id", "inviter_id", "role", "member_level").First(&inviter, invitee.InviterId).Error; err != nil {
+	if err := tx.Select("id", "inviter_id", "role", "member_level", "rebate_review_status").First(&inviter, invitee.InviterId).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: inviter %d of user %d not found: %s", invitee.InviterId, inviteeId, err.Error()))
 		return nil
 	}
@@ -232,7 +246,7 @@ func findUplineInternalInviter(tx *gorm.DB, fromUserId int) (User, bool) {
 			return User{}, false
 		}
 		var parent User
-		if err := tx.Select("id", "role", "member_level").First(&parent, parentId).Error; err != nil {
+		if err := tx.Select("id", "role", "member_level", "rebate_review_status").First(&parent, parentId).Error; err != nil {
 			common.SysError(fmt.Sprintf("invite rebate: upline inviter %d not found: %s", parentId, err.Error()))
 			return User{}, false
 		}
@@ -285,6 +299,18 @@ func creditInviteRebateLegTx(tx *gorm.DB, inviteeId int, baseQuota int, source s
 		RebateQuota:     rebateQuota,
 		Status:          InviteRebateStatusCredited,
 	}
+	// 内部学员未通过审核时，这条腿只落账不入账：钱先记在流水上，余额分文不动。
+	// 判定用的是发放这一瞬间的审核状态——之后补上审核只影响后面的返现，不会
+	// 追溯改动已经算好的这笔。
+	//
+	// 两条腿的收款人在这里都必然是内部学员（direct 腿只在邀请人是内部学员时
+	// 生成，upline 腿的收款人本身就是按「内部学员」找出来的），所以一个判定
+	// 两种腿通用；比例②发给外部用户的那条腿不经过这里。
+	frozen := leg.Inviter.MemberLevel == MemberLevelInternal &&
+		RebateReviewHoldsRebates(leg.Inviter.RebateReviewStatus)
+	if frozen {
+		record.Status = InviteRebateStatusFrozen
+	}
 
 	savePoint := inviteRebateSavePoint + "_" + leg.Leg
 	// 前面的分支都还没写过库，保存点因此开在第一次写入之前。
@@ -299,6 +325,13 @@ func creditInviteRebateLegTx(tx *gorm.DB, inviteeId int, baseQuota int, source s
 	if err := tx.Create(&record).Error; err != nil {
 		common.SysError(fmt.Sprintf("invite rebate: failed to record %s rebate for %s/%s: %s", leg.Leg, source, sourceRef, err.Error()))
 		rollbackToSavepoint(tx, savePoint)
+		return nil
+	}
+
+	if frozen {
+		// 冻结同样返回 nil：调用方只关心「这次要给谁加多少钱」，冻结的那条腿
+		// 没有钱需要补进缓存，也没必要写一条用户日志。流水已经落库，管理员在
+		// 后台冻结筛选里能看到它。
 		return nil
 	}
 
@@ -369,6 +402,91 @@ func finalizeInviteRebate(credits []*inviteRebateCredit) {
 	}
 }
 
+// releaseFrozenInviteRebates 把某个用户冻结中的返现一次性解冻入账，返回实际入账
+// 的条数。审核通过时调用它，冻结期间攒下的每一笔都在这里到账。
+//
+// 入账逐条进行，一条卡住不影响其余：钱包已到上限的条目改写成 skipped 留档
+// （基数与比例保留），其余照常入账。整批因此不需要回滚——「解冻」的语义是
+// 把平台手里的钱交出去，已经交出去的部分不该因为后面的某一条失败而收回。
+//
+// 余额缓存与用户日志必须在事务提交后才写：它们走独立连接，放进事务里既会拖长
+// 持锁时间，也会在单连接池下与事务争用同一条连接而死锁（与充值路径同理）。
+func releaseFrozenInviteRebates(userId int) (int, error) {
+	type releasedLeg struct {
+		rebateId  int
+		inviteeId int
+		baseQuota int
+		rate      int
+		quota     int
+	}
+	released := make([]releasedLeg, 0)
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		released = released[:0]
+		var frozen []*InviteRebate
+		if err := lockForUpdate(tx).
+			Where("inviter_id = ? AND status = ?", userId, InviteRebateStatusFrozen).
+			Order("id asc").
+			Find(&frozen).Error; err != nil {
+			return err
+		}
+		for _, rebate := range frozen {
+			quota := rebate.RebateQuota
+			if quota <= 0 {
+				// 理论上不会出现（冻结时不改金额），真出现了也不该留一条永远
+				// 解不开的记录，按已入账的 0 元收尾。
+				if err := tx.Model(&InviteRebate{}).Where("id = ?", rebate.Id).
+					Update("status", InviteRebateStatusCredited).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if err := creditInviterWalletTx(tx, userId, quota); err != nil {
+				if !errors.Is(err, ErrInviteRebateWalletLimit) {
+					return err
+				}
+				if err := tx.Model(&InviteRebate{}).Where("id = ?", rebate.Id).
+					Updates(map[string]any{
+						"status":       InviteRebateStatusSkipped,
+						"skip_reason":  InviteRebateSkipWalletLimit,
+						"rebate_quota": 0,
+					}).Error; err != nil {
+					return err
+				}
+				common.SysError(fmt.Sprintf("invite rebate: inviter %d wallet at limit, frozen rebate %d of %d skipped", userId, rebate.Id, quota))
+				continue
+			}
+			// 加钱在前、改状态在后：两步都在同一个事务里，进程中途崩掉会一起
+			// 回滚，不存在「钱加了但状态没改」的中间态。这个顺序是为了让上面
+			// 那条钱包上限分支——它需要这条腿仍停在 frozen 才好整条改写——在
+			// 状态被翻成 credited 之前就已判定完毕。
+			if err := tx.Model(&InviteRebate{}).Where("id = ?", rebate.Id).
+				Update("status", InviteRebateStatusCredited).Error; err != nil {
+				return err
+			}
+			released = append(released, releasedLeg{
+				rebateId:  rebate.Id,
+				inviteeId: rebate.InviteeId,
+				baseQuota: rebate.BaseQuota,
+				rate:      rebate.RateBasisPoints,
+				quota:     quota,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	for _, leg := range released {
+		syncCreditUserQuotaCache(userId, leg.quota, "invite rebate release")
+		RecordLog(userId, LogTypeSystem, fmt.Sprintf("邀请返现 #%d 审核通过，解冻到账：下线用户 %d 充值 %s，按 %.2f%% 返现 %s",
+			leg.rebateId, leg.inviteeId, logger.LogQuota(leg.baseQuota),
+			float64(leg.rate)/100, logger.LogQuota(leg.quota)))
+	}
+	return len(released), nil
+}
+
 // ReverseInviteRebate 撤销一笔返现。入参是台账里任意一条腿的 id，实际撤销的是
 // 它所属的那一整笔充值：一笔充值可能同时给直属邀请人和上层内部学员发过钱，
 // 冲正时两条腿必须一起走，否则会留下一半收不回的返现。
@@ -376,6 +494,11 @@ func finalizeInviteRebate(credits []*inviteRebateCredit) {
 // 返现已经变成邀请人的可用余额，可能已被消费，因此这里按「能扣多少扣多少」
 // 处理：最多扣到余额为 0，未收回的部分留在流水的 RebateQuota 与 ReversedQuota
 // 差额里，不产生负余额。余额缓存同步在事务提交后按实际扣减量递减。
+//
+// 只有已入账（credited）的腿才需要扣钱。冻结中的腿钱还在平台手里，作废它只是
+// 把它从待解冻队列里移出去，一分钱都不用动——这条腿也要落成 reversed 并记下
+// 原因与操作人，否则审核通过时它会被解冻入账，把一笔管理员已经否掉的返现发出去。
+// 因此入参落在冻结腿上同样是一次有效撤销，返回值里 Deducted 为 0。
 //
 // 整笔是一个事务：任何一条腿扣款失败（余额被并发改动）都会全部回滚，让管理员
 // 看到「请重试」而不是一个只冲了一半的账。
@@ -390,7 +513,7 @@ func ReverseInviteRebate(rebateId int, operatorId int, reason string) ([]Reverse
 		if err := lockForUpdate(tx).First(anchor, rebateId).Error; err != nil {
 			return err
 		}
-		if anchor.Status != InviteRebateStatusCredited || anchor.OutstandingQuota() <= 0 {
+		if !isReversibleInviteRebateStatus(anchor.Status) {
 			return ErrInviteRebateNotCredited
 		}
 
@@ -403,7 +526,17 @@ func ReverseInviteRebate(rebateId int, operatorId int, reason string) ([]Reverse
 		}
 
 		for _, leg := range legs {
-			if leg.Status != InviteRebateStatusCredited {
+			switch leg.Status {
+			case InviteRebateStatusFrozen:
+				// 冻结腿不必看 OutstandingQuota：它没扣过钱，原额就是未收回额，
+				// 直接作废即可。
+				if err := voidFrozenInviteRebateLegTx(tx, leg, operatorId, reason); err != nil {
+					return err
+				}
+				reversed = append(reversed, ReversedInviteRebate{Rebate: leg, Deducted: 0})
+				continue
+			case InviteRebateStatusCredited:
+			default:
 				continue
 			}
 			outstanding := leg.OutstandingQuota()
@@ -444,6 +577,36 @@ func ReverseInviteRebate(rebateId int, operatorId int, reason string) ([]Reverse
 type ReversedInviteRebate struct {
 	Rebate   *InviteRebate
 	Deducted int
+}
+
+// voidFrozenInviteRebateLegTx 作废一条冻结中的腿。钱从来没进过邀请人余额，所以
+// 这里不碰 User 表、不碰余额缓存，只把状态改成 reversed 并把原因、操作人留下。
+//
+// 条件里带上 status = frozen，与 credited 腿的 CAS 同理：并发的「审核通过」若已经
+// 先一步把它解冻并入了账，这次作废会拿到 0 行而放弃，绝不会出现「钱加了、账又
+// 被标成已作废」这种两头对不上的结果。
+func voidFrozenInviteRebateLegTx(tx *gorm.DB, leg *InviteRebate, operatorId int, reason string) error {
+	ledger := tx.Model(&InviteRebate{}).
+		Where("id = ? AND status = ?", leg.Id, InviteRebateStatusFrozen).
+		Updates(map[string]any{
+			"status":         InviteRebateStatusReversed,
+			"reversed_at":    common.GetTimestamp(),
+			"reversed_by":    operatorId,
+			"reverse_reason": reason,
+		})
+	if ledger.Error != nil {
+		return ledger.Error
+	}
+	// 冻结腿不扣钱，ReversedQuota 保持 0：它表示「实际收回的额度」，这里的实际
+	// 收回额就是 0。前台按状态显示「已作废」，不会把 0 当成「没收回来」。
+	if ledger.RowsAffected == 0 {
+		return ErrInviteRebateNotCredited
+	}
+	leg.Status = InviteRebateStatusReversed
+	leg.ReversedAt = common.GetTimestamp()
+	leg.ReversedBy = operatorId
+	leg.ReverseReason = reason
+	return nil
 }
 
 // reverseInviteRebateLegTx 扣掉一条腿能扣的部分，返回实际收回的额度。
@@ -557,12 +720,22 @@ func GetInviteRebates(filter InviteRebateFilter, offset int, limit int) ([]*Invi
 }
 
 // InviteRebateSummary 是某个邀请人的累计返现，供用户端汇总展示。
+//
+// FrozenQuota 是「还没到手」的那部分：已经算出来、但审核没通过所以留在平台手里
+// 的返现总额。它与 TotalQuota 互不重叠——TotalQuota 只统计已入账的流水。
 type InviteRebateSummary struct {
 	TotalQuota    int   `json:"total_quota"`
 	ReversedQuota int   `json:"reversed_quota"`
+	FrozenQuota   int   `json:"frozen_quota"`
 	RebateCount   int64 `json:"rebate_count"`
 }
 
+// GetInviteRebateSummary 汇总一个邀请人的返现：已入账的部分与冻结中的部分分开算。
+// 两次查询而不是一次带 CASE 的聚合，是因为两种状态本来就是两件互不相干的事，
+// 分开写更不容易在改动口径时误伤另一边。
+//
+// 第二次查询扫进独立的局部变量再回填：GORM 的 Scan 会先把目标结构体清零，
+// 同一个指针扫两遍的话，第一遍算出来的累计会被第二遍抹成 0。
 func GetInviteRebateSummary(inviterId int) (*InviteRebateSummary, error) {
 	summary := &InviteRebateSummary{}
 	err := DB.Model(&InviteRebate{}).
@@ -572,6 +745,17 @@ func GetInviteRebateSummary(inviterId int) (*InviteRebateSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	var frozen struct {
+		FrozenQuota int
+	}
+	err = DB.Model(&InviteRebate{}).
+		Select("COALESCE(SUM(rebate_quota), 0) AS frozen_quota").
+		Where("inviter_id = ? AND status = ?", inviterId, InviteRebateStatusFrozen).
+		Scan(&frozen).Error
+	if err != nil {
+		return nil, err
+	}
+	summary.FrozenQuota = frozen.FrozenQuota
 	return summary, nil
 }
 
@@ -711,13 +895,25 @@ func IsInviteRebateEligible(userId int) bool {
 	return user.Role < common.RoleAdminUser
 }
 
-// GetUserMemberLevel 单独读取会员等级，避免为了一次展示把整个用户行取出来。
-func GetUserMemberLevel(userId int) int {
+// RebateProfile 是展示返现卡片所需的用户属性。两者必须一次读出来：分开查询会
+// 让「内部学员」与「审核状态」在两次读之间可能被管理员改掉，卡片上就会出现
+// 自相矛盾的组合（例如显示内部学员却按外部用户的文案说明）。
+type RebateProfile struct {
+	MemberLevel        int
+	RebateReviewStatus string
+}
+
+// GetUserRebateProfile 读取返现展示所需的身份属性，避免为了一次展示把整个
+// 用户行取出来。
+func GetUserRebateProfile(userId int) RebateProfile {
+	profile := RebateProfile{MemberLevel: MemberLevelNormal, RebateReviewStatus: RebateReviewPending}
 	var user User
-	if err := DB.Select("member_level").First(&user, userId).Error; err != nil {
-		return MemberLevelNormal
+	if err := DB.Select("member_level", "rebate_review_status").First(&user, userId).Error; err != nil {
+		return profile
 	}
-	return user.MemberLevel
+	profile.MemberLevel = user.MemberLevel
+	profile.RebateReviewStatus = user.RebateReviewStatus
+	return profile
 }
 
 // GetUsernamesByIds 批量取用户名，供返现流水展示。用 Unscoped 是为了让已注销
@@ -786,4 +982,82 @@ func UpdateUsersMemberLevelByBatch(userIds []int, level int) (int64, error) {
 	}
 	result := DB.Model(&User{}).Where("id IN ?", userIds).Update("member_level", level)
 	return result.RowsAffected, result.Error
+}
+
+// UpdateUserRebateReviewStatus 设置一个用户的返现审核状态，返回本次解冻入账的条数。
+//
+// 只有「改成已通过」才动钱：把该用户冻结中的流水一次性解冻入账。改成未审核或
+// 暂不通过都只改状态，之后的返现重新冻结，而**已经到账的钱不收回**——那是学员
+// 已经拿到的余额，可能已经花掉；要收回请走冲正（ReverseInviteRebate），那里会
+// 按实际余额扣减并把结果留档。
+func UpdateUserRebateReviewStatus(userId int, status string) (int, error) {
+	if userId <= 0 {
+		return 0, errors.New("用户 id 无效")
+	}
+	if !IsValidRebateReviewStatus(status) {
+		return 0, errors.New("审核状态取值无效")
+	}
+	result := DB.Model(&User{}).Where("id = ?", userId).Update("rebate_review_status", status)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return 0, gorm.ErrRecordNotFound
+	}
+	if status != RebateReviewApproved {
+		return 0, nil
+	}
+	return releaseFrozenInviteRebates(userId)
+}
+
+// UpdateUsersRebateReviewStatusByBatch 批量设置审核状态，返回实际更新的用户数与
+// 解冻入账的总条数。
+//
+// 状态先整批写掉，再逐个人解冻：某个人的解冻失败只影响他自己（其余的人状态
+// 已经落库、解冻也已完成），管理员在用户列表里能直接看到谁还是冻结的，重试
+// 一次即可，不必回滚整批。
+func UpdateUsersRebateReviewStatusByBatch(userIds []int, status string) (int64, int, error) {
+	if len(userIds) == 0 {
+		return 0, 0, errors.New("请选择用户")
+	}
+	if len(userIds) > maxMemberLevelBatchSize {
+		return 0, 0, fmt.Errorf("一次最多设置 %d 个用户", maxMemberLevelBatchSize)
+	}
+	if !IsValidRebateReviewStatus(status) {
+		return 0, 0, errors.New("审核状态取值无效")
+	}
+	unique := make([]int, 0, len(userIds))
+	seen := make(map[int]struct{}, len(userIds))
+	for _, id := range userIds {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return 0, 0, errors.New("请选择用户")
+	}
+	result := DB.Model(&User{}).Where("id IN ?", unique).Update("rebate_review_status", status)
+	if result.Error != nil {
+		return 0, 0, result.Error
+	}
+	if status != RebateReviewApproved {
+		return result.RowsAffected, 0, nil
+	}
+
+	released := 0
+	for _, id := range unique {
+		count, err := releaseFrozenInviteRebates(id)
+		// 解冻失败不回滚状态：状态本身是对的，留下的只是还没入账的冻结流水，
+		// 重试一次就补上了。把错误吞掉会让管理员以为全部到账，因此往上抛。
+		if err != nil {
+			return result.RowsAffected, released, err
+		}
+		released += count
+	}
+	return result.RowsAffected, released, nil
 }

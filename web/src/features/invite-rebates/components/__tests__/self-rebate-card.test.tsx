@@ -87,12 +87,15 @@ function makeSelfData(
       total_quota: 500000,
       reversed_quota: 0,
       rebate_count: items.length,
+      frozen_quota: 0,
     },
     rate_basis_points: 1000,
     external_rate_basis_points: 100,
     internal_referrer_rate_basis_points: 100,
     rebate_enabled: true,
     member_level: INTERNAL,
+    // 默认已通过审核，冻结相关的断言才能单独测。没有冻结时这张卡和以前一样。
+    rebate_review_status: 'approved',
     rebate_available: true,
     ...overrides,
   }
@@ -182,7 +185,12 @@ it('tells an external member only their own rule, never the internal one', async
   renderCard(
     makeSelfData({
       member_level: EXTERNAL,
-      summary: { total_quota: 0, reversed_quota: 0, rebate_count: 0 },
+      summary: {
+        total_quota: 0,
+        reversed_quota: 0,
+        rebate_count: 0,
+        frozen_quota: 0,
+      },
       page: { items: [], total: 0, page: 1, page_size: 20 },
     })
   )
@@ -209,7 +217,12 @@ it('tells an administrator no top-up of theirs earns a rebate', async () => {
     makeSelfData({
       member_level: EXTERNAL,
       rebate_available: false,
-      summary: { total_quota: 0, reversed_quota: 0, rebate_count: 0 },
+      summary: {
+        total_quota: 0,
+        reversed_quota: 0,
+        rebate_count: 0,
+        frozen_quota: 0,
+      },
       page: { items: [], total: 0, page: 1, page_size: 20 },
     })
   )
@@ -223,7 +236,12 @@ it('reports a switched-off programme instead of the rate of an eligible member',
   renderCard(
     makeSelfData({
       rebate_enabled: false,
-      summary: { total_quota: 0, reversed_quota: 0, rebate_count: 0 },
+      summary: {
+        total_quota: 0,
+        reversed_quota: 0,
+        rebate_count: 0,
+        frozen_quota: 0,
+      },
       page: { items: [], total: 0, page: 1, page_size: 20 },
     })
   )
@@ -231,4 +249,70 @@ it('reports a switched-off programme instead of the rate of an eligible member',
   expect(
     await screen.findByText('Invite rebates are currently disabled.')
   ).toBeInTheDocument()
+})
+
+it('shows an unapproved internal member what is frozen instead of the rates', async () => {
+  renderCard(
+    makeSelfData({
+      rebate_review_status: 'pending',
+      summary: {
+        total_quota: 0,
+        reversed_quota: 0,
+        // 钱已经在账本里算出来了，只是没进余额。
+        rebate_count: 1,
+        frozen_quota: 500000,
+      },
+      page: {
+        items: [makeRebate({ status: 'frozen' })],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      },
+    })
+  )
+
+  // 冻结比比例更要紧，说明那一行要盖掉原来的口径介绍。
+  expect(
+    await screen.findByText(
+      'Rebates are credited once your review has passed. Until then they stay frozen.'
+    )
+  ).toBeInTheDocument()
+  // 累计返现只算已入账的，冻结的单独占一格。
+  expect(screen.getByText('Total Earned').nextElementSibling).toHaveTextContent(
+    '$0'
+  )
+  expect(screen.getByText('Frozen').nextElementSibling).toHaveTextContent('$1')
+})
+
+it('keeps the frozen stat out of the way once the review has passed', async () => {
+  renderCard(makeSelfData())
+
+  expect(await screen.findByText('Internal Member')).toBeInTheDocument()
+  expect(screen.queryByText('Frozen')).toBeNull()
+})
+
+it('lets an unapproved member open the ledger to see the frozen row', async () => {
+  const user = userEvent.setup()
+  renderCard(
+    makeSelfData({
+      rebate_review_status: 'rejected',
+      summary: {
+        total_quota: 0,
+        reversed_quota: 0,
+        rebate_count: 1,
+        frozen_quota: 500000,
+      },
+      page: {
+        items: [makeRebate({ status: 'frozen' })],
+        total: 1,
+        page: 1,
+        page_size: 20,
+      },
+    })
+  )
+
+  // 未通过和未审核对钱的效果一样，明细入口照样要有——否则学员看不到这笔钱。
+  await user.click(await screen.findByRole('button', { name: 'Details' }))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('Frozen')).toBeInTheDocument()
 })

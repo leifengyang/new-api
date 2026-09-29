@@ -824,6 +824,13 @@ export const STATIC_I18N_KEYS = [
   'External',
   'Credited',
   'Not Credited',
+  // 返现审核：冻结是账本状态，未审核 / 已通过 / 暂不通过是会员的审核状态，两组都由
+  // 常量里的 labelKey 给出，抓不到源码里的 t('...')。
+  'Frozen',
+  'Reversed',
+  'Pending Review',
+  'Approved',
+  'Not Approved',
   'The inviter already holds the maximum balance, so this rebate could not be credited',
   'Epay',
   'Stripe',
