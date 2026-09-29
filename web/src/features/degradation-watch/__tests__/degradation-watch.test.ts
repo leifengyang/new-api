@@ -24,12 +24,10 @@ import {
   buildArtworkSrcDoc,
   extractArtworkHtml,
 } from '../lib/artwork'
-import { mergeRecords } from '../lib/records'
 import {
   parseChatCompletionStream,
   resolveChatCompletionsUrl,
 } from '../lib/self-test'
-import type { DegradationWatchRecord } from '../types'
 
 const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${ARTWORK_CSP}">`
 
@@ -106,14 +104,6 @@ describe('parseChatCompletionStream', () => {
         completion_tokens_details: { reasoning_tokens: 30 },
       },
     })
-  })
-})
-
-describe('mergeRecords', () => {
-  it('drops older-page records that the refreshed head already contains', () => {
-    const record = (id: number) => ({ id }) as DegradationWatchRecord
-    const merged = mergeRecords([record(9), record(8)], [record(8), record(7)])
-    expect(merged.map((item) => item.id)).toEqual([9, 8, 7])
   })
 })
 

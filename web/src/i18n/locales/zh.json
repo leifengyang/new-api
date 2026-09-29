@@ -7121,6 +7121,24 @@
     "Rebate review updated": "返现审核已更新",
     "Approved {{count}} users and released {{released}} rebates": "已通过 {{count}} 位用户的返现审核，放行 {{released}} 笔返现",
     "Approved the rebate review for {{count}} users": "已通过 {{count}} 位用户的返现审核",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "返现需审核通过后到账，当前处于冻结状态。"
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "返现需审核通过后到账，当前处于冻结状态。",
+    "Applies to each drawing request on its own": "对每一次绘图请求单独计时",
+    "Attempts kept per channel and model": "每个渠道每个模型保留的次数",
+    "Avg time": "平均耗时",
+    "Concurrent requests": "并发请求数",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "每个启用的模型会在其分组内所有提供该模型的渠道上检测。这里的顺序就是检测墙上的列顺序。",
+    "Each model can only be listed once": "每个模型只能出现一次",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "每 {{minutes}} 分钟，下列每个模型都会在每个渠道上收到同一个提示词：用 HTML + SVG 动画画一只骑自行车的鹈鹕。每一列是一个模型，每一行是一轮，某个渠道画得明显更差时一眼就能看出来。",
+    "Models to test": "检测模型",
+    "Move down": "下移",
+    "Move up": "上移",
+    "No channels in the groups of the configured models": "所配置模型的分组中没有渠道",
+    "No configured model can run": "没有可运行的已配置模型",
+    "No models configured yet": "还没有配置模型",
+    "Paused": "已暂停",
+    "Removed from config": "已从配置移除",
+    "Request timeout (seconds)": "单次请求超时（秒）",
+    "Run {{model}} on this channel now": "立即在此渠道运行 {{model}}",
+    "Shared by all models and channels in a round": "一轮中所有模型和渠道共用"
   }
 }

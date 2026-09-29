@@ -22,25 +22,18 @@ import type {
   ApiResponse,
   DegradationWatchChannels,
   DegradationWatchPrompt,
-  DegradationWatchRecord,
   DegradationWatchRunResult,
+  DegradationWatchRunScope,
   DegradationWatchWall,
 } from './types'
 
-export async function getDegradationWatchWall(): Promise<
-  ApiResponse<DegradationWatchWall>
-> {
-  const res = await api.get('/api/degradation_watch/wall')
-  return res.data
-}
-
-/** Older attempts of the same channel as `beforeId`, newest first. */
-export async function getDegradationWatchRecords(
-  beforeId: number,
-  limit: number
-): Promise<ApiResponse<DegradationWatchRecord[]>> {
-  const res = await api.get('/api/degradation_watch/records', {
-    params: { before: beforeId, limit },
+/** One page of rounds, newest first; `before` is the previous page's `next_before`. */
+export async function getDegradationWatchWall(params: {
+  before?: number
+  rounds?: number
+}): Promise<ApiResponse<DegradationWatchWall>> {
+  const res = await api.get('/api/degradation_watch/wall', {
+    params: { before: params.before ?? 0, rounds: params.rounds },
   })
   return res.data
 }
@@ -76,13 +69,13 @@ export async function getDegradationWatchChannels(): Promise<
   return res.data
 }
 
-/** Queues one run; `channelId` limits it to a single channel. */
+/** Queues one run, optionally limited to one target and one channel. */
 export async function runDegradationWatch(
-  channelId?: number
+  scope: DegradationWatchRunScope
 ): Promise<ApiResponse<DegradationWatchRunResult>> {
   const res = await api.post(
     '/api/degradation_watch/run',
-    { channel_id: channelId ?? 0 },
+    { channel_id: scope.channelId ?? 0, model: scope.model ?? '' },
     { validateStatus: (status) => status < 300 || status === 409 }
   )
   return res.data

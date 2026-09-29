@@ -240,6 +240,19 @@ func UpdateOption(c *gin.Context) {
 				operation_setting.MinDegradationWatchRetentionPerChan, operation_setting.MaxDegradationWatchRetentionPerChan))
 			return
 		}
+	case operation_setting.DegradationWatchTargetsKey:
+		// 与别名一样，坏 JSON 会被配置加载器静默跳过，必须在保存时拦下。
+		if err := operation_setting.ValidateDegradationWatchTargets(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+	case operation_setting.DegradationWatchConcurrencyKey:
+		value, err := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		if err != nil || !operation_setting.IsValidDegradationWatchConcurrency(value) {
+			common.ApiErrorMsg(c, fmt.Sprintf("并发数需为 %d 到 %d 之间的整数",
+				operation_setting.MinDegradationWatchConcurrency, operation_setting.MaxDegradationWatchConcurrency))
+			return
+		}
 	case operation_setting.DegradationWatchPromptKey:
 		if len([]rune(option.Value.(string))) > operation_setting.MaxDegradationWatchPromptLength {
 			common.ApiErrorMsg(c, fmt.Sprintf("提示词不能超过 %d 个字符", operation_setting.MaxDegradationWatchPromptLength))

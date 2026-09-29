@@ -53,11 +53,14 @@ var degradationWatchReasonCodes = []string{
 }
 
 const (
-	// degradationWatchConcurrency 限制同时在画的渠道数。每个请求都要跑一两分钟，
-	// 串行会让一批渠道挤不进单次运行的时限。
-	degradationWatchConcurrency = 4
-	degradationWatchDefaultPage = 12
-	degradationWatchMaxPage     = 60
+	// 检测墙一页的轮数。
+	degradationWatchDefaultRounds = 10
+	degradationWatchMaxRounds     = 30
+	// degradationWatchScanBatch 是凑轮次时每次从库里取的记录数。
+	degradationWatchScanBatch = 200
+	// degradationWatchLegacyRoundGap：没有 run_id 的旧记录，相邻两条相隔超过
+	// 这个秒数就算两轮。旧版一轮只跑一个模型，整轮默认 10 分钟超时。
+	degradationWatchLegacyRoundGap = 10 * 60
 )
 
 // degradationWatchHandler 按后台配置的间隔调度一轮降智检测。
@@ -70,16 +73,16 @@ func (degradationWatchHandler) Enabled() bool {
 }
 
 func (degradationWatchHandler) Interval() time.Duration {
-	_, _, _, intervalMinutes, _, _ := operation_setting.ResolveDegradationWatchParams()
-	return time.Duration(intervalMinutes) * time.Minute
+	return time.Duration(operation_setting.ResolveDegradationWatchParams().IntervalMinutes) * time.Minute
 }
 
 func (degradationWatchHandler) NewPayload() any { return nil }
 
-// degradationWatchTaskPayload 为空表示整组检测；ChannelId > 0 是后台「立即检测
-// 一次」只测这一个渠道。
+// degradationWatchTaskPayload 为空表示检测所有启用的目标。后台「立即检测」可以
+// 用 Model 只测一个目标（停用的也可以），用 ChannelId 只测一个渠道。
 type degradationWatchTaskPayload struct {
-	ChannelId int `json:"channel_id,omitempty"`
+	ChannelId int    `json:"channel_id,omitempty"`
+	Model     string `json:"model,omitempty"`
 }
 
 type degradationWatchSummary struct {
@@ -95,7 +98,7 @@ func (degradationWatchHandler) Run(ctx context.Context, task *model.SystemTask, 
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runDegradationWatchTask(ctx, payload.ChannelId, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runDegradationWatchTask(ctx, task.TaskID, payload, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -116,9 +119,38 @@ func isDegradationWatchCandidate(channel *model.Channel, group string, modelName
 	})
 }
 
-func runDegradationWatchTask(ctx context.Context, onlyChannelId int, report func(processed, total int)) (degradationWatchSummary, error) {
+// degradationWatchJob 是一轮里的一次作答：一个目标在一个渠道上画一次。
+type degradationWatchJob struct {
+	channel *model.Channel
+	target  operation_setting.DegradationWatchTarget
+}
+
+// selectDegradationWatchJobs 按目标顺序展开这一轮要跑的作答。指定了模型时只跑
+// 这个目标（停用的也跑，是管理员手动点的）；没指定时只跑启用的目标。
+func selectDegradationWatchJobs(channels []*model.Channel, targets []operation_setting.DegradationWatchTarget, payload degradationWatchTaskPayload) []degradationWatchJob {
+	jobs := make([]degradationWatchJob, 0)
+	for _, target := range targets {
+		if payload.Model != "" && target.Model != payload.Model {
+			continue
+		}
+		if payload.Model == "" && !target.Enabled {
+			continue
+		}
+		for _, channel := range channels {
+			if payload.ChannelId > 0 && channel.Id != payload.ChannelId {
+				continue
+			}
+			if isDegradationWatchCandidate(channel, target.Group, target.Model) {
+				jobs = append(jobs, degradationWatchJob{channel: channel, target: target})
+			}
+		}
+	}
+	return jobs
+}
+
+func runDegradationWatchTask(ctx context.Context, runId string, payload degradationWatchTaskPayload, report func(processed, total int)) (degradationWatchSummary, error) {
 	summary := degradationWatchSummary{}
-	group, modelName, effort, _, timeoutSeconds, retention := operation_setting.ResolveDegradationWatchParams()
+	params := operation_setting.ResolveDegradationWatchParams()
 	prompt := operation_setting.GetDegradationWatchPrompt()
 
 	testUserID, err := resolveChannelTestUserID(nil)
@@ -129,44 +161,41 @@ func runDegradationWatchTask(ctx context.Context, onlyChannelId int, report func
 	if err != nil {
 		return summary, err
 	}
-	selected := make([]*model.Channel, 0)
-	for _, channel := range channels {
-		if onlyChannelId > 0 && channel.Id != onlyChannelId {
-			continue
-		}
-		if isDegradationWatchCandidate(channel, group, modelName) {
-			selected = append(selected, channel)
-		}
+	jobs := selectDegradationWatchJobs(channels, operation_setting.ResolveDegradationWatchTargets(), payload)
+	if (payload.ChannelId > 0 || payload.Model != "") && len(jobs) == 0 {
+		return summary, fmt.Errorf("no eligible channel for model %q, channel %d: check the target, its group and the channel's models", payload.Model, payload.ChannelId)
 	}
-	if onlyChannelId > 0 && len(selected) == 0 {
-		return summary, fmt.Errorf("channel %d is not enabled, not in group %s, or does not serve model %s", onlyChannelId, group, modelName)
-	}
-
-	batchCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
-	defer cancel()
 
 	var (
 		mu        sync.Mutex
 		wg        sync.WaitGroup
 		processed int
 	)
-	sem := make(chan struct{}, degradationWatchConcurrency)
+	sem := make(chan struct{}, params.Concurrency)
 	if report != nil {
-		report(0, len(selected))
+		report(0, len(jobs))
 	}
-	for _, channel := range selected {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(channel *model.Channel) {
-			defer wg.Done()
+	for _, job := range jobs {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Go(func() {
 			defer func() { <-sem }()
-			record := drawDegradationWatch(batchCtx, channel, testUserID, modelName, effort, prompt)
-			// 父 ctx 被取消说明租约丢了，这一轮不作数；只有撞上本轮时限才记成超时失败。
+			// 超时按单次请求计：排在后面的请求不该因为前面的请求慢而被判失败。
+			requestCtx, cancel := context.WithTimeout(ctx, time.Duration(params.TimeoutSeconds)*time.Second)
+			defer cancel()
+			record := drawDegradationWatch(requestCtx, job.channel, testUserID, job.target.Model, job.target.ReasoningEffort, prompt)
+			// 父 ctx 被取消说明租约丢了，这一轮不作数；只有撞上单次时限才记成超时失败。
 			if ctx.Err() != nil {
 				return
 			}
+			record.RunId = runId
 			if err := model.CreateDegradationWatchRecord(record); err != nil {
-				common.SysError(fmt.Sprintf("degradation watch: failed to save record for channel %d: %v", channel.Id, err))
+				common.SysError(fmt.Sprintf("degradation watch: failed to save record for channel %d model %s: %v", job.channel.Id, job.target.Model, err))
 			}
 			mu.Lock()
 			defer mu.Unlock()
@@ -178,19 +207,19 @@ func runDegradationWatchTask(ctx context.Context, onlyChannelId int, report func
 			}
 			processed++
 			if report != nil {
-				report(processed, len(selected))
+				report(processed, len(jobs))
 			}
-		}(channel)
+		})
 	}
 	wg.Wait()
 
-	// 裁剪覆盖表里出现过的所有渠道：移出分组的渠道也不能无限留着旧作品。
-	recorded, err := model.GetDegradationWatchRecordedChannelIds()
+	// 裁剪覆盖表里出现过的所有「渠道 + 模型」：移出配置的也不能无限留着旧作品。
+	series, err := model.GetDegradationWatchRecordedSeries()
 	if err != nil {
 		return summary, err
 	}
-	for _, channelId := range recorded {
-		pruned, err := model.PruneDegradationWatchRecords(channelId, retention)
+	for _, item := range series {
+		pruned, err := model.PruneDegradationWatchRecords(item, params.Retention)
 		if err != nil {
 			return summary, err
 		}
@@ -433,9 +462,14 @@ func isDegradationWatchAdmin(c *gin.Context) bool {
 }
 
 type degradationWatchRecordItem struct {
-	Id               int    `json:"id"`
-	ModelName        string `json:"model_name"`
-	ReasoningEffort  string `json:"reasoning_effort"`
+	Id              int    `json:"id"`
+	ModelName       string `json:"model_name"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	// ChannelTitle 对普通用户是别名；管理员看没配别名的渠道时是渠道名。
+	ChannelTitle string `json:"channel_title"`
+	Aliased      bool   `json:"aliased"`
+	// ChannelId 只回给管理员。
+	ChannelId        int    `json:"channel_id,omitempty"`
 	Success          bool   `json:"success"`
 	FailureReason    string `json:"failure_reason"`
 	ElapsedMs        int64  `json:"elapsed_ms"`
@@ -446,15 +480,18 @@ type degradationWatchRecordItem struct {
 	CreatedAt        int64  `json:"created_at"`
 }
 
-func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bool) degradationWatchRecordItem {
+func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bool, aliases map[string]string) degradationWatchRecordItem {
 	reason := record.FailureReason
 	if !admin && reason != "" && !slices.Contains(degradationWatchReasonCodes, reason) {
 		reason = degradationWatchReasonUpstream
 	}
-	return degradationWatchRecordItem{
+	alias, aliased := aliases[strconv.Itoa(record.ChannelId)]
+	item := degradationWatchRecordItem{
 		Id:               record.Id,
 		ModelName:        record.ModelName,
 		ReasoningEffort:  record.ReasoningEffort,
+		ChannelTitle:     alias,
+		Aliased:          aliased,
 		Success:          record.Success,
 		FailureReason:    reason,
 		ElapsedMs:        record.ElapsedMs,
@@ -464,140 +501,231 @@ func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bo
 		Hidden:           record.Hidden,
 		CreatedAt:        record.CreatedAt,
 	}
+	if admin {
+		item.ChannelId = record.ChannelId
+		if !aliased {
+			item.ChannelTitle = fmt.Sprintf("#%d", record.ChannelId)
+			if channel, err := model.CacheGetChannel(record.ChannelId); err == nil && channel != nil && channel.Name != "" {
+				item.ChannelTitle = channel.Name
+			}
+		}
+	}
+	return item
 }
 
-type degradationWatchSection struct {
-	// Title 对普通用户是后台配的别名；管理员看没配别名的渠道时是渠道名。
-	Title string `json:"title"`
-	// ChannelId / ChannelName / Aliased 只回给管理员。
-	ChannelId   int    `json:"channel_id,omitempty"`
-	ChannelName string `json:"channel_name,omitempty"`
-	Aliased     bool   `json:"aliased"`
+// degradationWatchRound 是检测墙的一行：同一轮里所有模型、所有渠道的作答。
+type degradationWatchRound struct {
+	// Key 在刷新之间保持不变：有 run_id 用 run_id，旧记录用这一轮最早那条的 id。
+	Key       string                       `json:"key"`
+	StartedAt int64                        `json:"started_at"`
+	Records   []degradationWatchRecordItem `json:"records"`
 
-	Total        int64                        `json:"total"`
-	Succeeded    int64                        `json:"succeeded"`
-	Visible      int64                        `json:"visible"`
-	LastRecordAt int64                        `json:"last_record_at"`
-	Records      []degradationWatchRecordItem `json:"records"`
+	records []*model.DegradationWatchRecord
+	minId   int
 }
 
-// canViewDegradationWatchChannel：普通用户只能看配了别名的渠道。
-func canViewDegradationWatchChannel(c *gin.Context, channelId int) bool {
-	if isDegradationWatchAdmin(c) {
+// groupDegradationWatchRounds 把按 id 倒序的记录切成轮次。同一时间只会有一轮
+// 在跑，同一轮的记录 id 是连续的，所以只需比较相邻两条：run_id 不同就换轮；
+// 都没有 run_id 的旧记录，相隔太久或同一「渠道 + 模型」又出现一次也换轮。
+func groupDegradationWatchRounds(records []*model.DegradationWatchRecord) []*degradationWatchRound {
+	rounds := make([]*degradationWatchRound, 0)
+	var current *degradationWatchRound
+	var previous *model.DegradationWatchRecord
+	seen := map[model.DegradationWatchSeries]bool{}
+	for _, record := range records {
+		series := model.DegradationWatchSeries{ChannelId: record.ChannelId, ModelName: record.ModelName}
+		sameRound := current != nil && previous.RunId == record.RunId
+		if sameRound && record.RunId == "" {
+			sameRound = previous.CreatedAt-record.CreatedAt <= degradationWatchLegacyRoundGap && !seen[series]
+		}
+		if !sameRound {
+			current = &degradationWatchRound{Key: record.RunId}
+			rounds = append(rounds, current)
+			seen = map[model.DegradationWatchSeries]bool{}
+		}
+		seen[series] = true
+		current.records = append(current.records, record)
+		current.minId = record.Id
+		current.StartedAt = record.CreatedAt
+		if record.RunId == "" {
+			current.Key = fmt.Sprintf("legacy-%d", record.Id)
+		}
+		previous = record
+	}
+	return rounds
+}
+
+type degradationWatchLane struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	Enabled         bool   `json:"enabled"`
+	// Configured 为 false 的泳道是已经移出配置的模型，只有管理员看得到。
+	Configured   bool  `json:"configured"`
+	Total        int64 `json:"total"`
+	Succeeded    int64 `json:"succeeded"`
+	Visible      int64 `json:"visible"`
+	AvgElapsedMs int64 `json:"avg_elapsed_ms"`
+	LastRecordAt int64 `json:"last_record_at"`
+}
+
+// degradationWatchVisibility 是当前用户能看到的范围：普通用户只看配了别名的
+// 渠道、仍在配置里的模型、没被隐藏的作品；管理员不受限。
+type degradationWatchVisibility struct {
+	admin   bool
+	aliases map[string]string
+	targets []operation_setting.DegradationWatchTarget
+}
+
+func newDegradationWatchVisibility(c *gin.Context) degradationWatchVisibility {
+	return degradationWatchVisibility{
+		admin:   isDegradationWatchAdmin(c),
+		aliases: operation_setting.GetDegradationWatchChannelAliases(),
+		targets: operation_setting.ResolveDegradationWatchTargets(),
+	}
+}
+
+func (v degradationWatchVisibility) filter() model.DegradationWatchRecordFilter {
+	if v.admin {
+		return model.DegradationWatchRecordFilter{IncludeHidden: true}
+	}
+	filter := model.DegradationWatchRecordFilter{ChannelIds: []int{}, ModelNames: []string{}}
+	for id := range v.aliases {
+		if channelId, err := strconv.Atoi(id); err == nil && channelId > 0 {
+			filter.ChannelIds = append(filter.ChannelIds, channelId)
+		}
+	}
+	for _, target := range v.targets {
+		filter.ModelNames = append(filter.ModelNames, target.Model)
+	}
+	return filter
+}
+
+func (v degradationWatchVisibility) canView(record *model.DegradationWatchRecord) bool {
+	if v.admin {
 		return true
 	}
-	_, ok := operation_setting.GetDegradationWatchChannelAliases()[strconv.Itoa(channelId)]
-	return ok
-}
-
-func parseDegradationWatchLimit(c *gin.Context) int {
-	limit, err := strconv.Atoi(c.Query("limit"))
-	if err != nil || limit <= 0 {
-		return degradationWatchDefaultPage
+	if _, ok := v.aliases[strconv.Itoa(record.ChannelId)]; !ok || record.Hidden {
+		return false
 	}
-	return min(limit, degradationWatchMaxPage)
+	return slices.ContainsFunc(v.targets, func(target operation_setting.DegradationWatchTarget) bool {
+		return target.Model == record.ModelName
+	})
 }
 
-// GetDegradationWatchWall 返回检测墙：每个可见渠道一节，带统计和最新一页记录。
+// buildDegradationWatchLanes 按配置顺序列出泳道；管理员额外看到表里还有记录、
+// 但已经移出配置的模型，排在最后。
+func buildDegradationWatchLanes(v degradationWatchVisibility) ([]degradationWatchLane, error) {
+	stats, err := model.GetDegradationWatchModelStats(v.filter().ChannelIds)
+	if err != nil {
+		return nil, err
+	}
+	lanes := make([]degradationWatchLane, 0, len(v.targets))
+	for _, target := range v.targets {
+		lanes = append(lanes, degradationWatchLane{
+			Model:           target.Model,
+			ReasoningEffort: target.ReasoningEffort,
+			Enabled:         target.Enabled,
+			Configured:      true,
+		})
+	}
+	if v.admin {
+		extra := make([]string, 0)
+		for modelName := range stats {
+			if !slices.ContainsFunc(v.targets, func(target operation_setting.DegradationWatchTarget) bool {
+				return target.Model == modelName
+			}) {
+				extra = append(extra, modelName)
+			}
+		}
+		slices.Sort(extra)
+		for _, modelName := range extra {
+			lanes = append(lanes, degradationWatchLane{Model: modelName})
+		}
+	}
+	for i := range lanes {
+		stat := stats[lanes[i].Model]
+		if stat == nil {
+			continue
+		}
+		lanes[i].Total = stat.Total
+		lanes[i].Succeeded = stat.Succeeded
+		lanes[i].Visible = stat.Visible
+		lanes[i].LastRecordAt = stat.LastRecordAt
+		if stat.Succeeded > 0 {
+			lanes[i].AvgElapsedMs = stat.SucceededElapsed / stat.Succeeded
+		}
+	}
+	return lanes, nil
+}
+
+// listDegradationWatchRounds 取 before 之前的 limit 轮，返回下一页的游标（0 表示
+// 没有更多）。按批扫描，直到多凑出一轮：多出来的那一轮可能只取到一半，丢掉，
+// 下一页从它开始，保证每一轮都完整。
+func listDegradationWatchRounds(filter model.DegradationWatchRecordFilter, beforeId int, limit int) ([]*degradationWatchRound, int, error) {
+	records := make([]*model.DegradationWatchRecord, 0)
+	cursor := beforeId
+	for {
+		page, err := model.ListDegradationWatchRecordsBefore(filter, cursor, degradationWatchScanBatch)
+		if err != nil {
+			return nil, 0, err
+		}
+		records = append(records, page...)
+		rounds := groupDegradationWatchRounds(records)
+		if len(rounds) > limit {
+			return rounds[:limit], rounds[limit-1].minId, nil
+		}
+		if len(page) < degradationWatchScanBatch {
+			return rounds, 0, nil
+		}
+		cursor = page[len(page)-1].Id
+	}
+}
+
+func parseDegradationWatchRounds(c *gin.Context) int {
+	rounds, err := strconv.Atoi(c.Query("rounds"))
+	if err != nil || rounds <= 0 {
+		return degradationWatchDefaultRounds
+	}
+	return min(rounds, degradationWatchMaxRounds)
+}
+
+// GetDegradationWatchWall 返回检测墙的一页轮次。before 是上一页返回的
+// next_before，普通用户全程拿不到渠道 id。泳道只在第一页返回。
 func GetDegradationWatchWall(c *gin.Context) {
-	admin := isDegradationWatchAdmin(c)
-	limit := parseDegradationWatchLimit(c)
-	aliases := operation_setting.GetDegradationWatchChannelAliases()
+	visibility := newDegradationWatchVisibility(c)
+	beforeId, _ := strconv.Atoi(c.Query("before"))
+	beforeId = max(beforeId, 0)
 
-	channelIds := make([]int, 0, len(aliases))
-	if admin {
-		recorded, err := model.GetDegradationWatchRecordedChannelIds()
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		channelIds = append(channelIds, recorded...)
-	}
-	for id := range aliases {
-		if channelId, err := strconv.Atoi(id); err == nil && channelId > 0 {
-			channelIds = append(channelIds, channelId)
-		}
-	}
-	slices.Sort(channelIds)
-	channelIds = slices.Compact(channelIds)
-
-	stats, err := model.GetDegradationWatchChannelStats(channelIds)
+	rounds, nextBefore, err := listDegradationWatchRounds(visibility.filter(), beforeId, parseDegradationWatchRounds(c))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	sections := make([]degradationWatchSection, 0, len(channelIds))
-	for _, channelId := range channelIds {
-		alias, aliased := aliases[strconv.Itoa(channelId)]
-		section := degradationWatchSection{Title: alias, Aliased: aliased}
-		if admin {
-			section.ChannelId = channelId
-			if channel, err := model.CacheGetChannel(channelId); err == nil && channel != nil {
-				section.ChannelName = channel.Name
-			}
-			if !aliased {
-				section.Title = section.ChannelName
-				if section.Title == "" {
-					section.Title = fmt.Sprintf("#%d", channelId)
-				}
-			}
+	for _, round := range rounds {
+		round.Records = make([]degradationWatchRecordItem, 0, len(round.records))
+		for _, record := range round.records {
+			round.Records = append(round.Records, toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases))
 		}
-		if stat := stats[channelId]; stat != nil {
-			section.Total = stat.Total
-			section.Succeeded = stat.Succeeded
-			section.Visible = stat.Visible
-			section.LastRecordAt = stat.LastRecordAt
-		}
-		records, err := model.ListDegradationWatchRecords(channelId, 0, limit, admin)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		section.Records = make([]degradationWatchRecordItem, 0, len(records))
-		for _, record := range records {
-			section.Records = append(section.Records, toDegradationWatchRecordItem(record, admin))
-		}
-		sections = append(sections, section)
+		slices.SortStableFunc(round.Records, func(a, b degradationWatchRecordItem) int {
+			return cmp.Compare(a.ChannelTitle, b.ChannelTitle)
+		})
 	}
-	// 最近有新作品的渠道排前面。
-	slices.SortStableFunc(sections, func(a, b degradationWatchSection) int {
-		return cmp.Compare(b.LastRecordAt, a.LastRecordAt)
-	})
 
-	_, modelName, effort, intervalMinutes, _, _ := operation_setting.ResolveDegradationWatchParams()
-	common.ApiSuccess(c, gin.H{
+	response := gin.H{
 		"enabled":          operation_setting.GetDegradationWatchSetting().Enabled,
-		"model":            modelName,
-		"reasoning_effort": effort,
-		"interval_minutes": intervalMinutes,
-		"sections":         sections,
-	})
-}
-
-// GetDegradationWatchRecords 是「查看更多」：返回与 before 同一渠道、比它更早的记录。
-// 用记录 id 当游标，普通用户全程拿不到渠道 id。
-func GetDegradationWatchRecords(c *gin.Context) {
-	beforeId, err := strconv.Atoi(c.Query("before"))
-	if err != nil || beforeId <= 0 {
-		common.ApiErrorMsg(c, "invalid before")
-		return
+		"interval_minutes": operation_setting.ResolveDegradationWatchParams().IntervalMinutes,
+		"rounds":           rounds,
+		"next_before":      nextBefore,
 	}
-	anchor, err := model.GetDegradationWatchRecordMeta(beforeId)
-	if err != nil || !canViewDegradationWatchChannel(c, anchor.ChannelId) {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "record not found"})
-		return
+	if beforeId == 0 {
+		lanes, err := buildDegradationWatchLanes(visibility)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		response["lanes"] = lanes
 	}
-	admin := isDegradationWatchAdmin(c)
-	records, err := model.ListDegradationWatchRecords(anchor.ChannelId, beforeId, parseDegradationWatchLimit(c), admin)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	items := make([]degradationWatchRecordItem, 0, len(records))
-	for _, record := range records {
-		items = append(items, toDegradationWatchRecordItem(record, admin))
-	}
-	common.ApiSuccess(c, items)
+	common.ApiSuccess(c, response)
 }
 
 // GetDegradationWatchRecordHtml 返回作品源码。前端只把它塞进
@@ -610,7 +738,7 @@ func GetDegradationWatchRecordHtml(c *gin.Context) {
 		return
 	}
 	meta, err := model.GetDegradationWatchRecordMeta(id)
-	if err != nil || !canViewDegradationWatchChannel(c, meta.ChannelId) || (meta.Hidden && !isDegradationWatchAdmin(c)) {
+	if err != nil || !newDegradationWatchVisibility(c).canView(meta) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "record not found"})
 		return
 	}
@@ -622,14 +750,23 @@ func GetDegradationWatchRecordHtml(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"html": html})
 }
 
+type degradationWatchPromptTarget struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort"`
+}
+
 // GetDegradationWatchPrompt 给「自测」用：提示词固定为后台这份，保证自测结果
-// 和检测墙可比。
+// 和检测墙可比；模型下拉框的选项是启用中的目标。
 func GetDegradationWatchPrompt(c *gin.Context) {
-	_, modelName, effort, _, _, _ := operation_setting.ResolveDegradationWatchParams()
+	targets := make([]degradationWatchPromptTarget, 0)
+	for _, target := range operation_setting.ResolveDegradationWatchTargets() {
+		if target.Enabled {
+			targets = append(targets, degradationWatchPromptTarget{Model: target.Model, ReasoningEffort: target.ReasoningEffort})
+		}
+	}
 	common.ApiSuccess(c, gin.H{
-		"prompt":           operation_setting.GetDegradationWatchPrompt(),
-		"model":            modelName,
-		"reasoning_effort": effort,
+		"prompt":  operation_setting.GetDegradationWatchPrompt(),
+		"targets": targets,
 	})
 }
 
@@ -660,29 +797,32 @@ func SetDegradationWatchRecordHidden(c *gin.Context) {
 }
 
 type degradationWatchChannelItem struct {
-	Id        int    `json:"id"`
-	Name      string `json:"name"`
-	Status    int    `json:"status"`
-	HasModel  bool   `json:"has_model"`
-	Eligible  bool   `json:"eligible"`
-	Alias     string `json:"alias"`
-	LastRunAt int64  `json:"last_record_at"`
+	Id     int    `json:"id"`
+	Name   string `json:"name"`
+	Status int    `json:"status"`
+	Alias  string `json:"alias"`
+	// Models 是这个渠道能跑的目标模型（分组与模型都匹配、渠道启用）。
+	Models    []string `json:"models"`
+	LastRunAt int64    `json:"last_record_at"`
 }
 
-// GetDegradationWatchChannels 列出检测分组里的所有渠道，给后台填别名用。
+// GetDegradationWatchChannels 列出所有目标分组里的渠道，给后台填别名、单测用。
+// 别名是全局的，同一个渠道在所有目标之间共用。
 func GetDegradationWatchChannels(c *gin.Context) {
-	group, modelName, _, _, _, _ := operation_setting.ResolveDegradationWatchParams()
+	targets := operation_setting.ResolveDegradationWatchTargets()
 	channels, err := model.GetAllChannels(0, 0, true, true)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	aliases := operation_setting.GetDegradationWatchChannelAliases()
-	inGroup := make([]*model.Channel, 0)
+	matched := make([]*model.Channel, 0)
 	ids := make([]int, 0)
 	for _, channel := range channels {
-		if slices.Contains(channel.GetGroups(), group) {
-			inGroup = append(inGroup, channel)
+		if slices.ContainsFunc(targets, func(target operation_setting.DegradationWatchTarget) bool {
+			return slices.Contains(channel.GetGroups(), target.Group)
+		}) {
+			matched = append(matched, channel)
 			ids = append(ids, channel.Id)
 		}
 	}
@@ -691,17 +831,19 @@ func GetDegradationWatchChannels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	items := make([]degradationWatchChannelItem, 0, len(inGroup))
-	for _, channel := range inGroup {
+	items := make([]degradationWatchChannelItem, 0, len(matched))
+	for _, channel := range matched {
 		item := degradationWatchChannelItem{
 			Id:     channel.Id,
 			Name:   channel.Name,
 			Status: channel.Status,
-			HasModel: slices.ContainsFunc(channel.GetModels(), func(m string) bool {
-				return strings.TrimSpace(m) == modelName
-			}),
-			Eligible: isDegradationWatchCandidate(channel, group, modelName),
-			Alias:    aliases[strconv.Itoa(channel.Id)],
+			Alias:  aliases[strconv.Itoa(channel.Id)],
+			Models: make([]string, 0),
+		}
+		for _, target := range targets {
+			if isDegradationWatchCandidate(channel, target.Group, target.Model) {
+				item.Models = append(item.Models, target.Model)
+			}
 		}
 		if stat := stats[channel.Id]; stat != nil {
 			item.LastRunAt = stat.LastRecordAt
@@ -709,25 +851,26 @@ func GetDegradationWatchChannels(c *gin.Context) {
 		items = append(items, item)
 	}
 	common.ApiSuccess(c, gin.H{
-		"group":    group,
-		"model":    modelName,
+		"targets":  targets,
 		"channels": items,
 	})
 }
 
 type degradationWatchRunRequest struct {
-	ChannelId int `json:"channel_id"`
+	ChannelId int    `json:"channel_id"`
+	Model     string `json:"model"`
 }
 
-// RunDegradationWatch 手动触发一轮（或只测一个渠道）。已有一轮在跑时拒绝，
-// 免得管理员把正在跑的定时任务当成自己这次。
+// RunDegradationWatch 手动触发一轮：全部目标、单个目标，或单个目标的单个渠道。
+// 已有一轮在跑时拒绝，免得管理员把正在跑的定时任务当成自己这次。
 func RunDegradationWatch(c *gin.Context) {
 	var req degradationWatchRunRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorMsg(c, "invalid request body")
 		return
 	}
-	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeDegradationWatch, degradationWatchTaskPayload{ChannelId: req.ChannelId})
+	payload := degradationWatchTaskPayload{ChannelId: req.ChannelId, Model: strings.TrimSpace(req.Model)}
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeDegradationWatch, payload)
 	if err != nil {
 		common.ApiError(c, err)
 		return

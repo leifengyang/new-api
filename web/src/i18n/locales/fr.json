@@ -7121,6 +7121,24 @@
     "Rebate review updated": "Validation des commissions mise à jour",
     "Approved {{count}} users and released {{released}} rebates": "Commissions de {{count}} utilisateurs validées, {{released}} commissions versées",
     "Approved the rebate review for {{count}} users": "Commissions de {{count}} utilisateurs validées",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "Les commissions sont versées une fois votre validation acceptée. D'ici là, elles restent gelées."
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "Les commissions sont versées une fois votre validation acceptée. D'ici là, elles restent gelées.",
+    "Applies to each drawing request on its own": "S'applique à chaque requête de dessin séparément",
+    "Attempts kept per channel and model": "Tentatives conservées par canal et par modèle",
+    "Avg time": "Temps moyen",
+    "Concurrent requests": "Requêtes simultanées",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "Chaque modèle activé est testé sur tous les canaux de son groupe qui le proposent. L'ordre ici est l'ordre des colonnes du mur.",
+    "Each model can only be listed once": "Chaque modèle ne peut apparaître qu'une fois",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "Toutes les {{minutes}} minutes, chaque canal reçoit la même consigne pour chaque modèle ci-dessous : dessiner un pélican à vélo en animation HTML + SVG. Chaque colonne est un modèle et chaque ligne un tour, donc un dessin nettement moins bon sur un canal se remarque à côté des autres.",
+    "Models to test": "Modèles à tester",
+    "Move down": "Descendre",
+    "Move up": "Monter",
+    "No channels in the groups of the configured models": "Aucun canal dans les groupes des modèles configurés",
+    "No configured model can run": "Aucun modèle configuré ne peut s'exécuter",
+    "No models configured yet": "Aucun modèle configuré pour l'instant",
+    "Paused": "En pause",
+    "Removed from config": "Retiré de la configuration",
+    "Request timeout (seconds)": "Délai par requête (secondes)",
+    "Run {{model}} on this channel now": "Lancer {{model}} sur ce canal maintenant",
+    "Shared by all models and channels in a round": "Partagé par tous les modèles et canaux d'un tour"
   }
 }

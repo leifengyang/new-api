@@ -11,8 +11,11 @@ import (
 // 跑一遍，把画出来的 HTML、耗时和用量原样存下来。失败也落一条，失败本身就是
 // 要看的信号之一。这张表只做展示，不参与计费，也不写使用日志。
 type DegradationWatchRecord struct {
-	Id              int    `json:"id"`
-	ChannelId       int    `json:"channel_id" gorm:"index;not null"`
+	Id        int `json:"id"`
+	ChannelId int `json:"channel_id" gorm:"index;not null"`
+	// RunId 是这一轮系统任务的 TaskID，同一轮所有模型、所有渠道共用，检测墙
+	// 按它把作品对齐成一行。多模型之前的旧记录为空，按时间归轮。
+	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:''"`
 	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
 	ReasoningEffort string `json:"reasoning_effort" gorm:"type:varchar(32);not null;default:''"`
 	Success         bool   `json:"success" gorm:"not null;default:false"`
@@ -34,7 +37,7 @@ const maxDegradationWatchFailureReasonRunes = 500
 
 // degradationWatchListColumns 是列表查询要的列，刻意不含 html。
 var degradationWatchListColumns = []string{
-	"id", "channel_id", "model_name", "reasoning_effort", "success", "failure_reason",
+	"id", "channel_id", "run_id", "model_name", "reasoning_effort", "success", "failure_reason",
 	"elapsed_ms", "prompt_tokens", "completion_tokens", "reasoning_tokens", "hidden", "created_at",
 }
 
@@ -140,16 +143,102 @@ func GetDegradationWatchChannelStats(channelIds []int) (map[int]*DegradationWatc
 	return stats, nil
 }
 
-// PruneDegradationWatchRecords 只保留该渠道最新的 keep 条（隐藏的也算在内），
+// DegradationWatchModelStats 是一个模型（一条泳道）在保留窗口内的统计，口径
+// 同 DegradationWatchChannelStats。耗时只平均成功的作答：超时和秒失败会把
+// 平均值拉得没有意义。
+type DegradationWatchModelStats struct {
+	ModelName        string `json:"model_name"`
+	Total            int64  `json:"total"`
+	Succeeded        int64  `json:"succeeded"`
+	Visible          int64  `json:"visible"`
+	SucceededElapsed int64  `json:"-"`
+	LastRecordAt     int64  `json:"last_record_at"`
+}
+
+// GetDegradationWatchModelStats 按模型汇总。channelIds 非 nil 时只统计这些渠道
+// （普通用户只该看到配了别名的渠道），nil 表示全部。
+func GetDegradationWatchModelStats(channelIds []int) (map[string]*DegradationWatchModelStats, error) {
+	stats := make(map[string]*DegradationWatchModelStats)
+	if channelIds != nil && len(channelIds) == 0 {
+		return stats, nil
+	}
+	query := DB.Model(&DegradationWatchRecord{}).
+		Select("model_name, COUNT(*) AS total, "+
+			"SUM(CASE WHEN success = ? THEN 1 ELSE 0 END) AS succeeded, "+
+			"SUM(CASE WHEN hidden = ? THEN 1 ELSE 0 END) AS visible, "+
+			"SUM(CASE WHEN success = ? THEN elapsed_ms ELSE 0 END) AS succeeded_elapsed, "+
+			"MAX(created_at) AS last_record_at", true, false, true)
+	if channelIds != nil {
+		query = query.Where("channel_id IN ?", channelIds)
+	}
+	var rows []DegradationWatchModelStats
+	if err := query.Group("model_name").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		row := rows[i]
+		stats[row.ModelName] = &row
+	}
+	return stats, nil
+}
+
+// DegradationWatchRecordFilter 限定检测墙能看到的记录。nil 切片表示不限。
+type DegradationWatchRecordFilter struct {
+	ChannelIds    []int
+	ModelNames    []string
+	IncludeHidden bool
+}
+
+// ListDegradationWatchRecordsBefore 按 id 倒序返回一页记录（不含 html），跨渠道、
+// 跨模型，供检测墙按轮次分组。beforeId > 0 时只返回更早的记录。
+func ListDegradationWatchRecordsBefore(filter DegradationWatchRecordFilter, beforeId int, limit int) ([]*DegradationWatchRecord, error) {
+	var records []*DegradationWatchRecord
+	if (filter.ChannelIds != nil && len(filter.ChannelIds) == 0) || (filter.ModelNames != nil && len(filter.ModelNames) == 0) {
+		return records, nil
+	}
+	query := DB.Model(&DegradationWatchRecord{}).Select(degradationWatchListColumns)
+	if filter.ChannelIds != nil {
+		query = query.Where("channel_id IN ?", filter.ChannelIds)
+	}
+	if filter.ModelNames != nil {
+		query = query.Where("model_name IN ?", filter.ModelNames)
+	}
+	if !filter.IncludeHidden {
+		query = query.Where("hidden = ?", false)
+	}
+	if beforeId > 0 {
+		query = query.Where("id < ?", beforeId)
+	}
+	err := query.Order("id desc").Limit(limit).Find(&records).Error
+	return records, err
+}
+
+// DegradationWatchSeries 是一个「渠道 + 模型」组合，保留条数按它计。
+type DegradationWatchSeries struct {
+	ChannelId int    `json:"channel_id"`
+	ModelName string `json:"model_name"`
+}
+
+// GetDegradationWatchRecordedSeries 列出表里出现过的「渠道 + 模型」组合，用于
+// 裁剪，包括已经移出配置的模型和渠道。
+func GetDegradationWatchRecordedSeries() ([]DegradationWatchSeries, error) {
+	var series []DegradationWatchSeries
+	err := DB.Model(&DegradationWatchRecord{}).
+		Distinct("channel_id", "model_name").
+		Scan(&series).Error
+	return series, err
+}
+
+// PruneDegradationWatchRecords 只保留该「渠道 + 模型」最新的 keep 条（隐藏的也算在内），
 // 返回删掉的条数。先找出第 keep 新的那条的 id 再按 id 删，三种数据库都支持，
 // 不依赖 DELETE ... ORDER BY ... LIMIT 或子查询里引用同表。
-func PruneDegradationWatchRecords(channelId int, keep int) (int64, error) {
+func PruneDegradationWatchRecords(series DegradationWatchSeries, keep int) (int64, error) {
 	if keep < 1 {
 		return 0, errors.New("keep must be positive")
 	}
 	var boundary []int
 	err := DB.Model(&DegradationWatchRecord{}).
-		Where("channel_id = ?", channelId).
+		Where("channel_id = ? AND model_name = ?", series.ChannelId, series.ModelName).
 		Order("id desc").
 		Offset(keep-1).
 		Limit(1).
@@ -160,7 +249,8 @@ func PruneDegradationWatchRecords(channelId int, keep int) (int64, error) {
 	if len(boundary) == 0 {
 		return 0, nil
 	}
-	result := DB.Where("channel_id = ? AND id < ?", channelId, boundary[0]).Delete(&DegradationWatchRecord{})
+	result := DB.Where("channel_id = ? AND model_name = ? AND id < ?", series.ChannelId, series.ModelName, boundary[0]).
+		Delete(&DegradationWatchRecord{})
 	return result.RowsAffected, result.Error
 }
 
