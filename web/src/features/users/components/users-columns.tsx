@@ -41,6 +41,7 @@ import {
   USER_STATUSES,
   USER_ROLES,
   USER_MEMBER_LEVEL,
+  getRebateReviewStatus,
   getUserMemberLevel,
   isEnterpriseAccount,
   isUserDeleted,
@@ -49,6 +50,7 @@ import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 import { EnterpriseBadge } from './enterprise-badge'
 import { MemberLevelBadge } from './member-level-badge'
+import { RebateReviewBadge } from './rebate-review-badge'
 import { UserQuotaCell } from './user-quota-cell'
 
 export function useUsersColumns(): ColumnDef<User>[] {
@@ -290,6 +292,22 @@ export function useUsersColumns(): ColumnDef<User>[] {
           isEnterpriseAccount(row.original) ? (
             <BadgeCell>
               <EnterpriseBadge />
+            </BadgeCell>
+          ) : null,
+        enableSorting: false,
+        size: 120,
+        meta: { mobileHidden: true },
+      },
+      {
+        id: 'rebate_review_status',
+        header: t('Rebate Review'),
+        // 跟企业标记一样是服务端筛选（param 名同为 rebate_review_status），
+        // 所以不需要 filterFn。只给内部会员渲染：审核管的是他们的返现，
+        // 外部账号这一列留空。
+        cell: ({ row }) =>
+          getUserMemberLevel(row.original) === USER_MEMBER_LEVEL.INTERNAL ? (
+            <BadgeCell>
+              <RebateReviewBadge status={getRebateReviewStatus(row.original)} />
             </BadgeCell>
           ) : null,
         enableSorting: false,

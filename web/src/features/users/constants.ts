@@ -163,6 +163,67 @@ export const isEnterpriseMember = (user: UserType): boolean =>
   (user.enterprise_owner_id ?? 0) > 0
 
 // ============================================================================
+// Rebate Review Configuration
+// ============================================================================
+// 内部会员的返现要审核通过才能动用：未通过之前，算出来的返现一律以「冻结」的
+// 形态记在账上，钱不进余额。审核只影响内部会员——外部账号不参与返现，审核状态
+// 对它没有任何作用，所以前台只在内部会员身上展示这枚徽标。
+//
+// 三种状态里，pending 和 rejected 对钱的效果完全一样：新返现继续冻结，之前冻结
+// 的也不放行，区别只在列表上怎么显示。真正放行的只有 approved。
+
+export const REBATE_REVIEW_STATUS = {
+  PENDING: 'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+} as const
+
+export type RebateReviewStatus =
+  (typeof REBATE_REVIEW_STATUS)[keyof typeof REBATE_REVIEW_STATUS]
+
+export const REBATE_REVIEW_STATUSES = {
+  [REBATE_REVIEW_STATUS.PENDING]: {
+    labelKey: 'Pending Review',
+    variant: 'warning' as const,
+  },
+  [REBATE_REVIEW_STATUS.APPROVED]: {
+    labelKey: 'Approved',
+    variant: 'success' as const,
+  },
+  [REBATE_REVIEW_STATUS.REJECTED]: {
+    labelKey: 'Not Approved',
+    variant: 'neutral' as const,
+  },
+} satisfies Record<RebateReviewStatus, { labelKey: string; variant: string }>
+
+export const REBATE_REVIEW_OPTIONS = [
+  { value: REBATE_REVIEW_STATUS.PENDING, labelKey: 'Pending Review' },
+  { value: REBATE_REVIEW_STATUS.APPROVED, labelKey: 'Approved' },
+  { value: REBATE_REVIEW_STATUS.REJECTED, labelKey: 'Not Approved' },
+] as const
+
+export const getUserRebateReviewOptions = (t: (key: string) => string) =>
+  REBATE_REVIEW_OPTIONS.map(({ value, labelKey }) => ({
+    label: t(labelKey),
+    value,
+  }))
+
+/**
+ * 账号当前是不是「已通过」。后端所有账号都带这个字段，外部账号只是拿不到徽标，
+ * 判断本身不做身份区分。
+ */
+export const getRebateReviewStatus = (user: UserType): string =>
+  user.rebate_review_status ?? REBATE_REVIEW_STATUS.PENDING
+
+/**
+ * 内部会员的返现是不是还压在冻结里。审核状态对非内部会员没有意义，所以这里先看
+ * 身份再看状态，避免给外部账号误报「返现冻结中」。
+ */
+export const isRebateFrozen = (user: UserType): boolean =>
+  getUserMemberLevel(user) === USER_MEMBER_LEVEL.INTERNAL &&
+  getRebateReviewStatus(user) !== REBATE_REVIEW_STATUS.APPROVED
+
+// ============================================================================
 // Default Values
 // ============================================================================
 

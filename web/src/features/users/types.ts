@@ -56,6 +56,12 @@ export const userSchema = z.object({
   /** 0 = external user, 1 = internal member. Absent on payloads that omit it. */
   member_level: z.number().optional(),
   /**
+   * 内部会员的返现审核状态：pending / approved / rejected。只有 approved 才让
+   * 返现进余额；pending 和 rejected 对钱的效果一样，只是显示不同。读取一律走
+   * getRebateReviewStatus()，缺字段时按 pending 处理。
+   */
+  rebate_review_status: z.string().optional(),
+  /**
    * 「企业账号」标记：被标记的账号可以进自己的企业控制台。只影响这一件事——
    * 角色仍是普通用户，打不开任何管理端页面。
    *
@@ -128,6 +134,8 @@ export interface SearchUsersParams {
   member_level?: string
   /** 企业账号标记：'1' 只列企业账号，'0' 只列没被标记的账号。 */
   is_enterprise?: string
+  /** 返现审核状态：只传状态本身，'pending' 即「只看未审核」。 */
+  rebate_review_status?: string
   p?: number
   page_size?: number
   sort_by?: UserSortBy
