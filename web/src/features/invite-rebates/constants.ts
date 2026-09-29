@@ -22,7 +22,15 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const INVITE_REBATE_STATUS = {
   CREDITED: 'credited',
+  /**
+   * The rebate was worked out and the ledger row written, but the money has
+   * not reached the wallet yet: the recipient is an internal member whose
+   * rebate review has not passed. Approving the member releases the row.
+   */
+  FROZEN: 'frozen',
   SKIPPED: 'skipped',
+  /** The leg was voided by an administrator; the money was never credited. */
+  REVERSED: 'reversed',
 } as const
 
 export type InviteRebateStatus =
@@ -33,9 +41,17 @@ export const INVITE_REBATE_STATUSES = {
     labelKey: 'Credited',
     variant: 'success' as const,
   },
+  [INVITE_REBATE_STATUS.FROZEN]: {
+    labelKey: 'Frozen',
+    variant: 'info' as const,
+  },
   [INVITE_REBATE_STATUS.SKIPPED]: {
     labelKey: 'Not Credited',
     variant: 'warning' as const,
+  },
+  [INVITE_REBATE_STATUS.REVERSED]: {
+    labelKey: 'Reversed',
+    variant: 'danger' as const,
   },
 } satisfies Record<InviteRebateStatus, { labelKey: string; variant: string }>
 

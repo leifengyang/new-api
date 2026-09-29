@@ -31,7 +31,7 @@ const inviteRebatesSearchSchema = z.object({
   // value is passed through and simply matches nothing.
   source: z.array(z.string()).optional().catch([]),
   status: z
-    .array(z.enum(['credited', 'skipped']))
+    .array(z.enum(['credited', 'frozen', 'skipped', 'reversed']))
     .optional()
     .catch([]),
 })
