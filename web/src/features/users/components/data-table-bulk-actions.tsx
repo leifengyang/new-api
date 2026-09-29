@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { Building2, GraduationCap, Trash2, UserRoundMinus } from 'lucide-react'
+import {
+  Building2,
+  ClipboardCheck,
+  GraduationCap,
+  Trash2,
+  UserRoundMinus,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -44,11 +50,14 @@ import {
   batchDeleteUsers,
   updateUserEnterprise,
   updateUsersMemberLevelBatch,
+  updateUsersRebateReviewBatch,
 } from '../api'
 import {
   USER_MEMBER_LEVEL,
   USER_ROLE,
+  REBATE_REVIEW_STATUS,
   canDeleteUser,
+  getRebateReviewStatus,
   getUserMemberLevel,
   isEnterpriseAccount,
   isEnterpriseMember,
@@ -74,6 +83,9 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
   const [enterpriseTargets, setEnterpriseTargets] = useState<number[] | null>(
     null
   )
+  const [rebateReviewTargets, setRebateReviewTargets] = useState<
+    number[] | null
+  >(null)
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const verification = useSecureVerification()
   const { requestVerification } = verification
@@ -172,6 +184,36 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
     },
   })
 
+  // 批量审核通过。一次请求交给服务端，逐个账号放行各自的冻结返现；返回的是所有
+  // 账号加起来真正放行的行数，0 也是正常结果（选中的账号本来就没有冻结的）。
+  const rebateReviewApprove = useMutation({
+    mutationFn: async (ids: number[]) => {
+      const result = await updateUsersRebateReviewBatch(
+        ids,
+        REBATE_REVIEW_STATUS.APPROVED
+      )
+      if (!result.success) throw createServerError(result)
+      return { count: ids.length, released: result.data ?? 0 }
+    },
+    onSuccess: ({ count, released }) => {
+      // 审核通过却没放出任何一行，说明这些账号没有冻结的返现；普通提示会让人以为
+      // 刚放了一笔钱，所以单独说清。
+      toast.success(
+        released > 0
+          ? t('Approved {{count}} users and released {{released}} rebates', {
+              count,
+              released,
+            })
+          : t('Approved the rebate review for {{count}} users', { count })
+      )
+      setRebateReviewTargets(null)
+      triggerRefresh()
+    },
+    onError: (error) => {
+      handleServerError(error, t('Failed to update the rebate review'))
+    },
+  })
+
   const openFor = (level: number) => {
     setTarget({ ids: selectedRows.map((row) => row.original.id), level })
   }
@@ -224,6 +266,24 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
         )
       : t('Every selected account is already an enterprise account.')
   }
+
+  // 只对内部会员有意义：外部账号的返现审核状态不影响任何东西，选中了也是空操作。
+  // 已经是 approved 的行同样剔除，服务端那边只会白写一条审计日志。
+  const rebateReviewIds = selectedRows
+    .filter(
+      (row) =>
+        getUserMemberLevel(row.original) === USER_MEMBER_LEVEL.INTERNAL &&
+        getRebateReviewStatus(row.original) !== REBATE_REVIEW_STATUS.APPROVED
+    )
+    .map((row) => row.original.id)
+  const rebateReviewDisabled =
+    rebateReviewIds.length === 0 || rebateReviewApprove.isPending
+  const rebateReviewHint =
+    rebateReviewIds.length === 0
+      ? t(
+          'Select at least one internal member whose rebate review has not passed.'
+        )
+      : t('Approve rebate review')
 
   return (
     <>
@@ -292,6 +352,30 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
             <Building2 aria-hidden='true' />
           </TooltipTrigger>
           <TooltipContent>{enterpriseHint}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              // 同样用 aria-disabled：点不动的时候要靠 tooltip 说明原因。
+              <Button
+                variant='outline'
+                size='icon'
+                className={cn(
+                  'size-8',
+                  rebateReviewDisabled && 'cursor-not-allowed opacity-50'
+                )}
+                aria-label={t('Approve rebate review')}
+                aria-disabled={rebateReviewDisabled}
+                onClick={() => {
+                  if (rebateReviewDisabled) return
+                  setRebateReviewTargets(rebateReviewIds)
+                }}
+              />
+            }
+          >
+            <ClipboardCheck aria-hidden='true' />
+          </TooltipTrigger>
+          <TooltipContent>{rebateReviewHint}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -367,6 +451,30 @@ export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
         handleConfirm={() => {
           if (enterpriseTargets && !enterpriseMark.isPending) {
             enterpriseMark.mutate(enterpriseTargets)
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={rebateReviewTargets !== null}
+        onOpenChange={(open) => {
+          if (!open && !rebateReviewApprove.isPending) {
+            setRebateReviewTargets(null)
+          }
+        }}
+        title={t('Approve the rebate review for {{count}} users?', {
+          count: rebateReviewTargets?.length ?? 0,
+        })}
+        desc={t(
+          'Every frozen rebate these members have earned is credited to their balances right away. A wallet has a ceiling: any rebate that would go past it is left recorded but not credited, and the rest are still released.'
+        )}
+        confirmText={
+          rebateReviewApprove.isPending ? t('Saving...') : t('Confirm')
+        }
+        isLoading={rebateReviewApprove.isPending}
+        disabled={!rebateReviewTargets?.length}
+        handleConfirm={() => {
+          if (rebateReviewTargets && !rebateReviewApprove.isPending) {
+            rebateReviewApprove.mutate(rebateReviewTargets)
           }
         }}
       />
