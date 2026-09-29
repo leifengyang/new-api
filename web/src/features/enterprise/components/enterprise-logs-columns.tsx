@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 import { BadgeCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
-import { DetailsCell } from '@/features/usage-logs/components/details-cell'
 import { LogCostDisplay } from '@/features/usage-logs/components/log-cost-display'
 import { ModelBadge } from '@/features/usage-logs/components/model-badge'
 import { TimingMetricsCell } from '@/features/usage-logs/components/timing-metrics-cell'
@@ -37,6 +36,8 @@ import {
 } from '@/features/usage-logs/lib'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatTimestampToDate } from '@/lib/format'
+
+import { EnterpriseLogDetailsCell } from './enterprise-log-details-cell'
 
 /**
  * 企业成员日志的列。刻意不用 `useCommonLogsColumns`：那一份把渠道列和用户列
@@ -172,11 +173,7 @@ export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
       {
         id: 'details',
         header: t('Details'),
-        cell: ({ row }) => (
-          // isAdmin / isRoot 都传 false：这是企业租户视图，平台侧的字段在服务端
-          // 就已经剥掉了，界面上也不该多给。
-          <DetailsCell log={row.original} isAdmin={false} isRoot={false} />
-        ),
+        cell: ({ row }) => <EnterpriseLogDetailsCell log={row.original} />,
         size: 120,
         maxSize: 140,
       },
