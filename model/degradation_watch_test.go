@@ -136,7 +136,7 @@ func TestDegradationWatchDatabaseMatrix(t *testing.T) {
 				other := createDegradationWatchRecords(t, 6, true, true)
 				require.NoError(t, SetDegradationWatchRecordHidden(records[4].Id, true))
 
-				pruned, err := PruneDegradationWatchRecords(5, 2)
+				pruned, err := PruneDegradationWatchRecords(DegradationWatchSeries{ChannelId: 5, ModelName: "gpt-6-astra"}, 2)
 				require.NoError(t, err)
 				assert.EqualValues(t, 3, pruned)
 
@@ -150,7 +150,7 @@ func TestDegradationWatchDatabaseMatrix(t *testing.T) {
 				require.NoError(t, err)
 				assert.Len(t, untouched, len(other))
 
-				pruned, err = PruneDegradationWatchRecords(5, 2)
+				pruned, err = PruneDegradationWatchRecords(DegradationWatchSeries{ChannelId: 5, ModelName: "gpt-6-astra"}, 2)
 				require.NoError(t, err)
 				assert.EqualValues(t, 0, pruned)
 			})

@@ -355,7 +355,6 @@ func SetApiRouter(router *gin.Engine) {
 		degradationWatchRoute.Use(middleware.UserAuth())
 		{
 			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)
-			degradationWatchRoute.GET("/records", controller.GetDegradationWatchRecords)
 			degradationWatchRoute.GET("/records/:id/html", controller.GetDegradationWatchRecordHtml)
 			degradationWatchRoute.GET("/prompt", controller.GetDegradationWatchPrompt)
 			degradationWatchRoute.PUT("/records/:id/hidden", middleware.AdminAuth(), controller.SetDegradationWatchRecordHidden)
