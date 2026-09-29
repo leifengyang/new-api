@@ -54,6 +54,8 @@ function toCardRecord(result: SelfTestResult, failureText: string) {
     id: 0,
     model_name: result.model,
     reasoning_effort: result.reasoningEffort,
+    channel_title: '',
+    aliased: false,
     success: result.success,
     failure_reason: failureText,
     elapsed_ms: result.elapsedMs,
@@ -81,10 +83,23 @@ export function SelfTestPanel() {
   const [openResult, setOpenResult] = useState<SelfTestResult | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // The server's model is the default until the user picks their own.
+  // The first enabled target is the default until the user picks another.
+  const targets = prompt.data?.targets
   useEffect(() => {
-    if (model === '' && prompt.data?.model) setModel(prompt.data.model)
-  }, [model, prompt.data?.model])
+    const first = targets?.[0]
+    if (!first) return
+    const known = targets.some((target) => target.model === model)
+    if (model === '' || !known) {
+      setModel(first.model)
+      setEffort(first.reasoning_effort)
+    }
+  }, [model, targets])
+
+  function selectModel(value: string) {
+    setModel(value)
+    const target = targets?.find((item) => item.model === value)
+    if (target) setEffort(target.reasoning_effort)
+  }
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -170,12 +185,19 @@ export function SelfTestPanel() {
         </div>
         <div className='flex flex-col gap-2'>
           <Label htmlFor='dw-model'>{t('Model')}</Label>
-          <Input
+          <NativeSelect
             id='dw-model'
+            className='w-full'
             value={model}
-            onChange={(event) => setModel(event.target.value)}
-            autoComplete='off'
-          />
+            disabled={prompt.data.targets.length === 0}
+            onChange={(event) => selectModel(event.target.value)}
+          >
+            {prompt.data.targets.map((target) => (
+              <NativeSelectOption key={target.model} value={target.model}>
+                {target.model}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
         </div>
         <div className='flex flex-col gap-2'>
           <Label htmlFor='dw-effort'>{t('Reasoning effort')}</Label>

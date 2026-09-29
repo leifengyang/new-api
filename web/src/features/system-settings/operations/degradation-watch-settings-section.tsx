@@ -37,7 +37,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -49,7 +48,6 @@ import {
   parseAliases,
   serializeAliases,
 } from '@/features/degradation-watch/lib/aliases'
-import { REASONING_EFFORTS } from '@/features/degradation-watch/lib/self-test'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
@@ -62,31 +60,50 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { SafeNumberInput } from '../utils/numeric-field'
+import {
+  findDuplicateTarget,
+  MAX_DEGRADATION_WATCH_TARGETS,
+  serializeTargets,
+  targetSchema,
+} from './degradation-watch-targets'
+import { DegradationWatchTargetsEditor } from './degradation-watch-targets-editor'
 
 /** Bounds mirror setting/operation_setting/degradation_watch_setting.go. */
-const schema = z.object({
-  enabled: z.boolean(),
-  group: z.string().trim().min(1),
-  model: z.string().trim().min(1),
-  reasoningEffort: z.string(),
-  intervalMinutes: z.coerce.number().int().min(1).max(1440),
-  timeoutSeconds: z.coerce.number().int().min(30).max(3600),
-  retentionPerChannel: z.coerce.number().int().min(1).max(2000),
-  prompt: z.string().max(20000),
-})
+const schema = z
+  .object({
+    enabled: z.boolean(),
+    targets: z.array(targetSchema).max(MAX_DEGRADATION_WATCH_TARGETS),
+    intervalMinutes: z.coerce.number().int().min(1).max(1440),
+    timeoutSeconds: z.coerce.number().int().min(30).max(3600),
+    retentionPerChannel: z.coerce.number().int().min(1).max(2000),
+    concurrency: z.coerce.number().int().min(1).max(32),
+    prompt: z.string().max(20000),
+  })
+  .superRefine((values, ctx) => {
+    const duplicate = findDuplicateTarget(values.targets)
+    if (duplicate >= 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['targets', duplicate, 'model'],
+        message: 'Each model can only be listed once',
+      })
+    }
+  })
 
-type Values = z.infer<typeof schema>
+export type DegradationWatchValues = z.infer<typeof schema>
+type Values = DegradationWatchValues
+type ScalarField = Exclude<keyof Values, 'targets'>
 
 const OPTION_KEYS = {
   enabled: 'degradation_watch_setting.enabled',
-  group: 'degradation_watch_setting.group',
-  model: 'degradation_watch_setting.model',
-  reasoningEffort: 'degradation_watch_setting.reasoning_effort',
   intervalMinutes: 'degradation_watch_setting.interval_minutes',
   timeoutSeconds: 'degradation_watch_setting.timeout_seconds',
   retentionPerChannel: 'degradation_watch_setting.retention_per_channel',
+  concurrency: 'degradation_watch_setting.concurrency',
   prompt: 'degradation_watch_setting.prompt',
-} as const satisfies Record<keyof Values, string>
+} as const satisfies Record<ScalarField, string>
+
+const TARGETS_KEY = 'degradation_watch_setting.targets'
 
 type DegradationWatchSettingsSectionProps = {
   defaultValues: Values
@@ -109,7 +126,12 @@ export function DegradationWatchSettingsSection(
 
   async function onSubmit(values: Values) {
     const updates: Array<{ key: string; value: string }> = []
-    for (const field of Object.keys(OPTION_KEYS) as Array<keyof Values>) {
+    // Targets go first so a run triggered right after saving already sees them.
+    const targets = serializeTargets(values.targets)
+    if (targets !== serializeTargets(props.defaultValues.targets)) {
+      updates.push({ key: TARGETS_KEY, value: targets })
+    }
+    for (const field of Object.keys(OPTION_KEYS) as ScalarField[]) {
       if (values[field] !== props.defaultValues[field]) {
         updates.push({ key: OPTION_KEYS[field], value: String(values[field]) })
       }
@@ -164,63 +186,9 @@ export function DegradationWatchSettingsSection(
             )}
           />
 
+          <DegradationWatchTargetsEditor form={form} disabled={busy} />
+
           <SettingsFormGrid>
-            <FormField
-              control={form.control}
-              name='group'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Group')}</FormLabel>
-                  <FormControl>
-                    <Input {...field} disabled={busy} />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Only channels in this group are tested')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name='model'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Model')}</FormLabel>
-                  <FormControl>
-                    <Input {...field} disabled={busy} />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Channels without this model are skipped')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name='reasoningEffort'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Reasoning effort')}</FormLabel>
-                  <FormControl>
-                    <NativeSelect
-                      className='w-full'
-                      value={field.value}
-                      onChange={(event) => field.onChange(event.target.value)}
-                      disabled={busy}
-                    >
-                      {REASONING_EFFORTS.map((value) => (
-                        <NativeSelectOption key={value} value={value}>
-                          {value === '' ? t('Not sent') : value}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
             <FormField
               control={form.control}
               name='intervalMinutes'
@@ -244,7 +212,7 @@ export function DegradationWatchSettingsSection(
               name='timeoutSeconds'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Run timeout (seconds)')}</FormLabel>
+                  <FormLabel>{t('Request timeout (seconds)')}</FormLabel>
                   <FormControl>
                     <SafeNumberInput
                       field={field}
@@ -254,7 +222,28 @@ export function DegradationWatchSettingsSection(
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Covers a whole run across all channels')}
+                    {t('Applies to each drawing request on its own')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='concurrency'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Concurrent requests')}</FormLabel>
+                  <FormControl>
+                    <SafeNumberInput
+                      field={field}
+                      min={1}
+                      max={32}
+                      disabled={busy}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Shared by all models and channels in a round')}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -265,7 +254,7 @@ export function DegradationWatchSettingsSection(
               name='retentionPerChannel'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Attempts kept per channel')}</FormLabel>
+                  <FormLabel>{t('Attempts kept per channel and model')}</FormLabel>
                   <FormControl>
                     <SafeNumberInput
                       field={field}
@@ -343,7 +332,7 @@ function ChannelAliasList(props: ChannelAliasListProps) {
   } else if (channels.data && channels.data.channels.length === 0) {
     body = (
       <p className='text-muted-foreground text-sm'>
-        {t('No channels in group {{group}}', { group: channels.data.group })}
+        {t('No channels in the groups of the configured models')}
       </p>
     )
   } else if (channels.data) {
@@ -362,10 +351,8 @@ function ChannelAliasList(props: ChannelAliasListProps) {
                 {t('Last run')}: {formatTimestampToDate(channel.last_record_at)}
               </span>
             </div>
-            {!channel.eligible && (
-              <Badge variant='outline'>
-                {channel.has_model ? t('Disabled') : t('Model not offered')}
-              </Badge>
+            {channel.models.length === 0 && (
+              <Badge variant='outline'>{t('No configured model can run')}</Badge>
             )}
             <Input
               className='w-48'
@@ -378,15 +365,25 @@ function ChannelAliasList(props: ChannelAliasListProps) {
                 }))
               }
             />
-            <Button
-              variant='outline'
-              size='sm'
-              disabled={!channel.eligible || run.isPending}
-              onClick={() => run.mutate(channel.id)}
-            >
-              <Play />
-              {t('Run once now')}
-            </Button>
+            <div className='flex flex-wrap gap-1'>
+              {channel.models.map((modelName) => (
+                <Button
+                  key={modelName}
+                  variant='outline'
+                  size='sm'
+                  disabled={run.isPending}
+                  aria-label={t('Run {{model}} on this channel now', {
+                    model: modelName,
+                  })}
+                  onClick={() =>
+                    run.mutate({ model: modelName, channelId: channel.id })
+                  }
+                >
+                  <Play />
+                  {modelName}
+                </Button>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -408,7 +405,7 @@ function ChannelAliasList(props: ChannelAliasListProps) {
           <Button
             variant='outline'
             disabled={run.isPending}
-            onClick={() => run.mutate(undefined)}
+            onClick={() => run.mutate({})}
           >
             <Play />
             {t('Run all now')}

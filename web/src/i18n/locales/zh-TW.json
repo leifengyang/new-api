@@ -7121,6 +7121,24 @@
     "Rebate review updated": "返現審核已更新",
     "Approved {{count}} users and released {{released}} rebates": "已通過 {{count}} 位使用者的返現審核，放行 {{released}} 筆返現",
     "Approved the rebate review for {{count}} users": "已通過 {{count}} 位使用者的返現審核",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "返現需審核通過後到帳，目前處於凍結狀態。"
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "返現需審核通過後到帳，目前處於凍結狀態。",
+    "Applies to each drawing request on its own": "對每一次繪圖請求單獨計時",
+    "Attempts kept per channel and model": "每個渠道每個模型保留的次數",
+    "Avg time": "平均耗時",
+    "Concurrent requests": "並行請求數",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "每個啟用的模型會在其分組內所有提供該模型的渠道上檢測。這裡的順序就是檢測牆上的欄順序。",
+    "Each model can only be listed once": "每個模型只能出現一次",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "每 {{minutes}} 分鐘，下列每個模型都會在每個渠道上收到同一個提示詞：用 HTML + SVG 動畫畫一隻騎自行車的鵜鶘。每一欄是一個模型，每一列是一輪，某個渠道畫得明顯更差時一眼就能看出來。",
+    "Models to test": "檢測模型",
+    "Move down": "下移",
+    "Move up": "上移",
+    "No channels in the groups of the configured models": "所設定模型的分組中沒有渠道",
+    "No configured model can run": "沒有可執行的已設定模型",
+    "No models configured yet": "尚未設定模型",
+    "Paused": "已暫停",
+    "Removed from config": "已從設定移除",
+    "Request timeout (seconds)": "單次請求逾時（秒）",
+    "Run {{model}} on this channel now": "立即在此渠道執行 {{model}}",
+    "Shared by all models and channels in a round": "一輪中所有模型與渠道共用"
   }
 }

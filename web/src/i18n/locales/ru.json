@@ -7121,6 +7121,24 @@
     "Rebate review updated": "Проверка ребейтов обновлена",
     "Approved {{count}} users and released {{released}} rebates": "Проверка ребейтов одобрена для {{count}} пользователей, зачислено ребейтов: {{released}}",
     "Approved the rebate review for {{count}} users": "Проверка ребейтов одобрена для {{count}} пользователей",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "Ребейты зачисляются после прохождения проверки. До этого они остаются замороженными."
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "Ребейты зачисляются после прохождения проверки. До этого они остаются замороженными.",
+    "Applies to each drawing request on its own": "Применяется к каждому запросу рисунка отдельно",
+    "Attempts kept per channel and model": "Попыток хранится на канал и модель",
+    "Avg time": "Среднее время",
+    "Concurrent requests": "Одновременных запросов",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "Каждая включённая модель проверяется на всех каналах своей группы, где она есть. Порядок здесь — порядок колонок на стене.",
+    "Each model can only be listed once": "Каждую модель можно указать только один раз",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "Каждые {{minutes}} мин. каждый канал получает одинаковый запрос для каждой модели ниже: нарисовать пеликана на велосипеде в виде HTML + SVG анимации. Колонка — модель, строка — раунд, поэтому заметно худший рисунок на одном канале сразу виден рядом с соседями.",
+    "Models to test": "Модели для проверки",
+    "Move down": "Переместить вниз",
+    "Move up": "Переместить вверх",
+    "No channels in the groups of the configured models": "В группах настроенных моделей нет каналов",
+    "No configured model can run": "Ни одна настроенная модель не может работать",
+    "No models configured yet": "Модели пока не настроены",
+    "Paused": "Приостановлено",
+    "Removed from config": "Удалено из настроек",
+    "Request timeout (seconds)": "Тайм-аут запроса (секунды)",
+    "Run {{model}} on this channel now": "Запустить {{model}} на этом канале сейчас",
+    "Shared by all models and channels in a round": "Общий для всех моделей и каналов в раунде"
   }
 }

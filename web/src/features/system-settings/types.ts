@@ -400,6 +400,8 @@ export type OperationsSettings = {
   'degradation_watch_setting.timeout_seconds': number
   'degradation_watch_setting.retention_per_channel': number
   'degradation_watch_setting.prompt': string
+  'degradation_watch_setting.targets': string
+  'degradation_watch_setting.concurrency': number
   /** JSON object, channel id → alias shown on the wall. */
   'degradation_watch_setting.channel_aliases': string
 }

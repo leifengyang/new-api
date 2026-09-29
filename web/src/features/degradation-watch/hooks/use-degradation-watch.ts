@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import i18next from 'i18next'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -32,20 +37,30 @@ import {
   runDegradationWatch,
   setDegradationWatchRecordHidden,
 } from '../api'
+import { WALL_ROUNDS_PER_PAGE } from '../lib/rounds'
+import type { DegradationWatchRunScope } from '../types'
 
 export const degradationWatchKeys = {
   wall: ['degradation-watch', 'wall'] as const,
-  more: ['degradation-watch', 'more'] as const,
   html: (id: number) => ['degradation-watch', 'html', id] as const,
   prompt: ['degradation-watch', 'prompt'] as const,
   channels: ['degradation-watch', 'channels'] as const,
 }
 
+/**
+ * The wall pages by rounds. Only the first page refetches on the interval
+ * (TanStack refetches every loaded page, so the whole list stays consistent);
+ * lanes come with the first page.
+ */
 export function useDegradationWatchWall() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: degradationWatchKeys.wall,
-    queryFn: async () => {
-      const result = await getDegradationWatchWall()
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const result = await getDegradationWatchWall({
+        before: pageParam,
+        rounds: WALL_ROUNDS_PER_PAGE,
+      })
       if (!result.success || !result.data) {
         throw createServerError(
           result,
@@ -54,6 +69,7 @@ export function useDegradationWatchWall() {
       }
       return result.data
     },
+    getNextPageParam: (lastPage) => lastPage.next_before || undefined,
     refetchInterval: 60_000,
   })
 }
@@ -105,7 +121,6 @@ export function useSetRecordHidden() {
     },
     onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: degradationWatchKeys.wall })
-      queryClient.invalidateQueries({ queryKey: degradationWatchKeys.more })
       toast.success(
         input.hidden
           ? i18next.t('Artwork hidden')
@@ -133,8 +148,8 @@ export function useDegradationWatchChannels() {
 
 export function useRunDegradationWatch() {
   return useMutation({
-    mutationFn: async (channelId?: number) => {
-      const result = await runDegradationWatch(channelId)
+    mutationFn: async (scope: DegradationWatchRunScope) => {
+      const result = await runDegradationWatch(scope)
       if (!result.success) {
         throw createServerError(result, i18next.t('Failed to start the check'))
       }

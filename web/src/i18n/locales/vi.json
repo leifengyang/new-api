@@ -7121,6 +7121,24 @@
     "Rebate review updated": "Đã cập nhật duyệt hoàn tiền",
     "Approved {{count}} users and released {{released}} rebates": "Đã duyệt hoàn tiền cho {{count}} người dùng và cộng {{released}} khoản hoàn tiền",
     "Approved the rebate review for {{count}} users": "Đã duyệt hoàn tiền cho {{count}} người dùng",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "Hoàn tiền sẽ được cộng sau khi bạn được duyệt. Trước đó chúng vẫn bị đóng băng."
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "Hoàn tiền sẽ được cộng sau khi bạn được duyệt. Trước đó chúng vẫn bị đóng băng.",
+    "Applies to each drawing request on its own": "Áp dụng riêng cho từng yêu cầu vẽ",
+    "Attempts kept per channel and model": "Số lần giữ lại cho mỗi kênh và mô hình",
+    "Avg time": "Thời gian TB",
+    "Concurrent requests": "Số yêu cầu đồng thời",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "Mỗi mô hình được bật sẽ được kiểm tra trên mọi kênh trong nhóm có cung cấp nó. Thứ tự ở đây là thứ tự cột trên bảng.",
+    "Each model can only be listed once": "Mỗi mô hình chỉ được liệt kê một lần",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "Cứ mỗi {{minutes}} phút, mỗi kênh nhận cùng một lời nhắc cho từng mô hình bên dưới: vẽ một con bồ nông đạp xe bằng hoạt ảnh HTML + SVG. Mỗi cột là một mô hình, mỗi hàng là một lượt, nên bản vẽ kém hẳn trên một kênh sẽ nổi bật so với bên cạnh.",
+    "Models to test": "Mô hình cần kiểm tra",
+    "Move down": "Chuyển xuống",
+    "Move up": "Chuyển lên",
+    "No channels in the groups of the configured models": "Không có kênh nào trong nhóm của các mô hình đã cấu hình",
+    "No configured model can run": "Không có mô hình đã cấu hình nào chạy được",
+    "No models configured yet": "Chưa cấu hình mô hình nào",
+    "Paused": "Tạm dừng",
+    "Removed from config": "Đã xóa khỏi cấu hình",
+    "Request timeout (seconds)": "Thời gian chờ mỗi yêu cầu (giây)",
+    "Run {{model}} on this channel now": "Chạy {{model}} trên kênh này ngay",
+    "Shared by all models and channels in a round": "Dùng chung cho mọi mô hình và kênh trong một lượt"
   }
 }

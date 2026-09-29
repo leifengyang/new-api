@@ -126,6 +126,10 @@ export function RecordMeta(props: RecordMetaProps) {
 interface RecordCardProps {
   record: DegradationWatchRecord
   localHtml?: string
+  /** Channel label shown above the meta; the wall passes the alias. */
+  title?: string
+  /** Thumbnail mode for cells holding several channels: title only, no meta. */
+  compact?: boolean
   onOpen: (record: DegradationWatchRecord) => void
 }
 
@@ -154,15 +158,26 @@ export function RecordCard(props: RecordCardProps) {
           </Badge>
         )}
       </div>
-      <div className='p-3'>
-        <RecordMeta
-          modelName={record.model_name}
-          reasoningEffort={record.reasoning_effort}
-          createdAt={record.created_at}
-          elapsedMs={record.elapsed_ms}
-          reasoningTokens={record.reasoning_tokens}
-        />
-      </div>
+      {props.compact ? (
+        <div className='truncate px-2 py-1.5 text-xs font-medium'>
+          {props.title}
+        </div>
+      ) : (
+        <div className='flex flex-col gap-1.5 p-3'>
+          {props.title && (
+            <span className='truncate text-sm font-semibold'>
+              {props.title}
+            </span>
+          )}
+          <RecordMeta
+            modelName={record.model_name}
+            reasoningEffort={record.reasoning_effort}
+            createdAt={record.created_at}
+            elapsedMs={record.elapsed_ms}
+            reasoningTokens={record.reasoning_tokens}
+          />
+        </div>
+      )}
     </button>
   )
 }

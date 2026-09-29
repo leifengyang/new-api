@@ -64,6 +64,8 @@ const defaultOperationsSettings: OperationsSettings = {
   'degradation_watch_setting.timeout_seconds': 600,
   'degradation_watch_setting.retention_per_channel': 200,
   'degradation_watch_setting.prompt': '',
+  'degradation_watch_setting.targets': '[]',
+  'degradation_watch_setting.concurrency': 4,
   'degradation_watch_setting.channel_aliases': '{}',
 }
 

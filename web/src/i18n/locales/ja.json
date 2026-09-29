@@ -7121,6 +7121,24 @@
     "Rebate review updated": "リベート審査を更新しました",
     "Approved {{count}} users and released {{released}} rebates": "{{count}} 人のリベート審査を承認し、{{released}} 件のリベートを付与しました",
     "Approved the rebate review for {{count}} users": "{{count}} 人のリベート審査を承認しました",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "審査が通過するとリベートが付与されます。それまでは凍結されたままです。"
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "審査が通過するとリベートが付与されます。それまでは凍結されたままです。",
+    "Applies to each drawing request on its own": "描画リクエストごとに個別に適用されます",
+    "Attempts kept per channel and model": "チャネル・モデルごとの保持件数",
+    "Avg time": "平均所要時間",
+    "Concurrent requests": "同時リクエスト数",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "有効な各モデルは、そのグループ内でモデルを提供するすべてのチャネルで検査されます。ここでの順序がウォールの列順になります。",
+    "Each model can only be listed once": "各モデルは一度だけ指定できます",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "{{minutes}} 分ごとに、下の各モデルについて各チャネルへ同じプロンプトを送ります：自転車に乗るペリカンを HTML + SVG アニメーションで描く。列がモデル、行がラウンドなので、あるチャネルだけ明らかに劣る絵は隣と比べてすぐ分かります。",
+    "Models to test": "検査するモデル",
+    "Move down": "下へ移動",
+    "Move up": "上へ移動",
+    "No channels in the groups of the configured models": "設定したモデルのグループにチャネルがありません",
+    "No configured model can run": "実行できる設定済みモデルがありません",
+    "No models configured yet": "まだモデルが設定されていません",
+    "Paused": "一時停止中",
+    "Removed from config": "設定から削除済み",
+    "Request timeout (seconds)": "リクエストのタイムアウト（秒）",
+    "Run {{model}} on this channel now": "このチャネルで {{model}} を今すぐ実行",
+    "Shared by all models and channels in a round": "1 ラウンド内のすべてのモデルとチャネルで共有"
   }
 }

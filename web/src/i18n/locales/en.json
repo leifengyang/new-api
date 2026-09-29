@@ -7121,6 +7121,24 @@
     "Rebate review updated": "Rebate review updated",
     "Approved {{count}} users and released {{released}} rebates": "Approved {{count}} users and released {{released}} rebates",
     "Approved the rebate review for {{count}} users": "Approved the rebate review for {{count}} users",
-    "Rebates are credited once your review has passed. Until then they stay frozen.": "Rebates are credited once your review has passed. Until then they stay frozen."
+    "Rebates are credited once your review has passed. Until then they stay frozen.": "Rebates are credited once your review has passed. Until then they stay frozen.",
+    "Applies to each drawing request on its own": "Applies to each drawing request on its own",
+    "Attempts kept per channel and model": "Attempts kept per channel and model",
+    "Avg time": "Avg time",
+    "Concurrent requests": "Concurrent requests",
+    "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.": "Each enabled model is tested on every channel of its group that offers it. The order here is the column order on the wall.",
+    "Each model can only be listed once": "Each model can only be listed once",
+    "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.": "Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.",
+    "Models to test": "Models to test",
+    "Move down": "Move down",
+    "Move up": "Move up",
+    "No channels in the groups of the configured models": "No channels in the groups of the configured models",
+    "No configured model can run": "No configured model can run",
+    "No models configured yet": "No models configured yet",
+    "Paused": "Paused",
+    "Removed from config": "Removed from config",
+    "Request timeout (seconds)": "Request timeout (seconds)",
+    "Run {{model}} on this channel now": "Run {{model}} on this channel now",
+    "Shared by all models and channels in a round": "Shared by all models and channels in a round"
   }
 }
