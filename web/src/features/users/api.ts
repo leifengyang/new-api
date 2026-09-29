@@ -68,6 +68,7 @@ export async function searchUsers(
     status = '',
     member_level = '',
     is_enterprise = '',
+    rebate_review_status = '',
     p = 1,
     page_size = 10,
     sort_by,
