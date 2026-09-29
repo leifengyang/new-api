@@ -59,7 +59,7 @@ func TestSearchUsersSortsBeforePagination(t *testing.T) {
 	truncateTables(t)
 	insertUsersForPaginationTest(t, 42)
 
-	users, total, err := SearchUsers("user", "", nil, nil, nil, nil, 20, 20, NewUserSortOptions("id", "asc"))
+	users, total, err := SearchUsers("user", "", nil, nil, nil, nil, "", 20, 20, NewUserSortOptions("id", "asc"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), total)
 	assert.Equal(t, []int{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}, collectUserIDs(users))
@@ -72,13 +72,13 @@ func TestSearchUsersFiltersByMemberLevel(t *testing.T) {
 		Update("member_level", MemberLevelInternal).Error)
 
 	internal := MemberLevelInternal
-	users, total, err := SearchUsers("user", "", nil, nil, &internal, nil, 0, 20, NewUserSortOptions("id", "asc"))
+	users, total, err := SearchUsers("user", "", nil, nil, &internal, nil, "", 0, 20, NewUserSortOptions("id", "asc"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), total)
 	assert.Equal(t, []int{1, 2, 3, 4}, collectUserIDs(users))
 
 	external := MemberLevelNormal
-	users, total, err = SearchUsers("user", "", nil, nil, &external, nil, 0, 20, NewUserSortOptions("id", "asc"))
+	users, total, err = SearchUsers("user", "", nil, nil, &external, nil, "", 0, 20, NewUserSortOptions("id", "asc"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(8), total)
 	assert.Equal(t, []int{5, 6, 7, 8, 9, 10, 11, 12}, collectUserIDs(users))
@@ -91,14 +91,14 @@ func TestSearchUsersFiltersByEnterpriseFlag(t *testing.T) {
 		Update("is_enterprise", EnterpriseFlagYes).Error)
 
 	enterprise := EnterpriseFlagYes
-	users, total, err := SearchUsers("user", "", nil, nil, nil, &enterprise, 0, 20, NewUserSortOptions("id", "asc"))
+	users, total, err := SearchUsers("user", "", nil, nil, nil, &enterprise, "", 0, 20, NewUserSortOptions("id", "asc"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), total)
 	assert.Equal(t, []int{1, 2, 3}, collectUserIDs(users))
 
 	// 未标记的账号同样是可筛的取值：取消标记之后要能把这些账号单独列出来。
 	notEnterprise := EnterpriseFlagNo
-	users, total, err = SearchUsers("user", "", nil, nil, nil, &notEnterprise, 0, 20, NewUserSortOptions("id", "asc"))
+	users, total, err = SearchUsers("user", "", nil, nil, nil, &notEnterprise, "", 0, 20, NewUserSortOptions("id", "asc"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), total)
 	assert.Equal(t, []int{4, 5, 6, 7, 8, 9, 10, 11, 12}, collectUserIDs(users))
@@ -125,7 +125,7 @@ func TestSearchUsersEnterpriseFilterDatabaseMatrix(t *testing.T) {
 				Update("is_enterprise", EnterpriseFlagYes).Error)
 
 			enterprise := EnterpriseFlagYes
-			users, total, err := SearchUsers("user", "", nil, nil, nil, &enterprise, 0, 20, NewUserSortOptions("id", "asc"))
+			users, total, err := SearchUsers("user", "", nil, nil, nil, &enterprise, "", 0, 20, NewUserSortOptions("id", "asc"))
 			require.NoError(t, err)
 			assert.Equal(t, int64(3), total)
 			assert.Equal(t, []int{1, 2, 3}, collectUserIDs(users))
@@ -133,13 +133,13 @@ func TestSearchUsersEnterpriseFilterDatabaseMatrix(t *testing.T) {
 			// 列迁移出来的默认值必须落在「不是企业账号」这一侧：老账号补上来的
 			// 值要是非零，这里就会漏掉它们。
 			notEnterprise := EnterpriseFlagNo
-			users, total, err = SearchUsers("user", "", nil, nil, nil, &notEnterprise, 0, 20, NewUserSortOptions("id", "asc"))
+			users, total, err = SearchUsers("user", "", nil, nil, nil, &notEnterprise, "", 0, 20, NewUserSortOptions("id", "asc"))
 			require.NoError(t, err)
 			assert.Equal(t, int64(9), total)
 			assert.Equal(t, []int{4, 5, 6, 7, 8, 9, 10, 11, 12}, collectUserIDs(users))
 
 			// 不带条件时两种账号都要在：新参数只能是筛选，不能顺手改了默认列表。
-			users, total, err = SearchUsers("user", "", nil, nil, nil, nil, 0, 20, NewUserSortOptions("id", "asc"))
+			users, total, err = SearchUsers("user", "", nil, nil, nil, nil, "", 0, 20, NewUserSortOptions("id", "asc"))
 			require.NoError(t, err)
 			assert.Equal(t, int64(12), total)
 			assert.Len(t, users, 12)
