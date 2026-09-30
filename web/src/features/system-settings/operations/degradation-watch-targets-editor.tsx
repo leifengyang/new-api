@@ -32,10 +32,10 @@ import {
   FormItem,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { REASONING_EFFORTS } from '@/features/degradation-watch/lib/self-test'
+import { getModels } from '@/features/models/api'
 import { getGroups } from '@/features/users/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -64,8 +64,16 @@ export function DegradationWatchTargetsEditor<T extends TargetsForm>(
     queryKey: ['degradation-watch', 'groups'],
     queryFn: async () => requireServerSuccess(await getGroups()).data ?? [],
   })
+  const models = useQuery({
+    queryKey: ['degradation-watch', 'models'],
+    queryFn: async () => requireServerSuccess(await getModels()).data ?? [],
+  })
 
   const groupOptions = groups.data ?? []
+  const modelOptions =
+    (Array.isArray(models.data)
+      ? []
+      : models.data?.items.map((m) => m.model_name)) ?? []
   const full = targets.fields.length >= MAX_DEGRADATION_WATCH_TARGETS
 
   return (
@@ -115,12 +123,29 @@ export function DegradationWatchTargetsEditor<T extends TargetsForm>(
                 render={({ field }) => (
                   <FormItem className='min-w-40 flex-1'>
                     <FormControl>
-                      <Input
-                        {...field}
+                      <NativeSelect
+                        className='w-full'
                         aria-label={t('Model')}
-                        placeholder={t('Model')}
+                        value={field.value}
+                        onChange={(event) => field.onChange(event.target.value)}
                         disabled={props.disabled}
-                      />
+                      >
+                        {!modelOptions.includes(field.value) && field.value && (
+                          <NativeSelectOption value={field.value}>
+                            {field.value}
+                          </NativeSelectOption>
+                        )}
+                        {field.value === '' && (
+                          <NativeSelectOption value=''>
+                            {t('Select a model')}
+                          </NativeSelectOption>
+                        )}
+                        {modelOptions.map((model: string) => (
+                          <NativeSelectOption key={model} value={model}>
+                            {model}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
                     </FormControl>
                     <FormMessage />
                   </FormItem>
