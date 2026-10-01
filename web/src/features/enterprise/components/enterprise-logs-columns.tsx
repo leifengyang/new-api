@@ -26,6 +26,7 @@ import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { LogCostDisplay } from '@/features/usage-logs/components/log-cost-display'
 import { ModelBadge } from '@/features/usage-logs/components/model-badge'
 import { TimingMetricsCell } from '@/features/usage-logs/components/timing-metrics-cell'
+import { TokenUsageCell } from '@/features/usage-logs/components/token-usage-cell'
 import { LOG_TYPE_ALL_VALUE } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
 import {
@@ -34,8 +35,7 @@ import {
   isTimingLogType,
   parseLogOther,
 } from '@/features/usage-logs/lib'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber, formatTimestampToDate } from '@/lib/format'
+import { formatTimestampToDate } from '@/lib/format'
 
 import { EnterpriseLogDetailsCell } from './enterprise-log-details-cell'
 
@@ -45,8 +45,7 @@ import { EnterpriseLogDetailsCell } from './enterprise-log-details-cell'
  * 出现（服务端也不下发）。其余单元格直接复用平台上那几个无上下文的展示组件。
  */
 export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
 
   return useMemo<ColumnDef<UsageLog>[]>(
     () => [
@@ -122,21 +121,11 @@ export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
         cell: ({ row }) => {
           const log = row.original
           if (!isDisplayableLogType(log.type)) return null
-          const promptTokens = log.prompt_tokens || 0
-          const completionTokens = log.completion_tokens || 0
-          if (promptTokens === 0 && completionTokens === 0) {
-            return <span className='text-muted-foreground text-xs'>-</span>
-          }
-          return (
-            <span className='font-mono text-xs tabular-nums'>
-              {formatNumber(promptTokens, locale)} /{' '}
-              {formatNumber(completionTokens, locale)}
-            </span>
-          )
+          return <TokenUsageCell log={log} />
         },
         enableSorting: false,
-        size: 140,
-        meta: { mobileHidden: true },
+        size: 200,
+        meta: { mobileOrder: 35 },
       },
       {
         accessorKey: 'quota',
@@ -178,6 +167,6 @@ export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
         maxSize: 140,
       },
     ],
-    [t, locale]
+    [t]
   )
 }

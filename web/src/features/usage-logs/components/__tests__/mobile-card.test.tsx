@@ -218,12 +218,25 @@ it('respects hidden columns and omits admin fields in the self view', () => {
   expect(screen.queryByText('enterprise-production')).not.toBeInTheDocument()
 })
 
-it('keeps input, output and cache quantities readable without empty metric cells', () => {
+it('keeps compact cache metrics and opens exact quantities on click', async () => {
+  const user = userEvent.setup()
   renderLogs()
-  expect(screen.getByText('Input')).toBeVisible()
-  expect(screen.getByText('Output')).toBeVisible()
-  expect(screen.getByText(/300/)).toBeVisible()
-  expect(screen.getByText('Cache ↑ 200')).toBeVisible()
+  expect(screen.getByTitle('Uncached input')).toBeVisible()
+  expect(screen.getByTitle('Output Tokens')).toBeVisible()
+  expect(screen.getByText(/Cache hit:/)).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Token Breakdown' }))
+  expect(screen.getByText('Cache Write').nextElementSibling).toHaveTextContent(
+    '200'
+  )
+  await waitFor(() => expect(screen.getByText('Total Tokens')).toBeVisible())
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByText('Total Tokens')).not.toBeInTheDocument()
+  )
+  const trigger = screen.getByRole('button', { name: 'Token Breakdown' })
+  expect(trigger).toHaveFocus()
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(screen.getByText('Total Tokens')).toBeVisible())
 })
 
 it('shows the established empty state when no logs exist', () => {

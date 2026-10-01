@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
@@ -64,7 +64,11 @@ function makeLog(other: LogOtherData): UsageLog {
   }
 }
 
-function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
+function renderDetails(
+  other: LogOtherData,
+  promptTokens = 0,
+  section: 'billing' | 'technical' | 'details' = 'technical'
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -87,21 +91,33 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
       />
     </QueryClientProvider>
   )
+  if (section === 'details') {
+    fireEvent.click(screen.getByRole('tab', { name: 'Details' }))
+  }
+  if (section === 'technical') {
+    fireEvent.click(screen.getByRole('button', { name: 'Technical details' }))
+  }
   return queryClient
 }
 
 function rowValue(label: string): string | null {
-  return screen.getByText(label).nextElementSibling?.textContent ?? null
+  return (
+    screen.getAllByText(label).at(-1)?.nextElementSibling?.textContent ?? null
+  )
 }
 
 test('shows the recorded request and response models in log details', () => {
-  const queryClient = renderDetails({
-    response_model: {
-      requested_model: 'requested-model',
-      upstream_model: 'mapped-model',
-      returned_model: 'unexpected-model',
+  const queryClient = renderDetails(
+    {
+      response_model: {
+        requested_model: 'requested-model',
+        upstream_model: 'mapped-model',
+        returned_model: 'unexpected-model',
+      },
     },
-  })
+    0,
+    'details'
+  )
   expect(screen.getByText('Response model: unexpected-model')).toBeVisible()
   expect(rowValue('Request Model')).toBe('requested-model')
   expect(rowValue('Upstream Model')).toBe('mapped-model')
@@ -198,7 +214,7 @@ describe('usage facts billing details', () => {
     expect(rowValue('Matched Tier')).toBe('720P')
 
     const usageHeader = screen.getByText('Usage parameters')
-    const totalCost = screen.getByText('Total Cost')
+    const totalCost = screen.getByText('Total Cost', { exact: true })
     expect(
       usageHeader.compareDocumentPosition(totalCost) &
         Node.DOCUMENT_POSITION_FOLLOWING
@@ -215,7 +231,7 @@ describe('usage facts billing details', () => {
     expect(screen.queryByText('Usage parameters')).toBeNull()
     expect(screen.queryByText('resolution')).toBeNull()
     expect(screen.queryByText('seconds')).toBeNull()
-    expect(screen.getByText('Total Cost')).toBeInTheDocument()
+    expect(screen.getAllByText(/Total Cost/).length).toBeGreaterThan(0)
   })
 
   test('does not render usage parameter rows when usage_facts is empty', () => {
@@ -229,6 +245,29 @@ describe('usage facts billing details', () => {
     expect(screen.queryByText('Usage parameters')).toBeNull()
     expect(screen.queryByText('resolution')).toBeNull()
     expect(screen.queryByText('seconds')).toBeNull()
-    expect(screen.getByText('Total Cost')).toBeInTheDocument()
+    expect(screen.getAllByText(/Total Cost/).length).toBeGreaterThan(0)
   })
+})
+
+test('consumption opens billing first and keeps technical data collapsed', () => {
+  const client = renderDetails(
+    { model_price: 0.01, group_ratio: 1 },
+    0,
+    'billing'
+  )
+  expect(screen.getByRole('tab', { name: 'Billing' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  expect(
+    screen.getByRole('region', { name: 'Billing calculation' })
+  ).toHaveTextContent('= $0.01')
+  expect(screen.getByRole('table')).toHaveTextContent('Unit Price')
+  expect(
+    screen.getByRole('button', { name: 'Technical details' })
+  ).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.queryByText('Request ID')).toBeNull()
+  fireEvent.click(screen.getByRole('tab', { name: 'Details' }))
+  expect(screen.getByText('Request ID')).toBeVisible()
+  client.clear()
 })

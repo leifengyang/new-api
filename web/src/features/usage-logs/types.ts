@@ -179,6 +179,9 @@ export interface LogOtherData {
   audio_output?: number
   text_input?: number
   text_output?: number
+  usage_semantic?: string
+  input_tokens_total?: number
+  cache_write_tokens?: number
   cache_tokens?: number
   image_cache_tokens?: number
   billing_tokens?: Record<string, number>
@@ -211,6 +214,7 @@ export interface LogOtherData {
   // billing_mode === 'tiered_expr'. expr_b64 is the base64-encoded billing
   // expression; the matched tier and request-rule traces come from the actual
   // settlement run.
+  charge_adjustment?: { kind: string }
   billing_mode?: string
   billing_unit?: 'token' | 'request'
   fixed_price?: number
