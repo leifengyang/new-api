@@ -31,13 +31,15 @@ import { createServerError } from '@/lib/server-error-message'
 
 import {
   getDegradationWatchChannels,
+  getDegradationWatchHistory,
+  getDegradationWatchRecord,
+  getDegradationWatchActivity,
   getDegradationWatchPrompt,
   getDegradationWatchRecordHtml,
   getDegradationWatchWall,
   runDegradationWatch,
   setDegradationWatchRecordHidden,
 } from '../api'
-import { WALL_ROUNDS_PER_PAGE } from '../lib/rounds'
 import type { DegradationWatchRunScope } from '../types'
 
 export const degradationWatchKeys = {
@@ -47,20 +49,12 @@ export const degradationWatchKeys = {
   channels: ['degradation-watch', 'channels'] as const,
 }
 
-/**
- * The wall pages by rounds. Only the first page refetches on the interval
- * (TanStack refetches every loaded page, so the whole list stays consistent);
- * lanes come with the first page.
- */
+/** Fetch the lane catalog separately from each model's paginated history. */
 export function useDegradationWatchWall() {
-  return useInfiniteQuery({
+  return useQuery({
     queryKey: degradationWatchKeys.wall,
-    initialPageParam: 0,
-    queryFn: async ({ pageParam }) => {
-      const result = await getDegradationWatchWall({
-        before: pageParam,
-        rounds: WALL_ROUNDS_PER_PAGE,
-      })
+    queryFn: async () => {
+      const result = await getDegradationWatchWall({ catalog: true })
       if (!result.success || !result.data) {
         throw createServerError(
           result,
@@ -69,8 +63,69 @@ export function useDegradationWatchWall() {
       }
       return result.data
     },
-    getNextPageParam: (lastPage) => lastPage.next_before || undefined,
-    refetchInterval: 60_000,
+    refetchInterval: 5_000,
+  })
+}
+
+export function useDegradationWatchHistory(model: string) {
+  return useInfiniteQuery({
+    queryKey: [...degradationWatchKeys.wall, 'model', model],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const result = await getDegradationWatchHistory(model, pageParam)
+      if (!result.success || !result.data) {
+        throw createServerError(
+          result,
+          i18next.t('Failed to load the degradation watch')
+        )
+      }
+      return result.data
+    },
+    getNextPageParam: (page) => page.next_before || undefined,
+    refetchInterval: (query) =>
+      query.state.data?.pages[0]?.records.some(
+        (record) => record.status === 'queued' || record.status === 'running'
+      )
+        ? 1_000
+        : 5_000,
+  })
+}
+
+export function useDegradationWatchActivity() {
+  return useQuery({
+    queryKey: ['degradation-watch', 'activity'],
+    queryFn: async () => {
+      const result = await getDegradationWatchActivity()
+      if (!result.success || !result.data) {
+        throw createServerError(
+          result,
+          i18next.t('Failed to load the degradation watch')
+        )
+      }
+      return result.data
+    },
+    refetchInterval: (query) =>
+      ['pending', 'running'].includes(query.state.data?.task?.status ?? '')
+        ? 1_000
+        : 5_000,
+  })
+}
+
+export function useDegradationWatchRecord(id: number | undefined) {
+  return useQuery({
+    queryKey: ['degradation-watch', 'record', id],
+    enabled: id !== undefined,
+    queryFn: async () => {
+      const result = await getDegradationWatchRecord(id ?? 0)
+      if (!result.success || !result.data) {
+        throw createServerError(result, i18next.t('Failed to load the artwork'))
+      }
+      return result.data
+    },
+    refetchInterval: (query) => {
+      const status = query.state.data?.record.status
+      return status === 'queued' || status === 'running' ? 1_000 : false
+    },
   })
 }
 
@@ -160,13 +215,9 @@ export function useRunDegradationWatch() {
       return result.data
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: degradationWatchKeys.channels,
-      })
+      void queryClient.invalidateQueries({ queryKey: ['degradation-watch'] })
       toast.success(
-        i18next.t(
-          'Check queued. New artwork appears on the wall once the run finishes.'
-        )
+        i18next.t('Check queued. Follow live progress here or on the wall.')
       )
     },
     onError: (error: Error) => {

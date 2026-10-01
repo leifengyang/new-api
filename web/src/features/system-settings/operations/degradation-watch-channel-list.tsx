@@ -31,7 +31,11 @@ import {
   FormLabel,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { useRunDegradationWatch } from '@/features/degradation-watch/hooks/use-degradation-watch'
+import { DegradationWatchActivity } from '@/features/degradation-watch/components/watch-activity'
+import {
+  useDegradationWatchActivity,
+  useRunDegradationWatch,
+} from '@/features/degradation-watch/hooks/use-degradation-watch'
 import type { DegradationWatchChannels } from '@/features/degradation-watch/types'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -51,6 +55,10 @@ export function DegradationWatchChannelList(
 ) {
   const { t } = useTranslation()
   const run = useRunDegradationWatch()
+  const activity = useDegradationWatchActivity()
+  const taskActive =
+    activity.data?.task?.status === 'pending' ||
+    activity.data?.task?.status === 'running'
   const targets = useWatch({ control: props.form.control, name: 'targets' })
   const channels = (props.data?.available_channels ?? [])
     .filter((channel) =>
@@ -66,7 +74,8 @@ export function DegradationWatchChannelList(
       ),
     }))
   const dirty = props.form.formState.isDirty
-  const runDisabled = props.busy || props.unavailable || dirty || run.isPending
+  const runDisabled =
+    props.busy || props.unavailable || dirty || run.isPending || taskActive
   const hasEnabledTarget = channels.some((channel) =>
     channel.targets.some((target) => target.enabled)
   )
@@ -113,6 +122,12 @@ export function DegradationWatchChannelList(
           </Button>
         </div>
       </div>
+      <DegradationWatchActivity
+        data={activity.data}
+        loading={run.isPending}
+        error={activity.isError}
+        onRetry={() => void activity.refetch()}
+      />
       {dirty && (
         <Alert>
           <AlertDescription>

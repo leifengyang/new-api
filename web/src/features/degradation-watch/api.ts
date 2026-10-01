@@ -25,16 +25,51 @@ import type {
   DegradationWatchRunResult,
   DegradationWatchRunScope,
   DegradationWatchWall,
+  DegradationWatchRecord,
 } from './types'
 
 /** One page of rounds, newest first; `before` is the previous page's `next_before`. */
 export async function getDegradationWatchWall(params: {
   before?: number
   rounds?: number
+  catalog?: boolean
 }): Promise<ApiResponse<DegradationWatchWall>> {
   const res = await api.get('/api/degradation_watch/wall', {
-    params: { before: params.before ?? 0, rounds: params.rounds },
+    params: {
+      before: params.before ?? 0,
+      rounds: params.rounds,
+      catalog: params.catalog,
+    },
   })
+  return res.data
+}
+
+export async function getDegradationWatchHistory(
+  model: string,
+  before: number
+): Promise<
+  ApiResponse<{ records: DegradationWatchRecord[]; next_before: number }>
+> {
+  const res = await api.get('/api/degradation_watch/wall', {
+    params: { model, before, rounds: 10 },
+  })
+  return res.data
+}
+
+export async function getDegradationWatchRecord(
+  id: number
+): Promise<ApiResponse<{ record: DegradationWatchRecord; output: string }>> {
+  const res = await api.get(`/api/degradation_watch/records/${id}`)
+  return res.data
+}
+
+export async function getDegradationWatchActivity(): Promise<
+  ApiResponse<{
+    task: { task_id: string; status: string; error: string } | null
+    records: DegradationWatchRecord[]
+  }>
+> {
+  const res = await api.get('/api/degradation_watch/activity')
   return res.data
 }
 

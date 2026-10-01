@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Bird } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -27,18 +27,18 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
-import { formatTimestampToDate } from '@/lib/format'
 
-import { useDegradationWatchWall } from '../hooks/use-degradation-watch'
+import {
+  useDegradationWatchWall,
+  useDegradationWatchHistory,
+} from '../hooks/use-degradation-watch'
 import { formatElapsed, successRate } from '../lib/artwork'
-import { buildWallRows, flattenRounds } from '../lib/rounds'
 import type { DegradationWatchLane, DegradationWatchRecord } from '../types'
 import { RecordPlayerDialog } from './artwork-player-dialog'
 import { RecordCard } from './record-card'
 
 /** Lanes stay readable on narrow screens by scrolling sideways instead of shrinking. */
-const LANE_MIN_WIDTH = 260
-const TIME_COLUMN_WIDTH = 96
+const LANE_MIN_WIDTH = 300
 
 interface LaneHeaderProps {
   lane: DegradationWatchLane
@@ -87,36 +87,55 @@ function LaneHeader(props: LaneHeaderProps) {
   )
 }
 
-interface LaneCellProps {
-  records: DegradationWatchRecord[]
+function ModelLane(props: {
+  lane: DegradationWatchLane
   onOpen: (record: DegradationWatchRecord) => void
-}
-
-/** One channel fills the cell; several sit side by side as labelled thumbnails. */
-function LaneCell(props: LaneCellProps) {
-  if (props.records.length === 0) {
-    return (
-      <div
-        className='text-muted-foreground/60 flex min-h-24 items-center justify-center text-sm'
-        aria-hidden='true'
-      >
-        —
-      </div>
-    )
-  }
-  const compact = props.records.length > 1
+}) {
+  const { t } = useTranslation()
+  const history = useDegradationWatchHistory(props.lane.model)
+  const records = [
+    ...new Map(
+      (history.data?.pages.flatMap((page) => page.records) ?? []).map(
+        (record) => [record.id, record]
+      )
+    ).values(),
+  ]
   return (
-    <div className={compact ? 'grid grid-cols-2 gap-2' : 'flex flex-col'}>
-      {props.records.map((record) => (
-        <RecordCard
-          key={record.id}
-          record={record}
-          title={record.channel_title}
-          compact={compact}
-          onOpen={props.onOpen}
-        />
-      ))}
-    </div>
+    <section
+      className='bg-muted/20 min-w-0 not-last:border-r'
+      aria-label={props.lane.model}
+    >
+      <LaneHeader lane={props.lane} />
+      <div className='flex flex-col gap-3 p-3'>
+        {history.isLoading && <LoadingState />}
+        {history.isError && (
+          <ErrorState
+            title={t('Failed to load the degradation watch')}
+            onRetry={() => void history.refetch()}
+          />
+        )}
+        {!history.isLoading && !history.isError && records.length === 0 && (
+          <EmptyState title={t('No artwork yet')} className='min-h-40' />
+        )}
+        {records.map((record) => (
+          <RecordCard
+            key={record.id}
+            record={record}
+            title={record.channel_title}
+            onOpen={props.onOpen}
+          />
+        ))}
+        {history.hasNextPage && (
+          <Button
+            variant='outline'
+            disabled={history.isFetchingNextPage}
+            onClick={() => void history.fetchNextPage()}
+          >
+            {history.isFetchingNextPage ? t('Loading...') : t('Load more')}
+          </Button>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -126,16 +145,10 @@ export function WatchWall() {
   const [openRecord, setOpenRecord] = useState<DegradationWatchRecord | null>(
     null
   )
-
-  const pages = wall.data?.pages
-  const lanes = useMemo(() => pages?.[0]?.lanes ?? [], [pages])
-  const rows = useMemo(
-    () => buildWallRows(lanes, flattenRounds(pages ?? [])),
-    [lanes, pages]
-  )
-
+  const first = wall.data
+  const lanes = first?.lanes ?? []
   if (wall.isLoading) return <LoadingState />
-  if (wall.isError || !pages?.[0]) {
+  if (!first) {
     return (
       <ErrorState
         title={t('Failed to load the degradation watch')}
@@ -143,72 +156,34 @@ export function WatchWall() {
       />
     )
   }
-
-  const first = pages[0]
-  let emptyDescription = t('The degradation watch is currently turned off.')
-  if (first.enabled) {
-    emptyDescription = t('The first round has not finished yet.')
-  }
-  const gridTemplateColumns = `${TIME_COLUMN_WIDTH}px repeat(${lanes.length}, minmax(${LANE_MIN_WIDTH}px, 1fr))`
-
   return (
-    <div className='flex flex-col gap-6'>
+    <div className='flex flex-col gap-4'>
       <Alert>
         <AlertDescription>
           {t(
-            'Every {{minutes}} minutes each channel gets the same prompt for every model below: draw a pelican riding a bicycle as an HTML + SVG animation. Each column is one model and each row one round, so a visibly worse drawing on one channel stands out against its neighbours.',
-            { minutes: first.interval_minutes }
+            'Each model has its own latest checks, newest first. Running checks update automatically.'
           )}
         </AlertDescription>
       </Alert>
-
-      {lanes.length === 0 || rows.length === 0 ? (
-        <EmptyState
-          icon={Bird}
-          title={t('No artwork yet')}
-          description={emptyDescription}
-        />
+      {lanes.length === 0 ? (
+        <EmptyState icon={Bird} title={t('No artwork yet')} />
       ) : (
         <div
-          className='max-h-[calc(100dvh-14rem)] overflow-auto rounded-lg border'
+          className='max-h-[calc(100dvh-14rem)] overflow-auto rounded-xl border'
           data-testid='degradation-watch-grid'
         >
-          <div className='grid' style={{ gridTemplateColumns }}>
-            <div className='bg-background sticky top-0 left-0 z-20 border-r border-b' />
+          <div
+            className='grid items-start'
+            style={{
+              gridTemplateColumns: `repeat(${lanes.length}, minmax(${LANE_MIN_WIDTH}px, 1fr))`,
+            }}
+          >
             {lanes.map((lane) => (
-              <LaneHeader key={lane.model} lane={lane} />
-            ))}
-            {rows.map((row) => (
-              <div key={row.key} className='contents'>
-                <div className='bg-background text-muted-foreground sticky left-0 z-[5] border-r border-b px-2 py-3 text-xs tabular-nums'>
-                  {formatTimestampToDate(row.startedAt)}
-                </div>
-                {row.cells.map((records, index) => (
-                  <div
-                    key={lanes[index].model}
-                    className='border-b p-2 not-last:border-r'
-                  >
-                    <LaneCell records={records} onOpen={setOpenRecord} />
-                  </div>
-                ))}
-              </div>
+              <ModelLane key={lane.model} lane={lane} onOpen={setOpenRecord} />
             ))}
           </div>
         </div>
       )}
-
-      {wall.hasNextPage && (
-        <div className='flex justify-center'>
-          <Button
-            variant='outline'
-            disabled={wall.isFetchingNextPage}
-            onClick={() => void wall.fetchNextPage()}
-          >
-            {wall.isFetchingNextPage ? t('Loading...') : t('Load more')}
-          </Button>
-        </div>
-      )}
-
       <RecordPlayerDialog
         title={openRecord?.channel_title ?? ''}
         record={openRecord}

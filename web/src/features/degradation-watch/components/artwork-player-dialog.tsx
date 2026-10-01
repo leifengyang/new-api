@@ -28,11 +28,12 @@ import { useIsAdmin } from '@/hooks/use-admin'
 
 import {
   useRecordHtml,
+  useDegradationWatchRecord,
   useSetRecordHidden,
 } from '../hooks/use-degradation-watch'
 import type { DegradationWatchRecord } from '../types'
 import { ArtworkFrame } from './artwork-frame'
-import { FailurePreview, RecordMeta } from './record-card'
+import { FailurePreview, RecordMeta, RecordUsage } from './record-card'
 
 interface ArtworkPlayerDialogProps {
   open: boolean
@@ -127,11 +128,54 @@ interface RecordPlayerDialogProps {
 export function RecordPlayerDialog(props: RecordPlayerDialogProps) {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
-  const record = props.record
+  const detail = useDegradationWatchRecord(props.record?.id)
+  const record = detail.data?.record ?? props.record
   const html = useRecordHtml(record?.id ?? 0, Boolean(record?.success))
   const setHidden = useSetRecordHidden()
 
   if (!record) return null
+
+  const active = record.status === 'queued' || record.status === 'running'
+  if (active || !record.success) {
+    return (
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) props.onClose()
+        }}
+        title={`${record.model_name} · ${props.title}`}
+        contentClassName='sm:max-w-3xl'
+      >
+        <div className='flex flex-col gap-4'>
+          <RecordUsage record={record} />
+          {active && (
+            <p className='text-sm text-sky-700 dark:text-sky-300'>
+              {record.status === 'queued'
+                ? t('Queued')
+                : t('Receiving model output...')}
+            </p>
+          )}
+          {!active && (
+            <FailurePreview
+              reason={record.error_details || record.failure_reason}
+            />
+          )}
+          <div className='flex items-center justify-between text-sm font-medium'>
+            <span>{t('Live output')}</span>
+            <CopyButton value={detail.data?.output ?? ''} />
+          </div>
+          {detail.isError && (
+            <p className='text-destructive text-sm'>
+              {t('Failed to load the artwork')}
+            </p>
+          )}
+          <pre className='bg-muted max-h-[50dvh] min-h-32 overflow-auto rounded-lg border p-4 text-xs leading-relaxed break-all whitespace-pre-wrap'>
+            {detail.data?.output || t('Waiting for model output...')}
+          </pre>
+        </div>
+      </Dialog>
+    )
+  }
 
   return (
     <ArtworkPlayerDialog

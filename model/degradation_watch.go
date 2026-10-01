@@ -13,15 +13,19 @@ import (
 type DegradationWatchRecord struct {
 	Id        int `json:"id"`
 	ChannelId int `json:"channel_id" gorm:"index;not null"`
-	// RunId 是这一轮系统任务的 TaskID，同一轮所有模型、所有渠道共用，检测墙
-	// 按它把作品对齐成一行。多模型之前的旧记录为空，按时间归轮。
-	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:''"`
+	// RunId ties each model/channel attempt to its background batch. Legacy records may be empty.
+	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:'';index"`
 	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
 	ReasoningEffort string `json:"reasoning_effort" gorm:"type:varchar(32);not null;default:''"`
 	Success         bool   `json:"success" gorm:"not null;default:false"`
 	// FailureReason 截断到 maxDegradationWatchFailureReasonRunes，上游偶尔把整页
 	// HTML 错误页塞进报错里。
 	FailureReason string `json:"failure_reason" gorm:"type:varchar(512);not null;default:''"`
+	// Empty status denotes a completed legacy record.
+	Status          string   `json:"status" gorm:"type:varchar(16);not null;default:'';index"`
+	ErrorDetails    LongText `json:"error_details"`
+	OutputText      LongText `json:"-"`
+	TokensEstimated bool     `json:"tokens_estimated" gorm:"not null;default:false"`
 	// Html 是抽出来的作品本体，动辄几十 KB，所以用 LongText；列表接口不查这一列。
 	Html             LongText `json:"-"`
 	ElapsedMs        int64    `json:"elapsed_ms" gorm:"not null;default:0"`
@@ -39,6 +43,7 @@ const maxDegradationWatchFailureReasonRunes = 500
 var degradationWatchListColumns = []string{
 	"id", "channel_id", "run_id", "model_name", "reasoning_effort", "success", "failure_reason",
 	"elapsed_ms", "prompt_tokens", "completion_tokens", "reasoning_tokens", "hidden", "created_at",
+	"status", "error_details", "tokens_estimated",
 }
 
 // DegradationWatchChannelStats 是一个渠道在保留窗口内的统计。Total / Succeeded
@@ -56,12 +61,70 @@ func CreateDegradationWatchRecord(record *DegradationWatchRecord) error {
 		return errors.New("degradation watch record is nil")
 	}
 	if runes := []rune(record.FailureReason); len(runes) > maxDegradationWatchFailureReasonRunes {
+		if record.ErrorDetails == "" {
+			record.ErrorDetails = LongText(record.FailureReason)
+		}
 		record.FailureReason = string(runes[:maxDegradationWatchFailureReasonRunes])
 	}
 	if record.CreatedAt == 0 {
 		record.CreatedAt = common.GetTimestamp()
 	}
 	return DB.Create(record).Error
+}
+
+// UpdateDegradationWatchProgress never overwrites a terminal result or visibility.
+func UpdateDegradationWatchProgress(record *DegradationWatchRecord) error {
+	return DB.Model(&DegradationWatchRecord{}).Where("id = ? AND status IN ?", record.Id, []string{"queued", "running"}).Updates(map[string]any{
+		"status": record.Status, "elapsed_ms": record.ElapsedMs, "prompt_tokens": record.PromptTokens,
+		"completion_tokens": record.CompletionTokens, "reasoning_tokens": record.ReasoningTokens,
+		"tokens_estimated": record.TokensEstimated, "output_text": record.OutputText,
+	}).Error
+}
+
+func FinishDegradationWatchRecord(record *DegradationWatchRecord) error {
+	if record.Success {
+		record.Status = "succeeded"
+	} else {
+		record.Status = "failed"
+	}
+	if record.ErrorDetails == "" {
+		record.ErrorDetails = LongText(record.FailureReason)
+	}
+	if runes := []rune(record.FailureReason); len(runes) > maxDegradationWatchFailureReasonRunes {
+		record.FailureReason = string(runes[:maxDegradationWatchFailureReasonRunes])
+	}
+	return DB.Model(&DegradationWatchRecord{}).Where("id = ? AND status IN ?", record.Id, []string{"queued", "running"}).Updates(map[string]any{
+		"status": record.Status, "success": record.Success, "failure_reason": record.FailureReason, "error_details": record.ErrorDetails,
+		"html": record.Html, "output_text": record.OutputText, "elapsed_ms": record.ElapsedMs,
+		"prompt_tokens": record.PromptTokens, "completion_tokens": record.CompletionTokens, "reasoning_tokens": record.ReasoningTokens, "tokens_estimated": record.TokensEstimated,
+	}).Error
+}
+
+func GetDegradationWatchOutput(id int) (string, error) {
+	var record DegradationWatchRecord
+	err := DB.Select("id", "output_text").Where("id = ?", id).First(&record).Error
+	return string(record.OutputText), err
+}
+
+func GetDegradationWatchActivity() (*SystemTask, []*DegradationWatchRecord, error) {
+	var task SystemTask
+	if err := DB.Where("type = ?", SystemTaskTypeDegradationWatch).Order("id desc").First(&task).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, []*DegradationWatchRecord{}, nil
+		}
+		return nil, nil, err
+	}
+	var records []*DegradationWatchRecord
+	err := DB.Select(degradationWatchListColumns).Where("run_id = ?", task.TaskID).Order("id desc").Find(&records).Error
+	return &task, records, err
+}
+
+// Recover records left behind by a crashed or cancelled system-task runner.
+func FailInterruptedDegradationWatchRecords() error {
+	activeRuns := DB.Model(&SystemTask{}).Select("task_id").Where("type = ? AND status IN ?", SystemTaskTypeDegradationWatch, activeSystemTaskStatuses())
+	return DB.Model(&DegradationWatchRecord{}).Where("status IN ? AND run_id NOT IN (?)", []string{"queued", "running"}, activeRuns).Updates(map[string]any{
+		"status": "failed", "failure_reason": "interrupted", "error_details": "Detection interrupted: its background task stopped or lost its execution lease.",
+	}).Error
 }
 
 // ListDegradationWatchRecords 按时间倒序返回某个渠道的记录（不含 html）。
@@ -126,6 +189,7 @@ func GetDegradationWatchChannelStats(channelIds []int) (map[int]*DegradationWatc
 	}
 	var rows []DegradationWatchChannelStats
 	err := DB.Model(&DegradationWatchRecord{}).
+		Where("status NOT IN ?", []string{"queued", "running"}).
 		Select("channel_id, COUNT(*) AS total, "+
 			"SUM(CASE WHEN success = ? THEN 1 ELSE 0 END) AS succeeded, "+
 			"SUM(CASE WHEN hidden = ? THEN 1 ELSE 0 END) AS visible, "+
@@ -163,6 +227,7 @@ func GetDegradationWatchModelStats(channelIds []int) (map[string]*DegradationWat
 		return stats, nil
 	}
 	query := DB.Model(&DegradationWatchRecord{}).
+		Where("status NOT IN ?", []string{"queued", "running"}).
 		Select("model_name, COUNT(*) AS total, "+
 			"SUM(CASE WHEN success = ? THEN 1 ELSE 0 END) AS succeeded, "+
 			"SUM(CASE WHEN hidden = ? THEN 1 ELSE 0 END) AS visible, "+
@@ -239,6 +304,7 @@ func PruneDegradationWatchRecords(series DegradationWatchSeries, keep int) (int6
 	var boundary []int
 	err := DB.Model(&DegradationWatchRecord{}).
 		Where("channel_id = ? AND model_name = ?", series.ChannelId, series.ModelName).
+		Where("status NOT IN ?", []string{"queued", "running"}).
 		Order("id desc").
 		Offset(keep-1).
 		Limit(1).
@@ -250,6 +316,7 @@ func PruneDegradationWatchRecords(series DegradationWatchSeries, keep int) (int6
 		return 0, nil
 	}
 	result := DB.Where("channel_id = ? AND model_name = ? AND id < ?", series.ChannelId, series.ModelName, boundary[0]).
+		Where("status NOT IN ?", []string{"queued", "running"}).
 		Delete(&DegradationWatchRecord{})
 	return result.RowsAffected, result.Error
 }
