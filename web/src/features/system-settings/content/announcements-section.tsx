@@ -51,15 +51,22 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { AnnouncementDetailModal } from '@/features/dashboard/components/overview/announcement-detail-dialog'
+import { AnnouncementBoardDialog } from '@/features/dashboard/components/overview/announcement-board-dialog'
+import {
+  latestPopupAnnouncements,
+  announcementSummary,
+} from '@/features/dashboard/lib/announcements'
+import type { AnnouncementBanner } from '@/features/dashboard/types'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { AnnouncementBannerEditor } from './announcement-banner-editor'
 
 type Announcement = {
+  title?: string
   id: number
   content: string
   publishDate: string
@@ -73,9 +80,15 @@ type Announcement = {
 type AnnouncementsSectionProps = {
   enabled: boolean
   data: string
+  bannerData?: string
 }
 
 const announcementSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, 'Title is required')
+    .max(100, 'Title must be less than 100 characters'),
   content: z
     .string()
     .min(1, 'Content is required')
@@ -129,12 +142,22 @@ const typeOptions = [
 export function AnnouncementsSection({
   enabled,
   data,
+  bannerData = '{}',
 }: AnnouncementsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [isEnabled, setIsEnabled] = useState(enabled)
   const [preview, setPreview] = useState<Announcement | null>(null)
+  const [banner, setBanner] = useState<AnnouncementBanner>({
+    imageUrl: '',
+    linkUrl: '',
+    published: false,
+  })
+  const [imagePreview, setImagePreview] = useState<{
+    banner: AnnouncementBanner
+    target: 'home' | 'authenticated'
+  } | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [showDialog, setShowDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -145,6 +168,7 @@ export function AnnouncementsSection({
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementSchema),
     defaultValues: {
+      title: '',
       content: '',
       publishDate: new Date().toISOString(),
       type: 'default',
@@ -173,6 +197,36 @@ export function AnnouncementsSection({
     setIsEnabled(enabled)
   }, [enabled])
 
+  useEffect(() => {
+    try {
+      const parsed = JSON.parse(
+        bannerData || '{}'
+      ) as Partial<AnnouncementBanner>
+      setBanner({
+        imageUrl: parsed.imageUrl ?? '',
+        linkUrl: parsed.linkUrl ?? '',
+        published: parsed.published === true,
+        revision: parsed.revision,
+      })
+    } catch {
+      setBanner({ imageUrl: '', linkUrl: '', published: false })
+    }
+  }, [bannerData])
+
+  const persistBanner = async (next: AnnouncementBanner) => {
+    try {
+      await updateOption.mutateAsync({
+        key: 'console_setting.announcements_banner',
+        value: JSON.stringify(next),
+      })
+      setBanner(next)
+      return true
+    } catch (error) {
+      handleServerError(error, t('Failed to save announcements'))
+      return false
+    }
+  }
+
   const handleToggleEnabled = async (checked: boolean) => {
     try {
       await updateOption.mutateAsync({
@@ -189,6 +243,7 @@ export function AnnouncementsSection({
   const handleAdd = () => {
     setEditingAnnouncement(null)
     form.reset({
+      title: '',
       content: '',
       publishDate: new Date().toISOString(),
       type: 'default',
@@ -201,6 +256,9 @@ export function AnnouncementsSection({
   const handleEdit = (announcement: Announcement) => {
     setEditingAnnouncement(announcement)
     form.reset({
+      title:
+        announcement.title ||
+        announcementSummary(announcement.content).slice(0, 100),
       content: announcement.content,
       publishDate: announcement.publishDate,
       type: announcement.type,
@@ -275,6 +333,19 @@ export function AnnouncementsSection({
   }
 
   const handlePublish = async () => {
+    if (updateOption.isPending || !isEnabled) return
+    if (imagePreview) {
+      if (
+        await persistBanner({
+          ...imagePreview.banner,
+          published: true,
+          revision: crypto.randomUUID(),
+        })
+      ) {
+        setImagePreview(null)
+      }
+      return
+    }
     if (!preview || updateOption.isPending) return
     const published = {
       ...preview,
@@ -308,6 +379,16 @@ export function AnnouncementsSection({
     })
   }, [announcements])
 
+  const previewItems = latestPopupAnnouncements(
+    announcements.map((item) =>
+      item.id === preview?.id ? { ...preview, published: true } : item
+    ),
+    preview?.popupTarget ?? imagePreview?.target ?? 'authenticated',
+    preview
+      ? Math.max(Date.now(), new Date(preview.publishDate).getTime())
+      : Date.now()
+  )
+
   const getRelativeTime = (date: string) => {
     const now = new Date()
     const past = new Date(date)
@@ -324,6 +405,14 @@ export function AnnouncementsSection({
   return (
     <SettingsSection title={t('Announcements')}>
       <div className='space-y-4'>
+        <AnnouncementBannerEditor
+          banner={banner}
+          onSave={persistBanner}
+          disabled={updateOption.isPending}
+          onPreview={(target) =>
+            setImagePreview({ banner: { ...banner }, target })
+          }
+        />
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <div className='flex flex-wrap items-center gap-2'>
             <Button
@@ -390,9 +479,10 @@ export function AnnouncementsSection({
             },
             {
               id: 'content',
-              header: t('Content'),
+              header: t('Title'),
               cellClassName: 'max-w-xs truncate',
-              cell: (announcement) => announcement.content,
+              cell: (announcement) =>
+                announcement.title || announcementSummary(announcement.content),
             },
             {
               id: 'publish-date',
@@ -584,6 +674,19 @@ export function AnnouncementsSection({
             />
             <FormField
               control={form.control}
+              name='title'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Title')}</FormLabel>
+                  <FormControl>
+                    <Input {...field} maxLength={100} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name='content'
               render={({ field }) => (
                 <FormItem>
@@ -700,22 +803,58 @@ export function AnnouncementsSection({
         </Form>
       </Dialog>
 
-      <AnnouncementDetailModal
-        open={preview !== null}
+      <AnnouncementBoardDialog
+        key={preview?.id ?? imagePreview?.target ?? 'closed'}
+        open={preview !== null || imagePreview !== null}
         onOpenChange={(open) => {
-          if (!open && !updateOption.isPending) setPreview(null)
+          if (!open && !updateOption.isPending) {
+            setPreview(null)
+            setImagePreview(null)
+          }
         }}
-        announcement={preview}
+        items={previewItems}
+        banner={imagePreview?.banner ?? (banner.published ? banner : null)}
+        description={
+          <span className='space-y-1'>
+            <span className='block'>
+              {preview?.popupTarget === 'home' ||
+              imagePreview?.target === 'home'
+                ? t('Preview homepage popup')
+                : t('Preview login popup')}
+            </span>
+            {preview &&
+              new Date(preview.publishDate).getTime() > Date.now() && (
+                <span className='block'>
+                  {t('Publish Date')}:{' '}
+                  {dayjs(preview.publishDate).format('YYYY-MM-DD HH:mm:ss')}
+                </span>
+              )}
+            {preview &&
+              !previewItems.some((item) => item.id === preview.id) && (
+                <span className='block'>
+                  {t(
+                    'This announcement is older than the latest three and will not appear in the popup.'
+                  )}
+                </span>
+              )}
+          </span>
+        }
         footer={
           <>
             <Button
               variant='outline'
               disabled={updateOption.isPending}
-              onClick={() => setPreview(null)}
+              onClick={() => {
+                setPreview(null)
+                setImagePreview(null)
+              }}
             >
               {t('Close')}
             </Button>
-            {preview?.published === false && (
+            {(preview?.published === false ||
+              (imagePreview &&
+                !imagePreview.banner.published &&
+                imagePreview.banner.imageUrl)) && (
               <Button
                 disabled={updateOption.isPending || !isEnabled}
                 onClick={handlePublish}

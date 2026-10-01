@@ -16,9 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test } from 'vitest'
 
 import type { AnnouncementItem } from '@/features/dashboard/types'
 
@@ -26,7 +26,9 @@ import { AnnouncementPopup } from '../announcement-popup'
 
 const home: AnnouncementItem = {
   id: 1,
+  title: 'Service update',
   content: 'Public announcement',
+  publishDate: '2020-01-01T00:00:00Z',
   popupTarget: 'home',
   published: true,
   revision: 'v1',
@@ -34,6 +36,7 @@ const home: AnnouncementItem = {
 const privateItem: AnnouncementItem = {
   ...home,
   id: 2,
+  title: 'Member update',
   content: 'Private announcement',
   popupTarget: 'authenticated',
 }
@@ -42,76 +45,206 @@ beforeEach(() => {
     configurable: true,
     value: () => [],
   })
-  const data = new Map<string, string>()
-  vi.stubGlobal('localStorage', {
-    getItem: (key: string) => data.get(key) ?? null,
-    setItem: (key: string, value: string) => data.set(key, value),
-  })
 })
 afterEach(() => {
-  vi.unstubAllGlobals()
   Reflect.deleteProperty(Element.prototype, 'getAnimations')
 })
 
-test('guest homepage shows public content and never shows a private or draft announcement', async () => {
-  const view = render(
+test('homepage selects the latest three due public announcements and expands details inside the popup', async () => {
+  const user = userEvent.setup()
+  render(
     <AnnouncementPopup
-      items={[privateItem, { ...home, published: false }, home]}
-      isHome
+      items={[
+        privateItem,
+        { ...home, id: 3, title: 'Draft', published: false },
+        {
+          ...home,
+          id: 4,
+          title: 'Future',
+          publishDate: '2999-01-01T00:00:00Z',
+        },
+        { ...home, id: 5, title: 'Older', publishDate: '2019-01-01T00:00:00Z' },
+        home,
+        {
+          ...home,
+          id: 6,
+          title: 'Second',
+          publishDate: '2020-01-02T00:00:00Z',
+        },
+        {
+          ...home,
+          id: 7,
+          title: 'Newest',
+          publishDate: '2020-01-03T00:00:00Z',
+        },
+      ]}
+      target='home'
+      trigger='home'
     />
   )
-  expect(await screen.findByText(home.content)).toBeVisible()
-  expect(screen.queryByText(privateItem.content)).not.toBeInTheDocument()
-  view.rerender(
-    <AnnouncementPopup items={[privateItem, home]} isHome={false} />
+  const region = await screen.findByRole('region', {
+    name: 'Latest announcements',
+  })
+  expect(
+    within(region)
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+  ).toEqual([
+    expect.stringContaining('Newest'),
+    expect.stringContaining('Second'),
+    expect.stringContaining('Service update'),
+  ])
+  expect(screen.queryByText('Member update')).not.toBeInTheDocument()
+  expect(screen.queryByText('Draft')).not.toBeInTheDocument()
+  expect(screen.queryByText('Future')).not.toBeInTheDocument()
+  expect(screen.queryByText('Older')).not.toBeInTheDocument()
+  await user.click(
+    within(region).getByRole('button', { name: /Service update/ })
   )
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  expect(screen.getByRole('heading', { name: 'Service update' })).toBeVisible()
+  await user.click(
+    screen.getByRole('button', { name: 'Back to announcements' })
   )
+  expect(within(region).getAllByRole('button')).toHaveLength(3)
 })
 
-test('dismissal survives remount while a new published revision shows again', async () => {
-  const user = userEvent.setup()
-  const view = render(<AnnouncementPopup items={[home]} isHome />)
-  await user.click(await screen.findByRole('button', { name: 'Got it' }))
-  view.unmount()
-  const next = render(<AnnouncementPopup items={[home]} isHome />)
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  next.rerender(
-    <AnnouncementPopup items={[{ ...home, revision: 'v2' }]} isHome />
-  )
-  expect(await screen.findByText(home.content)).toBeVisible()
-})
-
-test('private announcement receipts are separate for each signed-in account', async () => {
+test('closing stays closed during polling, but returning to the homepage opens again', async () => {
   const user = userEvent.setup()
   const view = render(
-    <AnnouncementPopup items={[privateItem]} userId={1} isHome={false} />
+    <AnnouncementPopup items={[home]} target='home' trigger='home' />
   )
   await user.click(await screen.findByRole('button', { name: 'Got it' }))
   view.rerender(
-    <AnnouncementPopup items={[privateItem]} userId={2} isHome={false} />
+    <AnnouncementPopup
+      items={[{ ...home, revision: 'v2' }]}
+      target='home'
+      trigger='home'
+    />
   )
-  expect(await screen.findByText(privateItem.content)).toBeVisible()
-  view.rerender(<AnnouncementPopup items={[privateItem]} isHome />)
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
+  view.unmount()
+  render(<AnnouncementPopup items={[home]} target='home' trigger='home' />)
+  expect(await screen.findByRole('dialog')).toBeVisible()
 })
 
-test('disabled browser storage still allows dismissal without repeated popups', async () => {
-  vi.stubGlobal('localStorage', {
-    getItem: () => {
-      throw new Error('Disabled')
-    },
-    setItem: () => {
-      throw new Error('Disabled')
-    },
-  })
+test('login requires an actual login event and does not repeat when navigating console pages', async () => {
   const user = userEvent.setup()
-  const view = render(<AnnouncementPopup items={[home]} isHome />)
-  await user.click(await screen.findByRole('button', { name: 'Got it' }))
-  view.rerender(<AnnouncementPopup items={[home]} isHome />)
+  const view = render(
+    <AnnouncementPopup
+      items={[home, privateItem]}
+      target='authenticated'
+      trigger={null}
+    />
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  view.rerender(
+    <AnnouncementPopup
+      items={[home, privateItem]}
+      target='authenticated'
+      trigger='login:1'
+      active={false}
+    />
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  view.rerender(
+    <AnnouncementPopup
+      items={[home, privateItem]}
+      target='authenticated'
+      trigger='login:1'
+    />
+  )
+  expect(await screen.findByText('Member update')).toBeVisible()
+  expect(screen.queryByText('Service update')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Got it' }))
+  view.rerender(
+    <AnnouncementPopup
+      items={[privateItem]}
+      target='authenticated'
+      trigger='login:1'
+      active={false}
+    />
+  )
+  view.rerender(
+    <AnnouncementPopup
+      items={[privateItem]}
+      target='authenticated'
+      trigger='login:1'
+    />
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  view.rerender(
+    <AnnouncementPopup
+      items={[privateItem]}
+      target='authenticated'
+      trigger='login:2'
+    />
+  )
+  expect(await screen.findByText('Member update')).toBeVisible()
+})
+
+test('only a published banner can open an otherwise empty popup and its link is accessible', async () => {
+  const banner = {
+    imageUrl: 'https://example.com/banner.png',
+    linkUrl: 'https://example.com/community',
+    published: false,
+  }
+  const view = render(
+    <AnnouncementPopup
+      items={[]}
+      banner={banner}
+      target='home'
+      trigger='home'
+    />
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  view.rerender(
+    <AnnouncementPopup
+      items={[]}
+      banner={{ ...banner, published: true }}
+      target='home'
+      trigger='next-visit'
+    />
+  )
+  expect(
+    await screen.findByRole('img', { name: 'Permanent announcement' })
+  ).toBeVisible()
+  expect(screen.getByRole('link')).toHaveAttribute('href', banner.linkUrl)
+  expect(screen.getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(screen.getByText('No announcements')).toBeVisible()
+})
+
+test('an empty login response completes the visit while loading waits for announcements', async () => {
+  const view = render(
+    <AnnouncementPopup
+      items={[]}
+      target='authenticated'
+      trigger='login:1'
+      loading
+    />
+  )
+  view.rerender(
+    <AnnouncementPopup
+      items={[privateItem]}
+      target='authenticated'
+      trigger='login:1'
+    />
+  )
+  expect(await screen.findByText('Member update')).toBeVisible()
+  view.rerender(
+    <AnnouncementPopup items={[]} target='authenticated' trigger='login:2' />
+  )
+  view.rerender(
+    <AnnouncementPopup
+      items={[privateItem]}
+      target='authenticated'
+      trigger='login:2'
+    />
+  )
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )

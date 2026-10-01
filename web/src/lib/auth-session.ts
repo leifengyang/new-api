@@ -153,7 +153,13 @@ export function applyAuthBundle(
 ): void {
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
-  useAuthStore.getState().auth.setBundle(bundle)
+  // UI login events exclude bootstrap, token refresh, and same-session rotation.
+  useAuthStore
+    .getState()
+    .auth.setBundle(
+      bundle,
+      synchronizeTabs && previousSID !== bundle.session.sid
+    )
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
   }

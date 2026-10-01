@@ -27,6 +27,7 @@ import {
 const defaultContentSettings: ContentSettings = {
   'console_setting.api_info': '[]',
   'console_setting.announcements': '[]',
+  'console_setting.announcements_banner': '{}',
   'console_setting.faq': '[]',
   'console_setting.uptime_kuma_groups': '[]',
   'console_setting.api_info_enabled': true,

@@ -256,6 +256,7 @@ export interface ProcessedUserChartData {
 // ============================================================================
 
 export interface AnnouncementItem {
+  title?: string
   id?: number
   content: string
   publishDate?: string
@@ -263,6 +264,13 @@ export interface AnnouncementItem {
   extra?: string
   popupTarget?: 'home' | 'authenticated'
   published?: boolean
+  revision?: string
+}
+
+export interface AnnouncementBanner {
+  imageUrl: string
+  linkUrl: string
+  published: boolean
   revision?: string
 }
 

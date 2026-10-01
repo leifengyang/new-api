@@ -21,6 +21,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 
 import { useAuthStore, type AuthBundle } from '../stores/auth-store'
 import {
+  applyAuthBundle,
   applyAuthRotation,
   bootstrapAuthentication,
   clearAuthenticatedClientState,
@@ -55,6 +56,20 @@ afterEach(() => {
 })
 
 describe('authentication session coordination', () => {
+  test('login notifications exclude session bootstrap, refresh and token rotation', () => {
+    useAuthStore.getState().auth.reset('idle')
+    const initial = useAuthStore.getState().auth.loginSequence
+    applyAuthBundle(bundle, false)
+    expect(useAuthStore.getState().auth.loginSequence).toBe(initial)
+    applyAuthBundle(bundle)
+    expect(useAuthStore.getState().auth.loginSequence).toBe(initial)
+    useAuthStore.getState().auth.reset('complete')
+    applyAuthBundle(bundle)
+    expect(useAuthStore.getState().auth.loginSequence).toBe(initial + 1)
+    applyAuthRotation(bundle)
+    applyAuthBundle(bundle, false)
+    expect(useAuthStore.getState().auth.loginSequence).toBe(initial + 1)
+  })
   test('bootstrap distinguishes a completed anonymous check from an active session', async () => {
     useAuthStore.getState().auth.reset('complete')
     expect(await bootstrapAuthentication()).toEqual({ kind: 'anonymous' })

@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +40,7 @@ func TestAnnouncementAudienceAndPublication(t *testing.T) {
 	require.NoError(t, err)
 	settings := console_setting.GetConsoleSetting()
 	settings.AnnouncementsEnabled = true
+	settings.AnnouncementsBanner = `{"imageUrl":"https://example.com/banner.png","linkUrl":"https://example.com/group","published":true,"revision":"banner-v1"}`
 	settings.Announcements = `[
  {"id":1,"content":"legacy","publishDate":"2020-01-01T00:00:00Z"},
  {"id":2,"content":"public","publishDate":"2020-01-02T00:00:00Z","popupTarget":"home","published":true,"revision":"v1"},
@@ -68,6 +71,7 @@ func TestAnnouncementAudienceAndPublication(t *testing.T) {
 			var body struct {
 				Success bool
 				Data    any
+				Banner  *console_setting.AnnouncementBanner
 			}
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 			require.True(t, body.Success)
@@ -75,6 +79,8 @@ func TestAnnouncementAudienceAndPublication(t *testing.T) {
 			if tc.path == "/api/status" {
 				data = body.Data.(map[string]any)["announcements"]
 			} else {
+				require.NotNil(t, body.Banner)
+				assert.Equal(t, "https://example.com/banner.png", body.Banner.ImageURL)
 				assert.Equal(t, "private, no-store", response.Header().Get("Cache-Control"))
 			}
 			names := []string{}
@@ -98,7 +104,12 @@ func TestAnnouncementAudienceAndPublication(t *testing.T) {
 	settings.AnnouncementsEnabled = false
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/announcements", nil))
-	assert.JSONEq(t, `{"success":true,"data":[]}`, response.Body.String())
+	assert.JSONEq(t, `{"success":true,"data":[],"banner":null}`, response.Body.String())
+	settings.AnnouncementsEnabled = true
+	settings.AnnouncementsBanner = `{"imageUrl":"https://example.com/draft.png","published":false}`
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/announcements", nil))
+	assert.NotContains(t, response.Body.String(), "draft.png")
 }
 
 func TestAnnouncementPublicationValidation(t *testing.T) {
@@ -113,12 +124,44 @@ func TestAnnouncementPublicationValidation(t *testing.T) {
 		{"missing revision", map[string]any{"popupTarget": "home", "published": true}, false},
 		{"unknown target", map[string]any{"popupTarget": "everyone", "published": false}, false},
 		{"invalid state", map[string]any{"published": "true"}, false},
+		{"title", map[string]any{"title": "Service update"}, true},
+		{"empty title", map[string]any{"title": " "}, false},
+		{"long title", map[string]any{"title": strings.Repeat("a", 101)}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fields["content"], tc.fields["publishDate"] = "announcement", "2020-01-01T00:00:00Z"
 			encoded, err := common.Marshal([]map[string]any{tc.fields})
 			require.NoError(t, err)
 			err = console_setting.ValidateConsoleSettings(string(encoded), "Announcements")
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestAnnouncementBannerValidation(t *testing.T) {
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII="
+	for _, tc := range []struct {
+		name   string
+		banner console_setting.AnnouncementBanner
+		valid  bool
+	}{
+		{"remote draft", console_setting.AnnouncementBanner{ImageURL: "https://example.com/image.png"}, true},
+		{"upload", console_setting.AnnouncementBanner{ImageURL: png, Published: true, Revision: "v1"}, true},
+		{"unconfirmed", console_setting.AnnouncementBanner{ImageURL: png, Published: true}, false},
+		{"missing image", console_setting.AnnouncementBanner{Published: true, Revision: "v1"}, false},
+		{"unsafe image", console_setting.AnnouncementBanner{ImageURL: "javascript:alert(1)"}, false},
+		{"unsafe link", console_setting.AnnouncementBanner{ImageURL: png, LinkURL: png}, false},
+		{"fake image", console_setting.AnnouncementBanner{ImageURL: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("<script>alert(1)</script>"))}, false},
+		{"oversized upload", console_setting.AnnouncementBanner{ImageURL: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 1024*1024+1)))}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := common.Marshal(tc.banner)
+			require.NoError(t, err)
+			err = console_setting.ValidateConsoleSettings(string(encoded), "AnnouncementsBanner")
 			if tc.valid {
 				require.NoError(t, err)
 			} else {
