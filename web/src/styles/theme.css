@@ -156,7 +156,7 @@ For commercial licensing, please contact support@quantumnous.com
   --overview-accent-1: oklch(0.32 0.012 80);
   --overview-accent-2: oklch(0.598 0.092 68);
   --overview-accent-3: oklch(0.52 0.066 246);
-  --sidebar: oklch(0.948 0.004 104);
+  --sidebar: rgb(249, 249, 249);
   --sidebar-foreground: oklch(0.205 0.004 80);
   --sidebar-primary: oklch(0.235 0.006 80);
   --sidebar-primary-foreground: oklch(0.975 0.003 106);
