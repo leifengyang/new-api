@@ -374,6 +374,9 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&DegradationWatchRecord{},
+		&SelfTestProfile{},
+		&SelfTestRound{},
+		&SelfTestAttempt{},
 		&CasbinRule{},
 		&AuthzRole{},
 	)
