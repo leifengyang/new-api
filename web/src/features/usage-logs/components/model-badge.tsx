@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 import { isResponseModelMismatch } from '../lib/response-model'
 import type { LogOtherData } from '../types'
 import { DetailRow } from './dialogs/log-detail-layout'
+import { logBadgeClassName, logBadgeTone } from './log-table-style'
 
 interface ModelBadgeProps {
   modelName: string
@@ -55,8 +56,9 @@ function ModelBadgeContent(props: ModelBadgeProps & { copyable: boolean }) {
       showDot={!provider?.icon}
       autoColor={provider?.icon ? undefined : props.modelName}
       className={cn(
-        'border-border/60 bg-muted/30 h-6 max-w-none gap-1.5 rounded-md border px-2 [font-family:var(--font-body)]',
-        provider?.icon && 'text-foreground',
+        logBadgeClassName,
+        logBadgeTone.model,
+        'max-w-none gap-1.5 [font-family:var(--font-body)]',
         props.wrapText && 'h-auto min-h-6 max-w-full py-px whitespace-normal',
         props.className
       )}

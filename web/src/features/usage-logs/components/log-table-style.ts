@@ -18,3 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export const logTableClassName =
   '[--table-header:var(--background)] [&_thead_th]:h-8 [&_thead_th]:text-muted-foreground [&_thead_th]:font-normal [&_thead_tr]:hover:bg-transparent [&_tbody_td]:py-1 [&_tbody_td]:font-normal [&_tbody_td]:leading-tight [&_tbody_tr]:h-11 [&_[data-slot=avatar]]:size-5 [&_[data-table-text=secondary]]:!text-[11px] [&_[data-table-text=secondary]_*]:!text-[11px] [&_[data-table-text=secondary]]:!font-normal'
+
+// Reserve stronger color for cache hits and exceptional states. Metadata stays quiet.
+export const logBadgeClassName =
+  'h-5 gap-1 rounded-md border px-1.5 py-0 font-normal'
+export const logBadgeTone = {
+  neutral: 'border-border/60 bg-muted/40 !text-foreground/80',
+  model:
+    'border-indigo-500/15 bg-indigo-500/6 !text-indigo-800 dark:!text-indigo-200',
+  cost: 'border-emerald-500/15 bg-emerald-500/8 !text-emerald-800 dark:!text-emerald-200',
+  stream: 'border-sky-500/15 bg-sky-500/8 !text-sky-800 dark:!text-sky-200',
+}
+export const logTypeBadgeClassName =
+  'h-[18px] rounded-md border border-current/10 bg-current/5 px-1.5 py-0 !text-[11px] [&_span]:!text-[11px]'

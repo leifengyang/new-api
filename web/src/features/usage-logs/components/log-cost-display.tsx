@@ -33,9 +33,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatLogQuota } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import { hasToolSurcharge } from '../lib/format'
 import type { LogOtherData } from '../types'
+import { logBadgeClassName, logBadgeTone } from './log-table-style'
 
 interface LogCostDisplayProps {
   quota: number
@@ -108,7 +110,11 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
           variant='neutral'
           size='lg'
           copyable={false}
-          className='border-border/80 bg-muted/60 text-foreground rounded-md border font-semibold tabular-nums'
+          className={cn(
+            logBadgeClassName,
+            logBadgeTone.cost,
+            'font-medium tabular-nums'
+          )}
         >
           {source ? (
             <Tooltip>

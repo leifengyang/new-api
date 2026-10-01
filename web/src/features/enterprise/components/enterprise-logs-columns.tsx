@@ -24,6 +24,11 @@ import { BadgeCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { LogCostDisplay } from '@/features/usage-logs/components/log-cost-display'
+import {
+  logTypeBadgeClassName,
+  logBadgeClassName,
+  logBadgeTone,
+} from '@/features/usage-logs/components/log-table-style'
 import { ModelBadge } from '@/features/usage-logs/components/model-badge'
 import { TimingMetricsCell } from '@/features/usage-logs/components/timing-metrics-cell'
 import { TokenUsageCell } from '@/features/usage-logs/components/token-usage-cell'
@@ -36,6 +41,7 @@ import {
   parseLogOther,
 } from '@/features/usage-logs/lib'
 import { formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import { EnterpriseLogDetailsCell } from './enterprise-log-details-cell'
 
@@ -64,7 +70,8 @@ export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
                 variant={config.color as StatusBadgeProps['variant']}
                 size='sm'
                 copyable={false}
-                className='-ml-1.5 !text-xs [&_span]:!text-xs'
+                type='badge'
+                className={logTypeBadgeClassName}
               />
             </div>
           )
@@ -107,7 +114,11 @@ export function useEnterpriseLogsColumns(): ColumnDef<UsageLog>[] {
           }
           return (
             <BadgeCell>
-              <GroupBadge group={group} className='font-normal' />
+              <GroupBadge
+                group={group}
+                type='badge'
+                className={cn(logBadgeClassName, logBadgeTone.neutral)}
+              />
             </BadgeCell>
           )
         },
