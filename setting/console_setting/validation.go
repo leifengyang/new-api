@@ -156,6 +156,26 @@ func validateAnnouncements(announcementsStr string) error {
 		"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
 	}
 	for i, ann := range list {
+		if target, exists := ann["popupTarget"]; exists {
+			if target != "home" && target != "authenticated" {
+				return fmt.Errorf("第%d个公告的弹窗位置不合法", i+1)
+			}
+			published, ok := ann["published"].(bool)
+			if !ok {
+				return fmt.Errorf("第%d个公告缺少发布状态", i+1)
+			}
+			if published {
+				revision, ok := ann["revision"].(string)
+				if !ok || strings.TrimSpace(revision) == "" || len(revision) > 100 {
+					return fmt.Errorf("第%d个公告缺少有效发布版本", i+1)
+				}
+			}
+		}
+		if published, exists := ann["published"]; exists {
+			if _, ok := published.(bool); !ok {
+				return fmt.Errorf("第%d个公告的发布状态不合法", i+1)
+			}
+		}
 		content, ok := ann["content"].(string)
 		if !ok || content == "" {
 			return fmt.Errorf("第%d个公告缺少内容字段", i+1)
@@ -228,8 +248,32 @@ func getPublishTime(item map[string]interface{}) time.Time {
 	return time.Time{}
 }
 
-func GetAnnouncements() []map[string]interface{} {
+func GetAnnouncements() []map[string]any {
+	return GetAnnouncementsForAudience(false)
+}
+
+// Private announcements never enter the public status response or its cache.
+func GetAnnouncementsForAudience(authenticated bool) []map[string]any {
 	list := getJSONList(GetConsoleSetting().Announcements)
+	visible := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		if published, exists := item["published"]; exists && published != true {
+			continue
+		}
+		if target, exists := item["popupTarget"]; exists {
+			if item["published"] != true || (target != "home" && target != "authenticated") {
+				continue
+			}
+			if target == "authenticated" && !authenticated {
+				continue
+			}
+		}
+		if getPublishTime(item).After(time.Now()) {
+			continue
+		}
+		visible = append(visible, item)
+	}
+	list = visible
 	sort.SliceStable(list, func(i, j int) bool {
 		return getPublishTime(list[i]).After(getPublishTime(list[j]))
 	})

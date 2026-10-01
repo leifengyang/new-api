@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 
-import { useStatus } from '@/hooks/use-status'
+import { useAnnouncements } from '@/features/dashboard/hooks/use-status-data'
 import { getNotice } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useNotificationStore } from '@/stores/notification-store'
@@ -80,16 +80,11 @@ export function useNotifications() {
     staleTime: 1000 * 60 * 5, // 5 minutes
   })
 
-  // Fetch Announcements from status
-  const { status, loading: statusLoading } = useStatus()
-  const announcementsEnabled = status?.announcements_enabled ?? false
+  const { items: announcementItems, loading: statusLoading } =
+    useAnnouncements()
   const announcements = useMemo<Record<string, unknown>[]>(() => {
-    if (!announcementsEnabled) return []
-    return ((status?.announcements || []) as Record<string, unknown>[]).slice(
-      0,
-      20
-    )
-  }, [announcementsEnabled, status?.announcements])
+    return announcementItems.slice(0, 20).map((item) => ({ ...item }))
+  }, [announcementItems])
 
   // Notification store
   const {

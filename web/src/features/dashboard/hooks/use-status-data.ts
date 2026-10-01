@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
+
 import { useStatus } from '@/hooks/use-status'
+import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { AnnouncementItem, ApiInfoItem, FAQItem } from '../types'
 
@@ -45,10 +50,20 @@ export function useApiInfo() {
  * Get announcements list
  */
 export function useAnnouncements() {
-  return useStatusData<AnnouncementItem>(
-    'announcements_enabled',
-    'announcements'
-  )
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const query = useQuery({
+    queryKey: ['announcements', userId ?? 'guest'],
+    queryFn: async ({ signal }) => {
+      const response = await api.get<{
+        success: boolean
+        data: AnnouncementItem[]
+      }>('/api/announcements', { signal })
+      return requireServerSuccess(response.data).data
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  })
+  return { items: query.data ?? [], loading: query.isLoading }
 }
 
 /**

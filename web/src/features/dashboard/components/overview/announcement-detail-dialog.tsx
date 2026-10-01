@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -24,6 +25,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { formatDateTimeObject } from '@/lib/time'
 
 interface AnnouncementDetailModalProps {
+  footer?: ReactNode
   open: boolean
   onOpenChange: (open: boolean) => void
   announcement: {
@@ -39,6 +41,7 @@ export function AnnouncementDetailModal({
   open,
   onOpenChange,
   announcement,
+  footer,
 }: AnnouncementDetailModalProps) {
   const { t } = useTranslation()
   return (
@@ -48,12 +51,13 @@ export function AnnouncementDetailModal({
       title={t('Announcement Details')}
       description={
         announcement?.publishDate
-          ? `${t('Published:')} ${formatDateTimeObject(new Date(announcement.publishDate))}`
+          ? `${t('Publish Date')}: ${formatDateTimeObject(new Date(announcement.publishDate))}`
           : undefined
       }
       contentClassName='sm:max-w-lg'
       contentHeight='auto'
       bodyClassName='space-y-4'
+      footer={footer}
     >
       <ScrollArea className='max-h-[min(58vh,520px)] pr-4'>
         <div className='space-y-4'>

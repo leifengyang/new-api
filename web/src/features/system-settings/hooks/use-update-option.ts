@@ -55,6 +55,10 @@ export function useUpdateOption() {
       requireServerSuccess(await updateSystemOption(request)),
     onSuccess: (data, variables) => {
       if (data.success) {
+        if (variables.key.startsWith('console_setting.announcements')) {
+          queryClient.invalidateQueries({ queryKey: ['announcements'] })
+          queryClient.invalidateQueries({ queryKey: ['status'] })
+        }
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 
