@@ -37,22 +37,29 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
   return (
     <LayoutProvider>
       <SearchProvider>
-        <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
+        <SidebarProvider
+          defaultOpen={defaultOpen}
+          className='h-svh overflow-hidden [--app-header-height:3.5rem] [--app-sidebar-top:0px]'
+          style={
+            {
+              '--sidebar-width': '15rem',
+              '--sidebar-width-icon': '3rem',
+            } as React.CSSProperties
+          }
+        >
           <SkipToMain />
-          <AppHeader />
-          <div className='flex min-h-0 w-full flex-1'>
-            <AppSidebar />
-            <SidebarInset
-              className={cn(
-                '@container/content',
-                'h-[calc(100svh-var(--app-header-height,0px))]',
-                'min-h-0 overflow-hidden',
-                'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,0px)-(var(--spacing)*4))]'
-              )}
-            >
-              {props.children ?? <AnimatedOutlet />}
-            </SidebarInset>
-          </div>
+          <AppSidebar />
+          <SidebarInset
+            className={cn(
+              '@container/content',
+              'h-svh min-h-0 min-w-0 overflow-hidden',
+              'md:peer-data-[variant=inset]:h-[calc(100svh-(var(--spacing)*4))]',
+              'md:peer-data-[variant=inset]:ring-1 md:peer-data-[variant=inset]:ring-border/60'
+            )}
+          >
+            <AppHeader showProfileDropdown={false} />
+            {props.children ?? <AnimatedOutlet />}
+          </SidebarInset>
         </SidebarProvider>
       </SearchProvider>
     </LayoutProvider>

@@ -43,7 +43,7 @@ type SystemBrandProps = {
  * System brand component
  * Displays current system logo + name.
  * - inline: compact pill in the top app bar; clicking navigates to home (/)
- * - sidebar: stacked card in the sidebar header (display only)
+ * - sidebar: stacked card in the sidebar header; clicking navigates home
  */
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
@@ -82,10 +82,10 @@ export function SystemBrand(props: SystemBrandProps) {
       <SidebarMenuItem>
         <SidebarMenuButton
           size='lg'
-          className='hover:text-sidebar-foreground active:text-sidebar-foreground cursor-default hover:bg-transparent active:bg-transparent'
-          render={<div />}
+          tooltip={name}
+          render={<Link to='/' aria-label={t('Go to home')} />}
         >
-          <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
+          <div className='flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'>
             <img
               src={logo}
               alt={t('Logo')}
