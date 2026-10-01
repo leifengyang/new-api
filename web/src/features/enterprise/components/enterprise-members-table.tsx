@@ -26,6 +26,7 @@ import {
   DataTablePage,
   useDataTable,
 } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
@@ -68,7 +69,7 @@ export function EnterpriseMembersTable() {
       | undefined) ?? []
 
   // 服务端按归属收窄到本企业的成员，关键字也只在这批人里匹配（用户名 / 显示名）。
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'enterprise',
       'members',
@@ -113,6 +114,8 @@ export function EnterpriseMembersTable() {
     totalCount: data?.total ?? 0,
     ensurePageInRange,
   })
+
+  if (isError) return <ErrorState onRetry={() => void refetch()} />
 
   return (
     <DataTablePage

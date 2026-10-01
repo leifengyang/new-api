@@ -3,6 +3,7 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -152,6 +153,61 @@ func TestEnterpriseSchemaAcrossDatabases(t *testing.T) {
 			}
 			t.Logf("%s version: %s", dialect, version)
 			testEnterpriseMigrationUpgradesLegacySchema(t, db)
+		})
+	}
+}
+
+// Opt-in integration test against databases initialized by the latest released
+// image (custom-v1.0.0-rc.39.21), not a schema reconstructed by the new model.
+// These must be disposable, dedicated databases: the test adds fixture users.
+func TestEnterpriseReleasedDatabaseUpgrade(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			env := "TEST_ENTERPRISE_RELEASE_" + strings.ToUpper(dialect)
+			dsn := os.Getenv(env)
+			if dsn == "" {
+				t.Skip(env + " is not configured")
+			}
+			previousSQLite := common.SQLitePath
+			t.Cleanup(func() { common.SQLitePath = previousSQLite })
+			if dialect == "sqlite" {
+				common.SQLitePath = dsn
+				dsn = ""
+			}
+			t.Setenv("ENTERPRISE_RELEASE_DSN", dsn)
+			db, _, err := chooseDB("ENTERPRISE_RELEASE_DSN", false)
+			require.NoError(t, err)
+			conn, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
+			useEnterpriseGlobalsFor(t, db)
+			initCol()
+			require.False(t, db.Migrator().HasColumn(&User{}, "enterprise_quota"), "input must be a released database")
+			for _, row := range []map[string]any{
+				{"id": 910001, "username": "release-corp", "aff_code": "rel1", "role": 1, "status": 1, "quota": 1000, "is_enterprise": 1, "enterprise_owner_id": 0},
+				{"id": 910002, "username": "release-member", "aff_code": "rel2", "role": 1, "status": 1, "quota": 500, "is_enterprise": 0, "enterprise_owner_id": 910001},
+				{"id": 910003, "username": "release-personal", "aff_code": "rel3", "role": 1, "status": 1, "quota": 700, "is_enterprise": 0, "enterprise_owner_id": 0},
+			} {
+				row["password"] = "unused-test-password"
+				require.NoError(t, db.Table("users").Create(row).Error)
+			}
+			for range 2 {
+				require.NoError(t, migrateDB())
+			}
+			member, err := GetUserById(910002, false)
+			require.NoError(t, err)
+			assert.Equal(t, 500, member.EnterpriseFrozenQuota)
+			assert.Zero(t, member.Quota)
+			requireQuotaValue(t, 910001, 1000)
+			requireQuotaValue(t, 910003, 700)
+			require.NoError(t, ClassifyEnterpriseBalance(910002, 500, 300))
+			returned, err := RemoveEnterpriseMember(910001, 910002)
+			require.NoError(t, err)
+			assert.Equal(t, 300, returned)
+			requireQuotaValue(t, 910001, 1300)
+			requireQuotaValue(t, 910002, 200)
+			assert.True(t, db.Migrator().HasIndex(&User{}, "idx_users_enterprise_owner_id"))
+			assert.True(t, db.Migrator().HasIndex(&EnterpriseWalletCharge{}, "idx_enterprise_wallet_request"))
 		})
 	}
 }

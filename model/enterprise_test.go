@@ -31,7 +31,7 @@ func useEnterpriseDB(t *testing.T) *gorm.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}, &EnterpriseWalletCharge{}))
 	// lockForUpdate 靠这个判定决定要不要发 FOR UPDATE，SQLite 上必须跳过。
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	// 注册在 t.TempDir() 之后：cleanup 后进先出，先关连接再删目录。
@@ -130,50 +130,32 @@ func TestSetUserEnterpriseFlagIsIdempotent(t *testing.T) {
 	require.Zero(t, released)
 }
 
-func TestUnmarkEnterpriseReleasesMembersAndRefundsWallets(t *testing.T) {
+func TestUnmarkEnterpriseRequiresExplicitMemberRemoval(t *testing.T) {
 	useEnterpriseDB(t)
-	enterprise := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 5000)
-	markEnterprise(t, enterprise.Id)
-
-	memberA := createEnterpriseUser(t, 2, "a", common.RoleCommonUser, 0)
-	memberB := createEnterpriseUser(t, 3, "b", common.RoleCommonUser, 0)
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", memberA.Id).Updates(map[string]any{
-		"enterprise_owner_id":     enterprise.Id,
-		"quota":                   1200,
-		"enterprise_group_limits": `["vip"]`,
-		"enterprise_model_limits": `["gpt-4o"]`,
-		"status":                  common.UserStatusDisabled,
-	}).Error)
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", memberB.Id).Updates(map[string]any{
-		"enterprise_owner_id": enterprise.Id,
-		"quota":               800,
-	}).Error)
-
-	released, err := SetUserEnterpriseFlag(enterprise.Id, false)
+	owner := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 5000)
+	markEnterprise(t, owner.Id)
+	member := createEnterpriseUser(t, 2, "member", common.RoleCommonUser, 1200)
+	require.NoError(t, DB.Model(member).Updates(map[string]any{"enterprise_owner_id": owner.Id, "enterprise_group_limits": `["vip"]`}).Error)
+	released, err := SetUserEnterpriseFlag(owner.Id, false)
+	require.ErrorIs(t, err, ErrEnterpriseMembersRemain)
+	assert.Zero(t, released)
+	requireQuotaValue(t, owner.Id, 5000)
+	requireQuotaValue(t, member.Id, 1200)
+	require.ErrorIs(t, owner.Delete(), ErrEnterpriseMembersRemain)
+	require.ErrorIs(t, member.Delete(), ErrEnterpriseMemberMustExit)
+	member.Role = common.RoleAdminUser
+	require.ErrorIs(t, member.Update(false), ErrEnterpriseMemberMustExit)
+	returned, err := RemoveEnterpriseMember(owner.Id, member.Id)
 	require.NoError(t, err)
-	assert.Equal(t, 2, released)
-
-	// 余额合起来退回企业账号。
-	requireQuotaValue(t, enterprise.Id, 5000+1200+800)
-	for _, id := range []int{memberA.Id, memberB.Id} {
-		requireQuotaValue(t, id, 0)
-		var member User
-		require.NoError(t, DB.First(&member, id).Error)
-		assert.Zero(t, member.EnterpriseOwnerId, "成员 %d 的归属应当被清空", id)
-		assert.Empty(t, member.EnterpriseGroupLimits)
-		assert.Empty(t, member.EnterpriseModelLimits)
-	}
-	// 成员的启用状态不因为取消标记而改变：停用是平台/企业管理员做过的决定。
-	var rereadA User
-	require.NoError(t, DB.First(&rereadA, memberA.Id).Error)
-	assert.Equal(t, common.UserStatusDisabled, rereadA.Status)
-
-	var rereadEnterprise User
-	require.NoError(t, DB.First(&rereadEnterprise, enterprise.Id).Error)
-	assert.Equal(t, EnterpriseFlagNo, rereadEnterprise.IsEnterprise)
-	// 已经不是企业账号，控制台入口应当随之关闭。
-	_, err = GetEnterpriseAccount(enterprise.Id)
-	assert.ErrorIs(t, err, ErrEnterpriseNotFound)
+	assert.Zero(t, returned)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Zero(t, member.EnterpriseOwnerId)
+	assert.Empty(t, member.EnterpriseGroupLimits)
+	assert.Equal(t, 1200, member.Quota)
+	_, err = SetUserEnterpriseFlag(owner.Id, false)
+	require.NoError(t, err)
+	member.Role = common.RoleAdminUser
+	require.NoError(t, member.Update(false))
 }
 
 func TestCreateEnterpriseMemberStartsWithNoQuotaAndNoInviter(t *testing.T) {
@@ -309,9 +291,8 @@ func TestTransferEnterpriseQuotaRejectsBadRequests(t *testing.T) {
 	assert.ErrorIs(t, err, ErrEnterpriseMemberNotEnabled)
 }
 
-// 成员余额可能是负数（平台管理员手工调整过）。停用时退回的必须是带符号的真实
-// 余额，只退正数会让欠的那部分凭空消失。
-func TestDisableMemberRefundsSignedBalance(t *testing.T) {
+// 停用仅收回企业拨款，个人欠费仍保留在成员账户中。
+func TestDisableMemberPreservesPersonalDebt(t *testing.T) {
 	useEnterpriseDB(t)
 	enterprise := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 1000)
 	markEnterprise(t, enterprise.Id)
@@ -321,9 +302,9 @@ func TestDisableMemberRefundsSignedBalance(t *testing.T) {
 
 	returned, err := SetEnterpriseMemberStatus(enterprise.Id, debtor.Id, false)
 	require.NoError(t, err)
-	assert.Equal(t, -300, returned)
-	requireQuotaValue(t, enterprise.Id, 700)
-	requireQuotaValue(t, debtor.Id, 0)
+	assert.Zero(t, returned)
+	requireQuotaValue(t, enterprise.Id, 1000)
+	requireQuotaValue(t, debtor.Id, -300)
 
 	var stored User
 	require.NoError(t, DB.First(&stored, debtor.Id).Error)
@@ -795,4 +776,63 @@ func TestEnterpriseUsageDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, EnterpriseFlagNo, plain.IsEnterprise, "没打标记的账号不能被算成企业账号")
 		})
 	}
+}
+
+func TestEnterpriseLimitsMustRefreshCachedPermissions(t *testing.T) {
+	useEnterpriseDB(t)
+	useUserCacheMiniRedis(t)
+	enterprise := markEnterprise(t, createEnterpriseUser(t, 1, "audit-corp", common.RoleCommonUser, 100).Id)
+	member := createEnterpriseUser(t, 2, "audit-member", common.RoleCommonUser, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", member.Id).Update("enterprise_owner_id", enterprise.Id).Error)
+	before, err := GetUserCache(member.Id)
+	require.NoError(t, err)
+	require.Nil(t, before.GetEnterpriseModelLimits())
+	require.NoError(t, UpdateEnterpriseMemberLimits(enterprise.Id, member.Id, []string{"vip"}, []string{"allowed-model"}))
+	saved, err := GetEnterpriseMember(enterprise.Id, member.Id)
+	require.NoError(t, err)
+	require.Equal(t, `["allowed-model"]`, saved.EnterpriseModelLimits)
+	after, err := GetUserCache(member.Id)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"allowed-model"}, after.GetEnterpriseModelLimits(), "committed restrictions must reach the next authenticated request")
+	assert.Equal(t, []string{"vip"}, after.GetEnterpriseGroupLimits())
+}
+
+func TestEnterpriseCannotResetPromotedAdminPassword(t *testing.T) {
+	useEnterpriseDB(t)
+	enterprise := markEnterprise(t, createEnterpriseUser(t, 1, "audit-corp", common.RoleCommonUser, 100).Id)
+	member := createEnterpriseUser(t, 2, "audit-admin", common.RoleCommonUser, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", member.Id).Update("enterprise_owner_id", enterprise.Id).Error)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	member.Role = common.RoleAdminUser
+	require.ErrorIs(t, member.Update(false), ErrEnterpriseMemberMustExit)
+	require.NoError(t, DB.Model(member).Update("role", common.RoleAdminUser).Error)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	require.Equal(t, common.RoleAdminUser, member.Role)
+	oldPassword := member.Password
+	err := ResetEnterpriseMemberPassword(enterprise.Id, member.Id, "AuditResetPassword123!")
+	assert.Error(t, err, "enterprise user must not be able to reset a platform admin password")
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Equal(t, oldPassword, member.Password, "promoted admin password must not change")
+	_, err = RemoveEnterpriseMemberByAdmin(enterprise.Id, member.Id, common.RoleRootUser)
+	require.NoError(t, err)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Zero(t, member.EnterpriseOwnerId)
+	assert.Equal(t, common.RoleAdminUser, member.Role)
+}
+
+func TestEnterpriseInviteRegistrationHasNoWelcomeQuotaAndHonorsCapacity(t *testing.T) {
+	useEnterpriseDB(t)
+	oldWelcome, oldLimit := common.QuotaForNewUser, common.EnterpriseMemberLimit
+	common.QuotaForNewUser, common.EnterpriseMemberLimit = 500, 1
+	t.Cleanup(func() { common.QuotaForNewUser, common.EnterpriseMemberLimit = oldWelcome, oldLimit })
+	owner := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 1000)
+	markEnterprise(t, owner.Id)
+	invited := &User{Username: "invited", Password: "InvitePassword123!", EnterpriseOwnerId: owner.Id}
+	require.NoError(t, invited.Insert(0))
+	requireQuotaValue(t, invited.Id, 0)
+	overflow := &User{Username: "overflow", Password: "InvitePassword123!", EnterpriseOwnerId: owner.Id}
+	require.ErrorIs(t, overflow.Insert(0), ErrEnterpriseMemberLimitReached)
+	count, err := CountEnterpriseMembers(owner.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count)
 }

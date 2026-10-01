@@ -159,7 +159,8 @@ export function MemberLimitsDialog(props: MemberLimitsDialogProps) {
       return res.data ?? null
     },
     enabled: open,
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const groupOptions = useMemo(
@@ -171,14 +172,20 @@ export function MemberLimitsDialog(props: MemberLimitsDialogProps) {
       })),
     [optionsQuery.data]
   )
-  const modelOptions = useMemo(
-    () =>
-      (optionsQuery.data?.models ?? []).map((model) => ({
-        label: model,
-        value: model,
-      })),
-    [optionsQuery.data]
-  )
+  const modelOptions = useMemo(() => {
+    const data = optionsQuery.data
+    const available =
+      groups.unrestricted || !data?.models_by_group
+        ? (data?.models ?? [])
+        : [
+            ...new Set(
+              groups.values.flatMap(
+                (group) => data.models_by_group?.[group] ?? []
+              )
+            ),
+          ]
+    return available.map((model) => ({ label: model, value: model }))
+  }, [optionsQuery.data, groups])
 
   // 服务端不接受「限定到空分组集合」：分组是成员调用的入口，一个都不留等于把
   // 人锁死，所以那一侧必须至少留一个；模型侧的空集是合法的「什么都不放行」。

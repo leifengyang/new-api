@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -34,10 +35,28 @@ func enterpriseMemberIdFromPath(c *gin.Context) (int, bool) {
 	return id, true
 }
 
+func requireEnterpriseMemberProof(c *gin.Context, memberId int, action string, quota, frozen int) bool {
+	context := map[string]any{"member_id": memberId, "action": action}
+	if action == "transfer" || action == "classify" {
+		context["quota"] = quota
+	}
+	if action == "classify" {
+		context["frozen"] = frozen
+	}
+	encoded, err := common.Marshal(context)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	return middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeEnterpriseMember, Context: encoded}) != nil
+}
+
 func enterpriseApiError(c *gin.Context, err error, fallback string) {
 	switch {
 	case err == nil:
 		return
+	case errors.Is(err, model.ErrEnterpriseFrozenQuota), errors.Is(err, model.ErrEnterpriseMembersRemain), errors.Is(err, model.ErrEnterpriseMemberMustExit):
+		common.ApiError(c, err)
 	case errors.Is(err, model.ErrEnterpriseNotFound):
 		common.ApiErrorMsg(c, "企业账号不存在")
 	case errors.Is(err, model.ErrEnterpriseNotAMember):
@@ -214,6 +233,19 @@ func UpdateEnterpriseMemberStatus(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的参数")
 		return
 	}
+	if c.GetInt("role") >= common.RoleAdminUser {
+		member, err := model.GetUserById(memberId, false)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if member.Role >= c.GetInt("role") {
+			common.ApiErrorMsg(c, "Permission denied")
+			return
+		}
+		enterpriseId = member.EnterpriseOwnerId
+	}
+
 	req := struct {
 		Enabled bool `json:"enabled"`
 	}{}
@@ -222,6 +254,13 @@ func UpdateEnterpriseMemberStatus(c *gin.Context) {
 		return
 	}
 
+	actionProof := "disable"
+	if req.Enabled {
+		actionProof = "enable"
+	}
+	if !requireEnterpriseMemberProof(c, memberId, actionProof, 0, 0) {
+		return
+	}
 	returned, err := model.SetEnterpriseMemberStatus(enterpriseId, memberId, req.Enabled)
 	if err != nil {
 		enterpriseApiError(c, err, "更新成员状态失败")
@@ -320,6 +359,9 @@ func TransferEnterpriseMemberQuota(c *gin.Context) {
 		return
 	}
 
+	if !requireEnterpriseMemberProof(c, memberId, "transfer", req.Quota, 0) {
+		return
+	}
 	transferred, err := model.TransferEnterpriseQuotaToMember(enterpriseId, memberId, req.Quota)
 	if err != nil {
 		enterpriseApiError(c, err, "划拨额度失败")
@@ -355,6 +397,9 @@ func ResetEnterpriseMemberPassword(c *gin.Context) {
 		return
 	}
 
+	if !requireEnterpriseMemberProof(c, memberId, "password", 0, 0) {
+		return
+	}
 	if err := model.ResetEnterpriseMemberPassword(enterpriseId, memberId, req.Password); err != nil {
 		enterpriseApiError(c, err, "重置密码失败")
 		return
@@ -402,16 +447,22 @@ func GetEnterpriseMemberOptions(c *gin.Context) {
 		})
 	}
 
+	modelsByGroup := make(map[string][]string, len(groupNames))
+	for _, name := range groupNames {
+		modelsByGroup[name] = service.GetGroupsEnabledModels([]string{name})
+		sort.Strings(modelsByGroup[name])
+	}
 	models := service.GetGroupsEnabledModels(groupNames)
 	sort.Strings(models)
 
 	common.ApiSuccess(c, gin.H{
-		"groups":         groups,
-		"models":         models,
-		"group_limits":   jsonLimitsOrNull(member.EnterpriseGroupLimits),
-		"model_limits":   jsonLimitsOrNull(member.EnterpriseModelLimits),
-		"member_group":   member.Group,
-		"member_enabled": member.Status == common.UserStatusEnabled,
+		"groups":          groups,
+		"models":          models,
+		"models_by_group": modelsByGroup,
+		"group_limits":    jsonLimitsOrNull(member.EnterpriseGroupLimits),
+		"model_limits":    jsonLimitsOrNull(member.EnterpriseModelLimits),
+		"member_group":    member.Group,
+		"member_enabled":  member.Status == common.UserStatusEnabled,
 	})
 }
 
@@ -426,4 +477,73 @@ func jsonLimitsOrNull(raw string) any {
 		return nil
 	}
 	return limits
+}
+
+// RemoveEnterpriseMember is shared by the enterprise and platform-admin routes.
+// Administrators resolve ownership from the database rather than a client id.
+func RemoveEnterpriseMember(c *gin.Context) {
+	memberId, ok := enterpriseMemberIdFromPath(c)
+	if !ok {
+		common.ApiErrorMsg(c, "Invalid parameters")
+		return
+	}
+	ownerId := currentEnterpriseId(c)
+	if c.GetInt("role") >= common.RoleAdminUser {
+		member, err := model.GetUserById(memberId, false)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if member.Role >= c.GetInt("role") {
+			common.ApiErrorMsg(c, "Permission denied")
+			return
+		}
+		ownerId = member.EnterpriseOwnerId
+	}
+	if !requireEnterpriseMemberProof(c, memberId, "remove", 0, 0) {
+		return
+	}
+	var returned int
+	var err error
+	if c.GetInt("role") >= common.RoleAdminUser {
+		returned, err = model.RemoveEnterpriseMemberByAdmin(ownerId, memberId, c.GetInt("role"))
+	} else {
+		returned, err = model.RemoveEnterpriseMember(ownerId, memberId)
+	}
+	if err != nil {
+		enterpriseApiError(c, err, "Failed to remove member")
+		return
+	}
+	recordManageAuditFor(c, memberId, "enterprise.member_remove", map[string]any{"enterprise_id": ownerId, "returned_quota": returned})
+	common.ApiSuccess(c, gin.H{"returned_quota": returned})
+}
+
+func ClassifyEnterpriseBalance(c *gin.Context) {
+	memberId, ok := enterpriseMemberIdFromPath(c)
+	req := struct {
+		Frozen int `json:"frozen"`
+		Quota  int `json:"quota"`
+	}{}
+	if !ok || common.DecodeJson(c.Request.Body, &req) != nil {
+		common.ApiErrorMsg(c, "Invalid parameters")
+		return
+	}
+	user, err := model.GetUserById(memberId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if c.GetInt("role") <= user.Role {
+		common.ApiErrorMsg(c, "Permission denied")
+		return
+	}
+	if !requireEnterpriseMemberProof(c, memberId, "classify", req.Quota, req.Frozen) {
+		return
+	}
+	if err := model.ClassifyEnterpriseBalance(memberId, req.Frozen, req.Quota); err != nil {
+		enterpriseApiError(c, err, "Failed to classify balance")
+		return
+	}
+	recordManageAuditFor(c, memberId, "enterprise.balance_classify", map[string]any{"frozen": req.Frozen, "enterprise_quota": req.Quota, "personal_quota": req.Frozen - req.Quota})
+	common.ApiSuccess(c, nil)
 }

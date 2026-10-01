@@ -108,7 +108,7 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, source string,
 	updateFields["quota"] = gorm.Expr("quota + ?", creditedQuota)
 
 	result := tx.Model(&User{}).
-		Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
+		Where("id = ? AND quota + enterprise_frozen_quota <= ?", userId, maxCurrentQuota).
 		Updates(updateFields)
 	if result.Error != nil {
 		return nil, result.Error

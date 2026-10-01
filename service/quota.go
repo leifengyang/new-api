@@ -457,8 +457,11 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 			relayInfo.SubscriptionPostDelta += delta
 		}
 	} else {
-		// Wallet
-		if quota > 0 {
+		// Preserve the allocation for legacy relay paths as well.
+		handled, walletErr := model.SetEnterpriseWalletCharge(relayInfo.UserId, relayInfo.RequestId, preConsumedQuota+quota, false)
+		if handled {
+			err = walletErr
+		} else if quota > 0 {
 			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
 		} else {
 			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)

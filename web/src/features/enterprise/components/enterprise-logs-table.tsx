@@ -21,6 +21,7 @@ import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
 import {
   LOG_TYPE_ALL_VALUE,
   LOG_TYPE_FILTERS,
@@ -69,7 +70,7 @@ export function EnterpriseLogsTable(props: EnterpriseLogsTableProps) {
       | undefined) ?? []
   const type = selectedType.find((value) => value !== LOG_TYPE_ALL_VALUE) ?? ''
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: [
       'enterprise',
       'logs',
@@ -115,6 +116,8 @@ export function EnterpriseLogsTable(props: EnterpriseLogsTableProps) {
     enableRowSelection: false,
     ensurePageInRange,
   })
+
+  if (isError) return <ErrorState onRetry={() => void refetch()} />
 
   return (
     <div className='space-y-3'>

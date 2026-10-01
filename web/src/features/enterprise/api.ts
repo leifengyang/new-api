@@ -72,11 +72,20 @@ export async function getEnterpriseMemberOptions(
 
 export async function updateEnterpriseMemberStatus(
   memberId: number,
-  enabled: boolean
+  enabled: boolean,
+  proofToken: string,
+  admin = false
 ): Promise<EnterpriseApiResponse<{ returned_quota: number }>> {
-  const res = await api.put(`/api/enterprise/members/${memberId}/status`, {
-    enabled,
-  })
+  const url = admin
+    ? `/api/user/${memberId}/enterprise/status`
+    : `/api/enterprise/members/${memberId}/status`
+  const res = await api.put(
+    url,
+    {
+      enabled,
+    },
+    { headers: { 'X-Security-Proof': proofToken } }
+  )
   return res.data
 }
 
@@ -98,21 +107,31 @@ export async function updateEnterpriseMemberLimits(
 /** 从企业余额里划一笔额度给成员。额度是内部整数，换算由调用方负责。 */
 export async function transferEnterpriseMemberQuota(
   memberId: number,
-  quota: number
+  quota: number,
+  proofToken: string
 ): Promise<EnterpriseApiResponse<{ transferred_quota: number }>> {
-  const res = await api.post(`/api/enterprise/members/${memberId}/quota`, {
-    quota,
-  })
+  const res = await api.post(
+    `/api/enterprise/members/${memberId}/quota`,
+    {
+      quota,
+    },
+    { headers: { 'X-Security-Proof': proofToken } }
+  )
   return res.data
 }
 
 export async function resetEnterpriseMemberPassword(
   memberId: number,
-  password: string
+  password: string,
+  proofToken: string
 ): Promise<EnterpriseApiResponse> {
-  const res = await api.put(`/api/enterprise/members/${memberId}/password`, {
-    password,
-  })
+  const res = await api.put(
+    `/api/enterprise/members/${memberId}/password`,
+    {
+      password,
+    },
+    { headers: { 'X-Security-Proof': proofToken } }
+  )
   return res.data
 }
 
@@ -156,5 +175,33 @@ export async function getEnterpriseLogs(
   if (model_name) query.set('model_name', model_name)
   if (group) query.set('group', group)
   const res = await api.get(`/api/enterprise/logs?${query.toString()}`)
+  return res.data
+}
+
+export async function removeEnterpriseMember(
+  memberId: number,
+  proofToken: string,
+  admin = false
+): Promise<EnterpriseApiResponse> {
+  const url = admin
+    ? `/api/user/${memberId}/enterprise`
+    : `/api/enterprise/members/${memberId}`
+  const res = await api.delete(url, {
+    headers: { 'X-Security-Proof': proofToken },
+  })
+  return res.data
+}
+
+export async function classifyEnterpriseBalance(
+  memberId: number,
+  frozen: number,
+  quota: number,
+  proofToken: string
+): Promise<EnterpriseApiResponse> {
+  const res = await api.post(
+    `/api/user/${memberId}/enterprise/balance`,
+    { frozen, quota },
+    { headers: { 'X-Security-Proof': proofToken } }
+  )
   return res.data
 }

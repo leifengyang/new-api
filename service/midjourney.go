@@ -71,6 +71,7 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		return false, errors.New("Midjourney task must be persisted before billing")
 	}
 
+	relayInfo.RequestId = fmt.Sprintf("midjourney:%d", task.Id)
 	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
 	if !result.FundingApplied {
 		task.Quota = 0
@@ -99,7 +100,11 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	handled, refundErr := model.SetEnterpriseTaskWalletCharge(task.UserId, fmt.Sprintf("midjourney:%d", task.Id), quota, 0)
+	if !handled {
+		refundErr = model.IncreaseUserQuota(task.UserId, quota, false)
+	}
+	if err := refundErr; err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
 		return false
 	}

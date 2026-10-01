@@ -54,6 +54,9 @@ func enterpriseUsageScopeUserIds(c *gin.Context, enterpriseId int, includeSelf b
 	}
 	memberId, _ := strconv.Atoi(c.Query("member_id"))
 	if memberId > 0 {
+		if includeSelf && memberId == enterpriseId {
+			return []int{enterpriseId}, true
+		}
 		if _, err := model.GetEnterpriseMember(enterpriseId, memberId); err != nil {
 			enterpriseApiError(c, err, "该用户不在你的企业名下")
 			return nil, false

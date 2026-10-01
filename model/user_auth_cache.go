@@ -63,12 +63,15 @@ end
 if ARGV[10] == '0' and redis.call('EXISTS', KEYS[1]) == 0 then
   return 1
 end
+if tonumber(ARGV[16]) > tonumber(redis.call('HGET', KEYS[1], 'EnterpriseWalletVersion') or '0') then
+  redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
+end
 redis.call('HSET', KEYS[1],
   'Id', ARGV[2], 'Group', ARGV[3], 'Email', ARGV[4],
   'Status', ARGV[5], 'Role', ARGV[6], 'Username', ARGV[7],
   'Setting', ARGV[8], 'AuthVersion', ARGV[1], 'CacheSchema', ARGV[9],
   'IsEnterprise', ARGV[13], 'EnterpriseGroupLimits', ARGV[14],
-  'EnterpriseModelLimits', ARGV[15])
+  'EnterpriseModelLimits', ARGV[15], 'EnterpriseWalletVersion', ARGV[16])
 if ARGV[10] == '1' and redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
   redis.call('HSET', KEYS[1], 'Quota', ARGV[11])
 end
@@ -92,7 +95,7 @@ func writeUserCache(user *UserBase, includeQuota bool) error {
 		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
 		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
 		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
-		user.IsEnterprise, user.EnterpriseGroupLimits, user.EnterpriseModelLimits,
+		user.IsEnterprise, user.EnterpriseGroupLimits, user.EnterpriseModelLimits, user.EnterpriseWalletVersion,
 	).Int()
 	if err != nil {
 		return err

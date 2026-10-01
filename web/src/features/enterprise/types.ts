@@ -55,6 +55,8 @@ export interface EnterpriseMember {
   username: string
   display_name: string
   status: number
+  enterprise_quota?: number
+  enterprise_frozen_quota?: number
   quota: number
   used_quota: number
   request_count: number
@@ -104,6 +106,7 @@ export interface CreateEnterpriseMemberResult {
 export interface EnterpriseMemberOptions {
   groups: Array<{ name: string; desc: string }>
   models: string[]
+  models_by_group?: Record<string, string[]>
   member_group: string
   member_enabled: boolean
 }

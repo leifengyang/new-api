@@ -25,6 +25,10 @@ import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import {
   formatQuota,
@@ -47,6 +51,7 @@ interface TransferQuotaDialogProps {
 
 export function TransferQuotaDialog(props: TransferQuotaDialogProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
   const { openDialog, setOpenDialog, setActiveMember, triggerRefresh } =
     useEnterprise()
   const [amount, setAmount] = useState('')
@@ -61,14 +66,31 @@ export function TransferQuotaDialog(props: TransferQuotaDialogProps) {
   const memberDisabled =
     member !== null && member.status !== ENTERPRISE_MEMBER_STATUS.ENABLED
 
-  const amountValue = Number.parseFloat(amount) || 0
-  const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
+  const amountValue = Number(amount)
+  const quotaValue =
+    Number.isFinite(amountValue) && amountValue > 0
+      ? parseQuotaFromDollars(amountValue)
+      : 0
   const notEnoughBalance = quotaValue > props.enterpriseQuota
-  const canSubmit = quotaValue > 0 && !notEnoughBalance && !memberDisabled
+  const canSubmit =
+    Number.isSafeInteger(quotaValue) &&
+    quotaValue > 0 &&
+    !notEnoughBalance &&
+    !memberDisabled
 
   const transfer = useMutation({
-    mutationFn: async (quota: number) => {
-      const result = await transferEnterpriseMemberQuota(member?.id ?? 0, quota)
+    mutationFn: async ({
+      quota,
+      proofToken,
+    }: {
+      quota: number
+      proofToken: string
+    }) => {
+      const result = await transferEnterpriseMemberQuota(
+        member?.id ?? 0,
+        quota,
+        proofToken
+      )
       if (!result.success) throw createServerError(result)
       return result
     },
@@ -88,6 +110,18 @@ export function TransferQuotaDialog(props: TransferQuotaDialogProps) {
     },
   })
 
+  async function submit() {
+    if (!member || !canSubmit) return
+    const proof = await verification.requestVerification({
+      scope: 'enterprise.member.manage',
+      context: { member_id: member.id, action: 'transfer', quota: quotaValue },
+      title: t('Transfer Quota'),
+    })
+    if (proof) {
+      transfer.mutate({ quota: quotaValue, proofToken: proof.proof_token })
+    }
+  }
+
   function close() {
     setAmount('')
     setActiveMember(null)
@@ -95,95 +129,105 @@ export function TransferQuotaDialog(props: TransferQuotaDialogProps) {
   }
 
   const handleOpenChange = (next: boolean) => {
-    if (!next && !transfer.isPending) close()
+    if (!next && !verification.isActive && !transfer.isPending) close()
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={handleOpenChange}
-      title={
-        member
-          ? t('Transfer Quota to {{username}}', { username: member.username })
-          : t('Transfer Quota')
-      }
-      contentClassName='sm:max-w-md'
-      bodyClassName='space-y-4'
-      footer={
-        <>
-          <Button
-            variant='outline'
-            onClick={close}
-            disabled={transfer.isPending}
-          >
-            {t('Cancel')}
-          </Button>
-          <Button
-            onClick={() => transfer.mutate(quotaValue)}
-            disabled={!canSubmit || transfer.isPending}
-          >
-            {transfer.isPending ? t('Processing...') : t('Confirm')}
-          </Button>
-        </>
-      }
-    >
-      <div className='text-muted-foreground space-y-1 text-sm'>
-        <div>
-          {t('Available Balance')}:{' '}
-          <span className='text-foreground font-mono tabular-nums'>
-            {formatQuota(props.enterpriseQuota)}
-          </span>
-        </div>
-        {member ? (
+    <>
+      <Dialog
+        open={open && !verification.isActive}
+        onOpenChange={handleOpenChange}
+        title={
+          member
+            ? t('Transfer Quota to {{username}}', { username: member.username })
+            : t('Transfer Quota')
+        }
+        contentClassName='sm:max-w-md'
+        bodyClassName='space-y-4'
+        footer={
+          <>
+            <Button
+              variant='outline'
+              onClick={close}
+              disabled={transfer.isPending}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              onClick={() => void submit()}
+              disabled={!canSubmit || transfer.isPending}
+            >
+              {transfer.isPending ? t('Processing...') : t('Confirm')}
+            </Button>
+          </>
+        }
+      >
+        <div className='text-muted-foreground space-y-1 text-sm'>
           <div>
-            {t('{{username}}’s balance', { username: member.username })}:{' '}
+            {t('Available Balance')}:{' '}
             <span className='text-foreground font-mono tabular-nums'>
-              {formatQuota(member.quota)}
+              {formatQuota(props.enterpriseQuota)}
             </span>
           </div>
+          {member ? (
+            <div>
+              {t('{{username}}’s balance', { username: member.username })}:{' '}
+              <span className='text-foreground font-mono tabular-nums'>
+                {formatQuota(member.quota)}
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className='space-y-2'>
+          <Label htmlFor='enterprise-transfer-amount'>
+            {t('Amount')} ({currencyLabel})
+          </Label>
+          <Input
+            id='enterprise-transfer-amount'
+            type='number'
+            step={getEditableQuotaStep()}
+            min={tokensOnly ? 1 : 0}
+            placeholder={
+              tokensOnly
+                ? t('Enter amount in tokens')
+                : t('Enter amount in {{currency}}', { currency: currencyLabel })
+            }
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            disabled={transfer.isPending}
+          />
+        </div>
+
+        {notEnoughBalance ? (
+          <p className='text-destructive text-xs'>
+            {t('The enterprise balance is not enough for this transfer.')}
+          </p>
         ) : null}
-      </div>
 
-      <div className='space-y-2'>
-        <Label htmlFor='enterprise-transfer-amount'>
-          {t('Amount')} ({currencyLabel})
-        </Label>
-        <Input
-          id='enterprise-transfer-amount'
-          type='number'
-          step={getEditableQuotaStep()}
-          min={tokensOnly ? 1 : 0}
-          placeholder={
-            tokensOnly
-              ? t('Enter amount in tokens')
-              : t('Enter amount in {{currency}}', { currency: currencyLabel })
-          }
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-          disabled={transfer.isPending}
-        />
-      </div>
+        {/* 划给已停用的成员会被服务端挡下；先在这里说清楚，免得填完金额才报错。 */}
+        {memberDisabled ? (
+          <p className='text-destructive text-xs'>
+            {t(
+              'This member is disabled. Enable them before transferring quota.'
+            )}
+          </p>
+        ) : null}
 
-      {notEnoughBalance ? (
-        <p className='text-destructive text-xs'>
-          {t('The enterprise balance is not enough for this transfer.')}
-        </p>
-      ) : null}
-
-      {/* 划给已停用的成员会被服务端挡下；先在这里说清楚，免得填完金额才报错。 */}
-      {memberDisabled ? (
-        <p className='text-destructive text-xs'>
-          {t('This member is disabled. Enable them before transferring quota.')}
-        </p>
-      ) : null}
-
-      {quotaValue > 0 && !notEnoughBalance ? (
-        <p className='text-muted-foreground text-xs'>
-          {t('After this transfer the enterprise balance will be {{quota}}.', {
-            quota: formatQuota(props.enterpriseQuota - quotaValue),
-          })}
-        </p>
-      ) : null}
-    </Dialog>
+        {Number.isSafeInteger(quotaValue) &&
+        quotaValue > 0 &&
+        !notEnoughBalance ? (
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'After this transfer the enterprise balance will be {{quota}}.',
+              {
+                quota: formatQuota(props.enterpriseQuota - quotaValue),
+              }
+            )}
+          </p>
+        ) : null}
+      </Dialog>
+      <SecureVerificationDialog {...verification.dialogProps} />
+    </>
   )
 }

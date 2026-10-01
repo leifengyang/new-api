@@ -47,6 +47,9 @@ export interface AuthUser {
    * 按归属收窄）。
    */
   is_enterprise?: boolean
+  enterprise_quota?: number
+  enterprise_frozen_quota?: number
+  enterprise_owner_id?: number
   aff_quota?: number
   aff_history_quota?: number
   inviter_id?: number

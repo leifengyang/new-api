@@ -36,6 +36,10 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { handleServerError } from '@/lib/handle-server-error'
 import { accountPasswordSchema } from '@/lib/password-policy'
 import { createServerError } from '@/lib/server-error-message'
@@ -64,6 +68,7 @@ interface ResetPasswordDialogProps {
 
 export function ResetPasswordDialog(props: ResetPasswordDialogProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
   const { openDialog, setOpenDialog, setActiveMember } = useEnterprise()
 
   const form = useForm<Values>({
@@ -74,10 +79,17 @@ export function ResetPasswordDialog(props: ResetPasswordDialogProps) {
   const open = openDialog === 'reset-password' && props.member !== null
 
   const reset = useMutation({
-    mutationFn: async (values: Values) => {
+    mutationFn: async ({
+      values,
+      proofToken,
+    }: {
+      values: Values
+      proofToken: string
+    }) => {
       const result = await resetEnterpriseMemberPassword(
         props.member?.id ?? 0,
-        values.password
+        values.password,
+        proofToken
       )
       if (!result.success) throw createServerError(result)
       return result
@@ -92,6 +104,17 @@ export function ResetPasswordDialog(props: ResetPasswordDialogProps) {
   })
 
   // 关闭时清空，避免下一次打开时输入框里还留着上一个人（或上一次）的密码。
+  async function submit(values: Values) {
+    const memberId = props.member?.id
+    if (!memberId) return
+    const proof = await verification.requestVerification({
+      scope: 'enterprise.member.manage',
+      context: { member_id: memberId, action: 'password' },
+      title: t('Reset Password'),
+    })
+    if (proof) reset.mutate({ values, proofToken: proof.proof_token })
+  }
+
   function close() {
     form.reset({ password: '', confirm: '' })
     setActiveMember(null)
@@ -99,92 +122,97 @@ export function ResetPasswordDialog(props: ResetPasswordDialogProps) {
   }
 
   const handleOpenChange = (next: boolean) => {
-    if (!next && !reset.isPending) close()
+    if (!next && !verification.isActive && !reset.isPending) close()
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={handleOpenChange}
-      title={t('Reset Password')}
-      description={
-        props.member
-          ? t(
-              'Set a new password for {{username}}. Their existing sessions are signed out, so they have to log in again with the new password.',
-              { username: props.member.username }
-            )
-          : ''
-      }
-      contentClassName='sm:max-w-md'
-      footer={
-        <>
-          <Button
-            type='button'
-            variant='outline'
-            onClick={close}
-            disabled={reset.isPending}
+    <>
+      <Dialog
+        open={open && !verification.isActive}
+        onOpenChange={handleOpenChange}
+        title={t('Reset Password')}
+        description={
+          props.member
+            ? t(
+                'Set a new password for {{username}}. Their existing sessions are signed out, so they have to log in again with the new password.',
+                { username: props.member.username }
+              )
+            : ''
+        }
+        contentClassName='sm:max-w-md'
+        footer={
+          <>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={close}
+              disabled={reset.isPending}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type='submit'
+              form='enterprise-reset-password-form'
+              disabled={reset.isPending}
+            >
+              {reset.isPending ? (
+                <Loader2 className='size-4 animate-spin' />
+              ) : null}
+              {reset.isPending ? t('Saving...') : t('Reset Password')}
+            </Button>
+          </>
+        }
+      >
+        <Form {...form}>
+          <form
+            id='enterprise-reset-password-form'
+            onSubmit={form.handleSubmit(submit)}
+            className='space-y-4'
+            autoComplete='off'
           >
-            {t('Cancel')}
-          </Button>
-          <Button
-            type='submit'
-            form='enterprise-reset-password-form'
-            disabled={reset.isPending}
-          >
-            {reset.isPending ? (
-              <Loader2 className='size-4 animate-spin' />
-            ) : null}
-            {reset.isPending ? t('Saving...') : t('Reset Password')}
-          </Button>
-        </>
-      }
-    >
-      <Form {...form}>
-        <form
-          id='enterprise-reset-password-form'
-          onSubmit={form.handleSubmit((values) => reset.mutate(values))}
-          className='space-y-4'
-          autoComplete='off'
-        >
-          <FormField
-            control={form.control}
-            name='password'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('New Password')}</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    type='password'
-                    autoComplete='new-password'
-                    disabled={reset.isPending}
-                  />
-                </FormControl>
-                <FormDescription>{t('Use 8–128 characters.')}</FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name='confirm'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Confirm Password')}</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    type='password'
-                    autoComplete='new-password'
-                    disabled={reset.isPending}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </form>
-      </Form>
-    </Dialog>
+            <FormField
+              control={form.control}
+              name='password'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('New Password')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type='password'
+                      autoComplete='new-password'
+                      disabled={reset.isPending}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Use 8–128 characters.')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='confirm'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Confirm Password')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type='password'
+                      autoComplete='new-password'
+                      disabled={reset.isPending}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </Dialog>
+      <SecureVerificationDialog {...verification.dialogProps} />
+    </>
   )
 }

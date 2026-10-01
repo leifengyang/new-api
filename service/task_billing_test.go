@@ -1801,3 +1801,29 @@ func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestEnterpriseWalletFundingPreservesSourcesAcrossReservesAndTaskRefund(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.EnterpriseWalletCharge{}, &model.UserSession{}))
+	owner := &model.User{Username: "wallet-owner", AffCode: "wallet-owner", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, IsEnterprise: 1, Quota: 1000, EnterpriseWalletVersion: 1}
+	require.NoError(t, model.DB.Create(owner).Error)
+	member := &model.User{Username: "wallet-member", AffCode: "wallet-member", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, EnterpriseOwnerId: owner.Id, EnterpriseWalletVersion: 1, Quota: 200}
+	require.NoError(t, model.DB.Create(member).Error)
+	_, err := model.TransferEnterpriseQuotaToMember(owner.Id, member.Id, 400)
+	require.NoError(t, err)
+	wallet := &WalletFunding{userId: member.Id, requestId: "enterprise-task-funding"}
+	require.NoError(t, wallet.PreConsume(100))
+	require.NoError(t, wallet.PreConsume(350))
+	assert.Equal(t, 450, wallet.consumed)
+	require.NoError(t, wallet.Settle(-150))
+	task := &model.Task{UserId: member.Id, Quota: 300, PrivateData: model.TaskPrivateData{Execution: &model.TaskExecutionSnapshot{RequestID: wallet.requestId}}}
+	_, err = model.RemoveEnterpriseMember(owner.Id, member.Id)
+	require.NoError(t, err)
+	require.NoError(t, taskAdjustFunding(task, -300))
+	require.NoError(t, taskAdjustFunding(task, -300))
+	require.NoError(t, model.DB.First(owner, owner.Id).Error)
+	require.NoError(t, model.DB.First(member, member.Id).Error)
+	assert.Equal(t, 1000, owner.Quota)
+	assert.Equal(t, 200, member.Quota)
+	assert.Zero(t, member.EnterpriseQuota)
+}

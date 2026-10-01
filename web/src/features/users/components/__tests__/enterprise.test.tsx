@@ -42,6 +42,12 @@ import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { TransferQuotaDialog } from '@/features/enterprise/components/dialogs/transfer-quota-dialog'
+import {
+  EnterpriseProvider,
+  useEnterprise,
+} from '@/features/enterprise/components/enterprise-provider'
+import type { EnterpriseMember } from '@/features/enterprise/types'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -244,11 +250,9 @@ it('filters the server search by enterprise account', async () => {
 })
 
 it('marks every selected account with one request each', async () => {
-  const put = vi
-    .spyOn(api, 'put')
-    .mockResolvedValue({
-      data: { success: true, data: { released_members: 0 } },
-    })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { released_members: 0 } },
+  })
   const user = userEvent.setup()
   renderSelectedRows([plainUser, anotherPlainUser], [0, 1])
 
@@ -274,11 +278,9 @@ it('marks every selected account with one request each', async () => {
 })
 
 it('leaves accounts that are already enterprise accounts out of the request', async () => {
-  const put = vi
-    .spyOn(api, 'put')
-    .mockResolvedValue({
-      data: { success: true, data: { released_members: 0 } },
-    })
+  const put = vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { released_members: 0 } },
+  })
   const user = userEvent.setup()
   renderSelectedRows([enterpriseUser, plainUser], [0, 1])
 
@@ -321,4 +323,78 @@ it('refuses a selection that is already all enterprise accounts', async () => {
   expect(
     screen.getByRole('button', { name: 'Mark as enterprise account' })
   ).toHaveAttribute('aria-disabled', 'true')
+})
+
+const transferMember: EnterpriseMember = {
+  id: 7,
+  username: 'member',
+  display_name: 'Member',
+  status: 1,
+  quota: 100,
+  used_quota: 0,
+  request_count: 0,
+  group: 'default',
+  enterprise_group_limits: '',
+  enterprise_model_limits: '',
+  created_at: 0,
+  last_login_at: 0,
+}
+
+function TransferHarness() {
+  const enterprise = useEnterprise()
+  return (
+    <>
+      <button
+        type='button'
+        onClick={() => enterprise.setOpenDialog('transfer-quota')}
+      >
+        Open transfer
+      </button>
+      <TransferQuotaDialog
+        member={transferMember}
+        enterpriseQuota={1_000_000}
+      />
+    </>
+  )
+}
+
+it('rejects negative transfers instead of changing their sign', async () => {
+  const post = vi.spyOn(api, 'post')
+  const user = userEvent.setup()
+  render(
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={newClient()}>
+        <EnterpriseProvider>
+          <TransferHarness />
+        </EnterpriseProvider>
+      </QueryClientProvider>
+    </I18nextProvider>
+  )
+  await user.click(screen.getByRole('button', { name: 'Open transfer' }))
+  const input = await screen.findByRole('spinbutton')
+  const confirm = screen.getByRole('button', { name: 'Confirm' })
+  await user.type(input, '-1')
+  expect(confirm).toBeDisabled()
+  await user.click(confirm)
+  expect(post).not.toHaveBeenCalled()
+  await user.clear(input)
+  await user.type(input, '1')
+  expect(confirm).toBeEnabled()
+})
+
+it('requires a member to leave before promotion and exposes balance management', async () => {
+  await renderUsersList([memberUser])
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Open menu' }))
+  expect(
+    await screen.findByRole('menuitem', { name: 'Promote' })
+  ).toHaveAttribute('aria-disabled', 'true')
+  await user.click(
+    screen.getByRole('menuitem', { name: 'Enterprise balance management' })
+  )
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('Personal funds')).toBeInTheDocument()
+  expect(
+    within(dialog).getByRole('button', { name: 'Remove member' })
+  ).toBeEnabled()
 })

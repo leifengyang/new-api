@@ -140,9 +140,13 @@ type User struct {
 	// 内部学员的返现审核状态（pending / approved / rejected）。列默认值同时承担
 	// 存量行的回填：老用户加列后一律变成 pending，不需要额外的数据迁移。用 varchar
 	// 而非 bool，理由与 member_level 相同：布尔默认值标签会让 AutoMigrate 反复 ALTER。
-	RebateReviewStatus string `json:"rebate_review_status" gorm:"type:varchar(16);not null;default:pending;column:rebate_review_status"`
-	IsEnterprise       int    `json:"is_enterprise" gorm:"type:int;default:0;column:is_enterprise"`
-	// 成员所属的企业账号 id；0 表示不属于任何企业。归属只有平台管理员能改。
+	RebateReviewStatus      string `json:"rebate_review_status" gorm:"type:varchar(16);not null;default:pending;column:rebate_review_status"`
+	IsEnterprise            int    `json:"is_enterprise" gorm:"type:int;default:0;column:is_enterprise"`
+	EnterpriseQuota         int    `json:"enterprise_quota" gorm:"default:0"`
+	EnterpriseFrozenQuota   int    `json:"enterprise_frozen_quota" gorm:"default:0"`
+	EnterpriseWalletEpoch   int64  `json:"-" gorm:"default:0"`
+	EnterpriseWalletVersion int    `json:"-" gorm:"default:0"`
+	// 成员所属的企业账号 id；0 表示不属于任何企业。
 	EnterpriseOwnerId int `json:"enterprise_owner_id" gorm:"type:int;default:0;column:enterprise_owner_id;index"`
 	// 企业给成员下的可见性收紧项，JSON 数组文本，空串表示不限。企业只能收紧：
 	// 生效范围永远是「平台允许 ∩ 这里列出的」，见 service.NarrowGroupsByEnterprise。
@@ -172,9 +176,10 @@ func (user *User) ToBaseUser() *UserBase {
 		AuthVersion: user.AuthVersion,
 		CacheSchema: userCacheSchemaVersion,
 
-		IsEnterprise:          user.IsEnterprise,
-		EnterpriseGroupLimits: user.EnterpriseGroupLimits,
-		EnterpriseModelLimits: user.EnterpriseModelLimits,
+		IsEnterprise:            user.IsEnterprise,
+		EnterpriseGroupLimits:   user.EnterpriseGroupLimits,
+		EnterpriseModelLimits:   user.EnterpriseModelLimits,
+		EnterpriseWalletVersion: user.EnterpriseWalletVersion,
 	}
 	return cache
 }
@@ -619,6 +624,7 @@ func GetSelfUserById(id int) (*User, error) {
 		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
 		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
 		"aff_quota", "aff_history", "inviter_id", "member_level", "is_enterprise",
+		"enterprise_quota", "enterprise_frozen_quota", "enterprise_owner_id",
 		"rebate_review_status",
 		"linux_do_id", "setting", "stripe_customer", "auth_version",
 		"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password",
@@ -759,23 +765,7 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 
 func (user *User) Insert(inviterId int) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
-			if err := user.prepareForInsert(tx); err != nil {
-				return err
-			}
-			user.Quota = common.QuotaForNewUser
-			user.AffCode = common.GetRandomString(4)
-			user.MemberLevel = resolveMemberLevelForNewUser(tx, inviterId)
-
-			// 初始化用户设置，包括默认的边栏配置
-			if user.Setting == "" {
-				defaultSetting := dto.UserSetting{}
-				// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-				user.SetSetting(defaultSetting)
-			}
-
-			return tx.Create(user).Error
-		})
+		return user.InsertWithTx(tx, inviterId)
 	}); err != nil {
 		return err
 	}
@@ -805,7 +795,7 @@ func InitUserSidebarConfig(user *User) {
 func (user *User) finishInsert(inviterId int) {
 	InitUserSidebarConfig(user)
 
-	if common.QuotaForNewUser > 0 {
+	if common.QuotaForNewUser > 0 && user.EnterpriseOwnerId == 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
 	// 邀请人数只取决于邀请关系，和奖励配置无关：inviter_id 在注册时就写进用户行了，
@@ -813,7 +803,7 @@ func (user *User) finishInsert(inviterId int) {
 	if inviterId != 0 {
 		_ = inviteUser(inviterId)
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if inviterId != 0 && user.EnterpriseOwnerId == 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
@@ -847,6 +837,10 @@ func (user *User) insertWithTx(tx *gorm.DB, inviterId int, quota int) error {
 				return err
 			}
 		}
+		if user.EnterpriseOwnerId != 0 {
+			quota = 0
+			user.EnterpriseWalletVersion = 1
+		}
 		user.Quota = quota
 		user.AffCode = common.GetRandomString(4)
 		user.MemberLevel = resolveMemberLevelForNewUser(tx, inviterId)
@@ -877,14 +871,14 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
+	if common.QuotaForNewUser > 0 && user.EnterpriseOwnerId == 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
 	// 与 finishInsert 同样处理：计数只看邀请关系，不看奖励配置。
 	if inviterId != 0 {
 		_ = inviteUser(inviterId)
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+	if inviterId != 0 && user.EnterpriseOwnerId == 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
 			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
@@ -922,8 +916,19 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 	}
 	newUser := *user
 	current := User{}
-	if err = tx.First(&current, user.Id).Error; err != nil {
+	if err = lockForUpdate(tx).First(&current, user.Id).Error; err != nil {
 		return err
+	}
+	if newUser.Role > common.RoleCommonUser {
+		if current.EnterpriseOwnerId != 0 {
+			return ErrEnterpriseMemberMustExit
+		}
+		if current.IsEnterprise == EnterpriseFlagYes {
+			return ErrEnterpriseTargetNotCommonUser
+		}
+	}
+	if current.EnterpriseOwnerId > 0 && newUser.Status != 0 && newUser.Status != current.Status {
+		return errors.New("use the enterprise member status operation")
 	}
 	// Updates(struct) ignores zero values. Match that behavior when deciding
 	// whether this request actually changes authentication-sensitive state;
@@ -954,6 +959,10 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		// 不挡住的话成员能给自己写 is_enterprise 或摘掉企业的限制。
 		"is_enterprise",
 		"enterprise_owner_id",
+		"enterprise_quota",
+		"enterprise_frozen_quota",
+		"enterprise_wallet_version",
+		"enterprise_wallet_epoch",
 		"enterprise_group_limits",
 		"enterprise_model_limits",
 	).Updates(newUser).Error; err != nil {
@@ -1003,7 +1012,7 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 	}
 
 	current := User{}
-	if err = tx.First(&current, user.Id).Error; err != nil {
+	if err = lockForUpdate(tx).First(&current, user.Id).Error; err != nil {
 		return err
 	}
 	authChanged := (updatePassword && current.Password != newUser.Password) || current.Group != newUser.Group
@@ -1073,6 +1082,9 @@ func (user *User) delete(identity *AuthSessionIdentity) error {
 	}
 	var nextAuthVersion int64
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := guardEnterpriseAccountRemovalTx(tx, user.Id); err != nil {
+			return err
+		}
 		if identity != nil {
 			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
 				return err
@@ -1176,6 +1188,11 @@ func hardDeleteUsers(ids []int) (int64, error) {
 		authVersions = make(map[int]int64, len(ids))
 	)
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, id := range ids {
+			if err := guardEnterpriseAccountRemovalTx(tx, id); err != nil {
+				return err
+			}
+		}
 		if common.RedisEnabled {
 			if err := tx.Unscoped().Select("id", commonKeyCol).Where("user_id IN ?", ids).Find(&tokens).Error; err != nil {
 				return err
@@ -1519,6 +1536,14 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if err := common.ValidateWalletQuota(quota); err != nil {
 		return err
 	}
+	var walletUser User
+	if err := DB.Select("id", "enterprise_wallet_version", "enterprise_owner_id").First(&walletUser, id).Error; err != nil {
+		return err
+	}
+	if walletUser.EnterpriseWalletVersion > 0 || walletUser.EnterpriseOwnerId > 0 {
+		db = true
+	}
+
 	if !db && common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
 		gopool.Go(func() {
@@ -1541,7 +1566,7 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 
 func increaseUserQuota(id int, quota int) (err error) {
 	result := DB.Model(&User{}).
-		Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
+		Where("id = ? AND quota + enterprise_frozen_quota <= ?", id, common.MaxWalletQuota-quota).
 		Update("quota", gorm.Expr("quota + ?", quota))
 	if result.Error != nil {
 		return result.Error
@@ -1560,6 +1585,16 @@ func increaseUserQuota(id int, quota int) (err error) {
 }
 
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
+	if quota > 0 {
+		var user User
+		if err := DB.Select("id", "enterprise_wallet_version", "enterprise_owner_id").First(&user, id).Error; err != nil {
+			return err
+		}
+		if user.EnterpriseWalletVersion > 0 || user.EnterpriseOwnerId > 0 {
+			_, err := SetEnterpriseWalletCharge(id, common.GetUUID(), quota, false)
+			return err
+		}
+	}
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
