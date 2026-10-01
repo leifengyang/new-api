@@ -27,6 +27,7 @@ import { AnnouncementsSection } from '../announcements-section'
 
 const draft = {
   id: 1,
+  title: 'Preview title',
   content: 'Preview announcement',
   publishDate: '2020-01-01T00:00:00Z',
   type: 'default',
@@ -63,6 +64,7 @@ test('adding an announcement saves a private draft without a publication revisio
   renderSettings([])
   await user.click(screen.getByRole('button', { name: 'Add Announcement' }))
   const editor = await screen.findByRole('dialog', { name: 'Add Announcement' })
+  await user.type(within(editor).getByLabelText('Title'), 'New title')
   await user.type(within(editor).getByLabelText('Content'), 'New announcement')
   await user.click(within(editor).getByRole('button', { name: 'Save draft' }))
   await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
@@ -87,14 +89,14 @@ test('testing and closing a draft does not publish; confirmation saves the previ
   renderSettings()
   await user.click(screen.getByRole('button', { name: 'Test popup' }))
   let popup = await screen.findByRole('dialog', {
-    name: 'Announcement Details',
+    name: 'Announcements',
   })
   expect(within(popup).getByText(draft.content)).toBeVisible()
   expect(put).not.toHaveBeenCalled()
   await user.click(within(popup).getAllByRole('button', { name: 'Close' })[0])
   expect(put).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: 'Test popup' }))
-  popup = await screen.findByRole('dialog', { name: 'Announcement Details' })
+  popup = await screen.findByRole('dialog', { name: 'Announcements' })
   await user.click(
     within(popup).getByRole('button', { name: 'Confirm publication' })
   )
@@ -132,7 +134,7 @@ test('saving an edit withdraws a published announcement and requires a new confi
     popupTarget: 'home',
   })
   await waitFor(() =>
-    expect(screen.getByText('Draft', { exact: true })).toBeVisible()
+    expect(screen.getAllByText('Draft', { exact: true })[0]).toBeVisible()
   )
 })
 
@@ -151,5 +153,85 @@ test('failed publication keeps the draft and preview available for retry', async
     ).toBeEnabled()
   )
   expect(popup).toBeVisible()
-  expect(screen.getByText('Draft', { exact: true })).toBeInTheDocument()
+  expect(screen.getAllByText('Draft', { exact: true })[0]).toBeInTheDocument()
+})
+
+test('image edits require saving a draft and previewing the complete popup before publication', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  renderSettings([{ ...draft, published: true, revision: 'v1' }])
+  await user.type(
+    screen.getByLabelText('Image URL'),
+    'https://example.com/community.png'
+  )
+  await user.type(
+    screen.getByLabelText('Image link (optional)'),
+    'https://example.com/group'
+  )
+  expect(
+    screen.getByRole('button', { name: 'Preview homepage popup' })
+  ).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Save image draft' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(
+    JSON.parse((put.mock.calls[0][1] as { value: string }).value)
+  ).toMatchObject({ published: false })
+  await user.click(
+    screen.getByRole('button', { name: 'Preview homepage popup' })
+  )
+  const popup = await screen.findByRole('dialog', { name: 'Announcements' })
+  expect(
+    within(popup).getByRole('img', { name: 'Permanent announcement' })
+  ).toHaveAttribute('src', 'https://example.com/community.png')
+  expect(within(popup).getByText('Preview title')).toBeVisible()
+  expect(put).toHaveBeenCalledTimes(1)
+  await user.click(
+    within(popup).getByRole('button', { name: 'Confirm publication' })
+  )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+  expect(
+    JSON.parse((put.mock.calls[1][1] as { value: string }).value)
+  ).toMatchObject({
+    imageUrl: 'https://example.com/community.png',
+    linkUrl: 'https://example.com/group',
+    published: true,
+    revision: expect.any(String),
+  })
+})
+
+test('image upload uses the same draft workflow and rejects oversized files', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  renderSettings([])
+  const input = screen.getByLabelText('Upload image')
+  await user.upload(
+    input,
+    new File([new Uint8Array(1024 * 1024 + 1)], 'large.png', {
+      type: 'image/png',
+    })
+  )
+  expect(
+    screen.getByRole('button', { name: 'Save image draft' })
+  ).toBeDisabled()
+  await user.upload(
+    input,
+    new File(['image fixture'], 'image.png', { type: 'image/png' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Save image draft' })
+    ).toBeEnabled()
+  )
+  await user.click(screen.getByRole('button', { name: 'Save image draft' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(
+    JSON.parse((put.mock.calls[0][1] as { value: string }).value)
+  ).toMatchObject({
+    imageUrl: expect.stringMatching(/^data:image\/png;base64,/),
+    published: false,
+  })
 })

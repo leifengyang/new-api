@@ -17,58 +17,52 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useRouterState } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useAnnouncements } from '@/features/dashboard/hooks/use-status-data'
-import type { AnnouncementItem } from '@/features/dashboard/types'
+import { latestPopupAnnouncements } from '@/features/dashboard/lib/announcements'
+import type {
+  AnnouncementBanner,
+  AnnouncementItem,
+} from '@/features/dashboard/types'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { AnnouncementDetailModal } from './announcement-detail-dialog'
+import { AnnouncementBoardDialog } from './announcement-board-dialog'
 
-export function AnnouncementPopup(props: {
+export function AnnouncementPopup({
+  items,
+  banner,
+  trigger,
+  target,
+  active = true,
+  loading = false,
+}: {
   items: AnnouncementItem[]
-  userId?: number
-  isHome: boolean
+  banner?: AnnouncementBanner | null
+  trigger: string | null
+  target: 'home' | 'authenticated'
+  active?: boolean
+  loading?: boolean
 }) {
   const { t } = useTranslation()
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
-  let announcement: AnnouncementItem | undefined
-  let receiptKey = ''
-  for (const item of props.items) {
-    if (item.published !== true || !item.revision || !item.popupTarget) continue
-    if (item.popupTarget === 'home' && !props.isHome) continue
-    if (item.popupTarget === 'authenticated' && !props.userId) continue
-    // Public home announcements have one browser receipt; private ones are per account.
-    const audience =
-      item.popupTarget === 'home' ? 'home' : `user-${props.userId}`
-    const key = `announcement-popup:${audience}:${item.id}:${item.revision}`
-    if (dismissed.has(key)) continue
-    try {
-      if (localStorage.getItem(key) === 'read') continue
-    } catch {
-      // In-memory receipts still prevent repeat popups when storage is unavailable.
-    }
-    announcement = item
-    receiptKey = key
-    break
-  }
-
-  const dismiss = () => {
-    if (!receiptKey) return
-    try {
-      localStorage.setItem(receiptKey, 'read')
-    } catch {
-      // Browsers can disable storage.
-    }
-    setDismissed((previous) => new Set(previous).add(receiptKey))
-  }
-
+  const [dismissed, setDismissed] = useState<string | null>(null)
+  const visibleItems = latestPopupAnnouncements(items, target)
+  const publishedBanner = banner?.published ? banner : null
+  const hasContent =
+    visibleItems.length > 0 || Boolean(publishedBanner?.imageUrl)
+  useEffect(() => {
+    // An empty response also completes this visit; later polling must not interrupt it.
+    if (active && trigger && !loading && !hasContent) setDismissed(trigger)
+  }, [active, trigger, loading, hasContent])
+  const dismiss = () => setDismissed(trigger)
   return (
-    <AnnouncementDetailModal
-      open={Boolean(announcement)}
-      announcement={announcement ?? null}
+    <AnnouncementBoardDialog
+      key={trigger}
+      open={active && Boolean(trigger) && dismissed !== trigger && hasContent}
+      items={visibleItems}
+      banner={publishedBanner}
       onOpenChange={(open) => {
         if (!open) dismiss()
       }}
@@ -79,23 +73,38 @@ export function AnnouncementPopup(props: {
 
 export function AnnouncementDelivery() {
   const userId = useAuthStore((state) => state.auth.user?.id)
+  const loginSequence = useAuthStore((state) => state.auth.loginSequence)
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
-  const { items } = useAnnouncements()
-  // Keep automatic dialogs out of the editor and authentication/setup flows.
-  if (
+  const { items, banner, loading } = useAnnouncements()
+  const excluded =
     pathname.startsWith('/system-settings') ||
     pathname.startsWith('/sign-') ||
     pathname === '/setup'
-  ) {
-    return null
-  }
   return (
-    <AnnouncementPopup
-      items={items}
-      userId={userId}
-      isHome={pathname === '/'}
-    />
+    <>
+      {pathname === '/' && (
+        <AnnouncementPopup
+          loading={loading}
+          items={items}
+          banner={banner}
+          target='home'
+          trigger='home'
+        />
+      )}
+      <AnnouncementPopup
+        loading={loading}
+        items={items}
+        banner={banner}
+        target='authenticated'
+        trigger={
+          userId && loginSequence > 0
+            ? `login:${userId}:${loginSequence}`
+            : null
+        }
+        active={Boolean(userId) && pathname !== '/' && !excluded}
+      />
+    </>
   )
 }

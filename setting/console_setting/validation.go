@@ -75,6 +75,9 @@ func ValidateConsoleSettings(settingsStr string, settingType string) error {
 		return validateApiInfo(settingsStr)
 	case "Announcements":
 		return validateAnnouncements(settingsStr)
+	case "AnnouncementsBanner":
+		_, err := parseAnnouncementBanner(settingsStr)
+		return err
 	case "FAQ":
 		return validateFAQ(settingsStr)
 	case "UptimeKumaGroups":
@@ -156,6 +159,12 @@ func validateAnnouncements(announcementsStr string) error {
 		"default": true, "ongoing": true, "success": true, "warning": true, "error": true,
 	}
 	for i, ann := range list {
+		if title, exists := ann["title"]; exists {
+			value, ok := title.(string)
+			if !ok || strings.TrimSpace(value) == "" || exceedsMaxCharacters(value, 100) {
+				return fmt.Errorf("第%d个公告的标题须为1至100字符", i+1)
+			}
+		}
 		if target, exists := ann["popupTarget"]; exists {
 			if target != "home" && target != "authenticated" {
 				return fmt.Errorf("第%d个公告的弹窗位置不合法", i+1)

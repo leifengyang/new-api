@@ -191,7 +191,7 @@ func GetAnnouncements(c *gin.Context) {
 		items = console_setting.GetAnnouncementsForAudience(c.GetInt("id") > 0)
 	}
 	c.Header("Cache-Control", "private, no-store")
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items, "banner": console_setting.GetPublishedAnnouncementBanner()})
 }
 
 func GetAbout(c *gin.Context) {

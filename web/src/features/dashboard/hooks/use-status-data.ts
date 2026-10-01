@@ -23,7 +23,12 @@ import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { AnnouncementItem, ApiInfoItem, FAQItem } from '../types'
+import type {
+  AnnouncementBanner,
+  AnnouncementItem,
+  ApiInfoItem,
+  FAQItem,
+} from '../types'
 
 /**
  * Get specific list from status data
@@ -57,13 +62,18 @@ export function useAnnouncements() {
       const response = await api.get<{
         success: boolean
         data: AnnouncementItem[]
+        banner?: AnnouncementBanner | null
       }>('/api/announcements', { signal })
-      return requireServerSuccess(response.data).data
+      return requireServerSuccess(response.data)
     },
     staleTime: 30_000,
     refetchInterval: 60_000,
   })
-  return { items: query.data ?? [], loading: query.isLoading }
+  return {
+    items: query.data?.data ?? [],
+    banner: query.data?.banner ?? null,
+    loading: query.isLoading,
+  }
 }
 
 /**

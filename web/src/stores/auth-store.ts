@@ -100,7 +100,8 @@ interface AuthState {
     session: LoginSession | null
     pendingLoginVerification: PendingLoginVerification | null
     bootstrapState: AuthBootstrapState
-    setBundle: (bundle: AuthBundle) => void
+    loginSequence: number
+    setBundle: (bundle: AuthBundle, newLogin?: boolean) => void
     setUser: (user: AuthUser | null) => void
     setPendingLoginVerification: (
       pending: PendingLoginVerification | null
@@ -118,11 +119,13 @@ export const useAuthStore = create<AuthState>()((set) => ({
     session: null,
     pendingLoginVerification: null,
     bootstrapState: 'idle',
-    setBundle: (bundle) =>
+    loginSequence: 0,
+    setBundle: (bundle, newLogin = false) =>
       set((state) => ({
         ...state,
         auth: {
           ...state.auth,
+          loginSequence: state.auth.loginSequence + (newLogin ? 1 : 0),
           user: bundle.user,
           accessToken: bundle.access_token,
           accessExpiresAt: bundle.access_expires_at,
