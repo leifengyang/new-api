@@ -92,6 +92,9 @@ describe('log cost display', () => {
     expect(screen.getByRole('img', { name: 'Wallet' })).toBeVisible()
     expect(screen.queryByText('Wallet')).not.toBeInTheDocument()
     expect(screen.queryByText('Subscription')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('$0.01').closest('[data-slot="status-badge"]')
+    ).toHaveClass('h-5', 'rounded-md')
   })
 
   test('hides the wallet icon when subscriptions are unavailable', () => {
@@ -115,7 +118,9 @@ describe('log cost display', () => {
 
     expect(screen.getByText('$0.025')).toBeVisible()
     expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
-    expect(screen.queryByRole('img', { name: 'Wallet' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('img', { name: 'Wallet' })
+    ).not.toBeInTheDocument()
   })
 
   test('keeps legacy cost visible without inventing a funding source', () => {

@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import type { UsageLog } from '../data/schema'
 import { formatModelName, parseLogOther } from '../lib/format'
@@ -38,6 +39,11 @@ import {
   isDisplayableLogType,
   isTimingLogType,
 } from '../lib/utils'
+import {
+  logBadgeClassName,
+  logBadgeTone,
+  logTypeBadgeClassName,
+} from './log-table-style'
 import { ModelBadge, ResponseModelDetails } from './model-badge'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
 import { TokenUsageCell } from './token-usage-cell'
@@ -173,7 +179,8 @@ export function CommonLogMobileCard<TData>(props: {
               variant={config.color as StatusVariant}
               copyable={false}
               showDot
-              className='h-5 px-0 text-xs'
+              type='badge'
+              className={logTypeBadgeClassName}
             />
             <Button
               variant='ghost'
@@ -228,7 +235,7 @@ export function CommonLogMobileCard<TData>(props: {
                 <GroupBadge
                   group={field.value}
                   type='text'
-                  className='max-w-full text-sm'
+                  className='!text-muted-foreground max-w-full text-sm'
                 />
               )
             } else if (id === 'token') {
@@ -237,7 +244,12 @@ export function CommonLogMobileCard<TData>(props: {
                   label={field.value}
                   copyable={false}
                   icon={KeyRound}
-                  className='border-border/60 bg-muted/30 text-foreground max-w-full rounded-md border px-1.5 py-0.5 text-sm'
+                  type='badge'
+                  className={cn(
+                    logBadgeClassName,
+                    logBadgeTone.neutral,
+                    'max-w-full'
+                  )}
                 />
               )
             }

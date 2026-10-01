@@ -427,3 +427,15 @@ it.each([
     ).not.toBeInTheDocument()
   }
 )
+
+it('keeps a compact model label without changing its copy action', async () => {
+  const user = userEvent.setup()
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+  render(<ModelBadge modelName='gpt-6.1-sol' />)
+  const badge = screen
+    .getByText('gpt-6.1-sol')
+    .closest('[data-slot="status-badge"]')
+  expect(badge).toHaveClass('h-5', 'rounded-md')
+  await user.click(screen.getByText('gpt-6.1-sol'))
+  expect(copy).toHaveBeenCalledWith('gpt-6.1-sol')
+})

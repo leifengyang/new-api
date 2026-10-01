@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import {
   Popover,
   PopoverContent,
@@ -73,6 +74,11 @@ import {
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
+import {
+  logBadgeClassName,
+  logBadgeTone,
+  logTypeBadgeClassName,
+} from '../log-table-style'
 import { ModelBadge } from '../model-badge'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { TokenUsageCell } from '../token-usage-cell'
@@ -366,7 +372,8 @@ export function useCommonLogsColumns(
                 variant={config.color as StatusBadgeProps['variant']}
                 size='sm'
                 copyable={false}
-                className='-ml-1.5 !text-xs [&_span]:!text-xs'
+                type='badge'
+                className={logTypeBadgeClassName}
               />
             </div>
           )
@@ -429,11 +436,15 @@ export function useCommonLogsColumns(
                     <div className='relative inline-flex w-fit items-center gap-1'>
                       <StatusBadge
                         label={channelIdDisplay}
-                        autoColor={String(log.channel)}
+                        type='badge'
                         copyText={String(log.channel)}
                         size='sm'
                         showDot={false}
-                        className='font-mono'
+                        className={cn(
+                          logBadgeClassName,
+                          logBadgeTone.neutral,
+                          'font-mono'
+                        )}
                       />
                       {showMultiKeyIndex && (
                         <StatusBadge
@@ -561,9 +572,9 @@ export function useCommonLogsColumns(
             if (!log.username) return null
 
             return (
-              <button
-                type='button'
-                className='flex items-center gap-1.5 text-left'
+              <Button
+                variant='ghost'
+                className='h-auto gap-1.5 rounded-md px-1 py-0.5 text-left font-normal'
                 onClick={(e) => {
                   e.stopPropagation()
                   setSelectedUserId(log.user_id)
@@ -601,7 +612,7 @@ export function useCommonLogsColumns(
                     )}
                   </Tooltip>
                 </TooltipProvider>
-              </button>
+              </Button>
             )
           },
         }
@@ -636,7 +647,12 @@ export function useCommonLogsColumns(
                     copyText={sensitiveVisible ? tokenName : undefined}
                     size='sm'
                     showDot={false}
-                    className='border-border/60 bg-muted/30 text-foreground h-6 max-w-full gap-1.5 overflow-hidden rounded-md border px-2 py-0.5 [font-family:var(--font-body)]'
+                    type='badge'
+                    className={cn(
+                      logBadgeClassName,
+                      logBadgeTone.neutral,
+                      'max-w-full overflow-hidden [&_svg]:text-sky-600 dark:[&_svg]:text-sky-400'
+                    )}
                   />
                 </TooltipTrigger>
                 {sensitiveVisible && tokenName.length > 16 && (
@@ -647,14 +663,17 @@ export function useCommonLogsColumns(
               </Tooltip>
             </TooltipProvider>
             {(group || groupRatio != null) && (
-              <span className='block max-w-full truncate text-xs leading-none'>
+              <span
+                data-table-text='secondary'
+                className='block max-w-full truncate text-xs leading-none'
+              >
                 {group ? (
                   <GroupBadge
                     group={group}
                     label={sensitiveVisible ? undefined : '••••'}
                     type='text'
                     size='sm'
-                    className='inline align-baseline text-xs leading-none [&>span]:leading-none'
+                    className='!text-muted-foreground inline align-baseline text-xs leading-none [&>span]:leading-none'
                   />
                 ) : null}
                 {group && groupRatio != null ? ' ' : null}
@@ -833,14 +852,14 @@ export function useCommonLogsColumns(
 
           return (
             <>
-              <button
-                type='button'
-                className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+              <Button
+                variant='ghost'
+                className='group border-border/50 bg-muted/20 h-auto max-w-[200px] justify-start gap-1 rounded-md border px-1.5 py-0.5 text-left text-xs font-normal'
                 onClick={() => setDialogOpen(true)}
                 title={t('Click to view full details')}
               >
                 {detailPreview}
-              </button>
+              </Button>
               <DetailsDialog
                 log={log}
                 isAdmin={isAdmin}

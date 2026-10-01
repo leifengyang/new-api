@@ -20,6 +20,7 @@ import { CircleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
+  StatusBadge,
   dotColorMap,
   textColorMap,
   type StatusVariant,
@@ -35,6 +36,7 @@ import { cn } from '@/lib/utils'
 
 import { getFirstResponseTimeColor, getResponseTimeColor } from '../lib/format'
 import type { LogOtherData } from '../types'
+import { logBadgeClassName, logBadgeTone } from './log-table-style'
 
 /**
  * Softened fills for the full-height timing bar. The bar sits directly beside
@@ -106,7 +108,12 @@ export function TimingMetricsCell(props: TimingMetricsCellProps) {
           <span className='text-muted-foreground shrink-0'>
             {t('First token')}
           </span>
-          <span className={cn('tabular-nums', textColorMap[firstTokenVariant])}>
+          <span
+            className={cn(
+              'rounded px-1 py-px bg-current/5 tabular-nums',
+              textColorMap[firstTokenVariant]
+            )}
+          >
             {firstTokenLabel}
           </span>
         </div>
@@ -122,7 +129,12 @@ export function TimingMetricsCell(props: TimingMetricsCellProps) {
           />
         )}
         <span className='text-muted-foreground shrink-0'>{t('Duration')}</span>
-        <span className={cn('tabular-nums', textColorMap[totalTimeVariant])}>
+        <span
+          className={cn(
+            'rounded px-1 py-px bg-current/5 tabular-nums',
+            textColorMap[totalTimeVariant]
+          )}
+        >
           {totalTimeLabel}
         </span>
       </div>
@@ -140,7 +152,7 @@ export function TimingMetricsCell(props: TimingMetricsCellProps) {
       <span
         aria-hidden
         className={cn(
-          'flex w-1 shrink-0 flex-col overflow-hidden rounded-full',
+          'flex w-0.5 shrink-0 flex-col overflow-hidden rounded-full opacity-70',
           !showFirstToken && barColorMap[totalTimeVariant]
         )}
       >
@@ -189,10 +201,12 @@ export function StreamTpsCell(props: StreamTpsCellProps) {
         props.className
       )}
     >
-      <span
+      <StatusBadge
+        type='badge'
+        copyable={false}
         className={cn(
-          'inline-flex items-center gap-1 font-medium',
-          props.isStream ? 'text-info' : 'text-muted-foreground'
+          logBadgeClassName,
+          props.isStream ? logBadgeTone.stream : logBadgeTone.neutral
         )}
       >
         {streamLabel}
@@ -218,10 +232,13 @@ export function StreamTpsCell(props: StreamTpsCellProps) {
             </Tooltip>
           </TooltipProvider>
         )}
-      </span>
+      </StatusBadge>
       {(!props.compact ||
         (props.isStream && props.tokensPerSecond != null)) && (
-        <span className='text-muted-foreground/60 px-0.5 tabular-nums'>
+        <span
+          data-table-text='secondary'
+          className='text-muted-foreground/60 px-0.5 text-[11px] tabular-nums'
+        >
           {tpsLabel}
         </span>
       )}
