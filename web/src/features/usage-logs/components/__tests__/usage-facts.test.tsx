@@ -271,3 +271,58 @@ test('consumption opens billing first and keeps technical data collapsed', () =>
   expect(screen.getByText('Request ID')).toBeVisible()
   client.clear()
 })
+
+test('billing groups each charge with its quantity, unit price and subtotal', () => {
+  const client = renderDetails(
+    {
+      model_ratio: 2.5,
+      completion_ratio: 3,
+      cache_tokens: 1000,
+      cache_ratio: 0.1,
+      group_ratio: 1,
+    },
+    2900,
+    'billing'
+  )
+  const input = screen.getByRole('group', { name: 'Input' })
+  expect(input).toHaveTextContent('1,900')
+  expect(input).toHaveTextContent('$5 / 1M')
+  expect(input).toHaveTextContent('$0.0095')
+  const cache = screen.getByRole('group', { name: 'Cache Read' })
+  expect(cache).toHaveTextContent('1,000')
+  expect(cache).toHaveTextContent('$0.5 / 1M')
+  expect(cache).toHaveTextContent('$0.0005')
+  expect(input).toHaveClass('min-w-0')
+  client.clear()
+})
+
+test('colored formula keeps tool charges after the request multiplier', () => {
+  const client = renderDetails(
+    {
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa(
+        'tier("request", fixed(0.002)) * (header("fast") == "yes" ? 2 : 1)'
+      ),
+      matched_tier: 'request',
+      billing_unit: 'request',
+      fixed_price: 0.002,
+      group_ratio: 1,
+      request_rules: [
+        { cond: 'header("fast") == "yes"', matched: true, multiplier: 2 },
+      ],
+      tool_surcharges: [{ name: 'web_search', count: 1, price: 6 }],
+    },
+    0,
+    'billing'
+  )
+  const multiplier = screen.getByText('× Request multiplier 2')
+  const tool = screen.getByRole('group', { name: 'web_search' })
+  expect(
+    multiplier.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  expect(tool).toHaveTextContent('$6 / 1K')
+  expect(
+    screen.getByRole('region', { name: 'Billing calculation' })
+  ).toHaveTextContent('= $0.01')
+  client.clear()
+})
