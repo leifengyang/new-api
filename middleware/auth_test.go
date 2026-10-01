@@ -334,3 +334,31 @@ func TestApplyWebSocketSubprotocolAuthorizationReadsRepeatedHeaders(t *testing.T
 	assert.True(t, applyWebSocketSubprotocolAuthorization(header))
 	assert.Equal(t, "Bearer sk-later-field", header.Get("Authorization"))
 }
+
+func TestEnterpriseCannotUseExcludedDefaultGroup(t *testing.T) {
+	for _, group := range []string{"default", ""} {
+		t.Run("token_group_"+group, func(t *testing.T) {
+			setupDashboardAuthMiddlewareTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+			oldMaster, oldLogType := common.IsMasterNode, common.LogDatabaseType()
+			common.IsMasterNode = false
+			t.Setenv("LOG_SQL_DSN", "")
+			require.NoError(t, model.InitLogDB())
+			t.Cleanup(func() { common.IsMasterNode = oldMaster; common.SetLogDatabaseType(oldLogType) })
+			user := createMiddlewarePATUser(t, "audit-member", "audit-member-pat")
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Updates(map[string]any{
+				"enterprise_owner_id":     100,
+				"enterprise_group_limits": `["vip"]`,
+			}).Error)
+			token := model.Token{UserId: user.Id, Key: "audit012345678901234567890123456789012345678901234567", Status: common.TokenStatusEnabled, UnlimitedQuota: true, ExpiredTime: -1, Group: group}
+			require.NoError(t, model.DB.Create(&token).Error)
+			router := gin.New()
+			router.GET("/probe", TokenAuth(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			request := httptest.NewRequest(http.MethodGet, "/probe", nil)
+			request.Header.Set("Authorization", "Bearer "+token.Key)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, http.StatusForbidden, response.Code, "default group is excluded by enterprise whitelist")
+		})
+	}
+}

@@ -118,6 +118,30 @@ export function useEnterpriseMembersColumns(): ColumnDef<EnterpriseMember>[] {
         meta: { mobileOrder: 30 },
       },
       {
+        id: 'wallet_sources',
+        header: t('Balance sources'),
+        cell: ({ row }) => (
+          <div className='space-y-1 text-xs tabular-nums'>
+            <div>
+              {t('Enterprise funds')}:{' '}
+              {formatQuota(row.original.enterprise_quota ?? 0)}
+            </div>
+            <div>
+              {t('Personal funds')}:{' '}
+              {formatQuota(
+                row.original.quota - (row.original.enterprise_quota ?? 0)
+              )}
+            </div>
+            <div>
+              {t('Frozen historical balance')}:{' '}
+              {formatQuota(row.original.enterprise_frozen_quota ?? 0)}
+            </div>
+          </div>
+        ),
+        enableSorting: false,
+        size: 210,
+      },
+      {
         accessorKey: 'used_quota',
         header: t('Total Usage'),
         cell: ({ row }) => (

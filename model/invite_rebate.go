@@ -375,7 +375,7 @@ func creditInviterWalletTx(tx *gorm.DB, inviterId int, quota int) error {
 		return err
 	}
 	result := tx.Model(&User{}).
-		Where("id = ? AND quota <= ?", inviterId, maxCurrentQuota).
+		Where("id = ? AND quota + enterprise_frozen_quota <= ?", inviterId, maxCurrentQuota).
 		Update("quota", gorm.Expr("quota + ?", quota))
 	if result.Error != nil {
 		return result.Error

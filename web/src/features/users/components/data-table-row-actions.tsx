@@ -57,6 +57,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
+import { updateEnterpriseMemberStatus } from '@/features/enterprise/api'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -82,6 +87,7 @@ import {
 } from '../constants'
 import { getUserActionMessage } from '../lib'
 import type { User, ManageUserAction } from '../types'
+import { EnterpriseWalletDialog } from './dialogs/enterprise-wallet-dialog'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { useUsers } from './users-provider'
 
@@ -121,6 +127,8 @@ const REBATE_REVIEW_MENU_ITEMS = [
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
+  const [walletOpen, setWalletOpen] = useState(false)
   const user = row.original
   const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
@@ -154,7 +162,26 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const handleManage = async (action: Exclude<ManageUserAction, 'delete'>) => {
     try {
-      const result = await manageUser(user.id, action)
+      let result
+      if (
+        isEnterpriseMember(user) &&
+        (action === 'enable' || action === 'disable')
+      ) {
+        const proof = await verification.requestVerification({
+          scope: 'enterprise.member.manage',
+          context: { member_id: user.id, action },
+          title: t('Verify your identity'),
+        })
+        if (!proof) return
+        result = await updateEnterpriseMemberStatus(
+          user.id,
+          action === 'enable',
+          proof.proof_token,
+          true
+        )
+      } else {
+        result = await manageUser(user.id, action)
+      }
       if (result.success) {
         toast.success(t(getUserActionMessage(action)))
         triggerRefresh()
@@ -363,7 +390,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         )}
 
         {!isAdmin && (
-          <DropdownMenuItem onClick={() => handleManage('promote')}>
+          <DropdownMenuItem
+            disabled={isEnterpriseMember(user) || isEnterprise}
+            onClick={() => handleManage('promote')}
+          >
             {t('Promote')}
             <DropdownMenuShortcut>
               <ArrowUp size={16} />
@@ -432,6 +462,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuSub>
         )}
 
+        {(isEnterpriseMember(user) ||
+          (user.enterprise_frozen_quota ?? 0) > 0) && (
+          <DropdownMenuItem onSelect={() => setWalletOpen(true)}>
+            {t('Enterprise balance management')}
+          </DropdownMenuItem>
+        )}
         {canToggleEnterprise &&
           (isEnterprise ? (
             <DropdownMenuItem
@@ -621,7 +657,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 'They keep their role: this only opens an enterprise console where they can create members, hand out quota from their own balance, and narrow what each member can use. Members are ordinary platform accounts that administrators still see and manage.'
               )
             : t(
-                'Every member moves out of this enterprise and whatever is left in their wallets goes back to this account. Nothing is deleted and no rebate is reversed, but they can no longer open the console.'
+                'Remove all members before cancelling this enterprise account. Its balance is retained.'
               )
         }
         // 「取消企业账号」里的「取消」是取消这个标记，不是取消对话框；确认按钮
@@ -661,6 +697,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
       />
+      <EnterpriseWalletDialog
+        user={user}
+        open={walletOpen}
+        onOpenChange={setWalletOpen}
+        onSuccess={triggerRefresh}
+      />
+      <SecureVerificationDialog {...verification.dialogProps} />
     </div>
   )
 }

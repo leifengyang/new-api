@@ -59,6 +59,8 @@ type EnterpriseMemberSummary struct {
 	Username              string `json:"username"`
 	DisplayName           string `json:"display_name"`
 	Status                int    `json:"status"`
+	EnterpriseQuota       int    `json:"enterprise_quota"`
+	EnterpriseFrozenQuota int    `json:"enterprise_frozen_quota"`
 	Quota                 int    `json:"quota"`
 	UsedQuota             int    `json:"used_quota"`
 	RequestCount          int    `json:"request_count"`
@@ -116,7 +118,7 @@ func applyWalletDeltaTx(tx *gorm.DB, user *User, delta int64) (int, error) {
 	}
 	after := decimal.NewFromInt(int64(user.Quota)).Add(decimal.NewFromInt(delta))
 	quota, err := common.WalletQuotaFromDecimalStrict(after)
-	if err != nil {
+	if err != nil || (delta > 0 && user.EnterpriseFrozenQuota > common.MaxWalletQuota-quota) {
 		return 0, ErrWalletQuotaLimitExceeded
 	}
 	result := tx.Model(&User{}).Where("id = ? AND quota = ?", user.Id, user.Quota).Update("quota", quota)
@@ -141,12 +143,6 @@ func syncWalletCache(userId int, before, after int) {
 	}
 }
 
-func invalidateUserCacheBestEffort(userId int, what string) {
-	if err := invalidateUserCache(userId); err != nil {
-		common.SysError(fmt.Sprintf("failed to invalidate %s cache for user %d: %s", what, userId, err.Error()))
-	}
-}
-
 // isDuplicateEntryError 判断底层错误是不是唯一索引冲突。
 //
 // 三家驱动的报错文本不同（MySQL 1062 / PostgreSQL "duplicate key value" /
@@ -160,19 +156,9 @@ func isDuplicateEntryError(err error) bool {
 	return strings.Contains(message, "duplicate") || strings.Contains(message, "unique constraint")
 }
 
-// SetUserEnterpriseFlag 由平台管理员打上或取消「企业账号」标记。
-//
-// 取消标记会连带把名下成员全部移出企业，并把各成员钱包里的余额退回企业账号——
-// 这一步与标记本身在同一笔事务里完成，避免出现「已经不再是企业，成员却还挂在
-// 它名下」的中间状态。返回被移出的成员数，供审计记录。
-func SetUserEnterpriseFlag(userId int, enabled bool) (releasedMembers int, err error) {
-	if userId <= 0 {
-		return 0, gorm.ErrRecordNotFound
-	}
-	var syncs []walletSyncEntry
-
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		syncs = syncs[:0]
+// SetUserEnterpriseFlag refuses to detach members implicitly.
+func SetUserEnterpriseFlag(userId int, enabled bool) (int, error) {
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		var target User
 		if err := lockForUpdate(tx).First(&target, userId).Error; err != nil {
 			return err
@@ -180,115 +166,27 @@ func SetUserEnterpriseFlag(userId int, enabled bool) (releasedMembers int, err e
 		if target.Role != common.RoleCommonUser {
 			return ErrEnterpriseTargetNotCommonUser
 		}
+		if target.EnterpriseOwnerId != 0 {
+			return ErrEnterpriseTargetIsMember
+		}
+		flag := EnterpriseFlagNo
 		if enabled {
-			if target.EnterpriseOwnerId != 0 {
-				return ErrEnterpriseTargetIsMember
-			}
-			if target.IsEnterprise == EnterpriseFlagYes {
-				return nil
-			}
-			return tx.Model(&User{}).Where("id = ?", userId).
-				Update("is_enterprise", EnterpriseFlagYes).Error
-		}
-		if target.IsEnterprise != EnterpriseFlagYes {
-			return nil
-		}
-		released, wallets, err := releaseEnterpriseMembersTx(tx, &target)
-		if err != nil {
+			flag = EnterpriseFlagYes
+		} else if err := guardEnterpriseAccountRemovalTx(tx, userId); err != nil {
 			return err
 		}
-		releasedMembers = released
-		syncs = append(syncs, wallets...)
-		result := tx.Model(&User{}).Where("id = ?", userId).
-			Update("is_enterprise", EnterpriseFlagNo)
-		if result.Error != nil {
-			return result.Error
+		if target.IsEnterprise == flag {
+			return nil
 		}
-		if result.RowsAffected != 1 {
-			return ErrEnterpriseWalletChanged
+		if _, err := IncrementUserAuthVersionWithTx(tx, userId); err != nil {
+			return err
 		}
-		return nil
+		return tx.Model(&User{}).Where("id = ?", userId).Updates(map[string]any{"is_enterprise": flag, "enterprise_wallet_version": 1}).Error
 	})
-	if err != nil {
-		return 0, err
+	if err == nil {
+		err = PublishUserAuthCache(userId)
 	}
-
-	for _, sync := range syncs {
-		syncWalletCache(sync.userId, sync.before, sync.after)
-	}
-	invalidateUserCacheBestEffort(userId, "enterprise")
-	return releasedMembers, nil
-}
-
-// releaseEnterpriseMembersTx 把企业名下的成员全部移出：余额退回企业账号，归属清空，
-// 企业限制一并撤销。返回移出的成员数和需要在提交后同步的额度缓存条目。
-//
-// 成员的启用状态不动：企业停用过的成员在移出后仍然保持停用。谁停用的谁负责，
-// 这里不替平台管理员做「顺手放行」的决定。
-func releaseEnterpriseMembersTx(tx *gorm.DB, enterprise *User) (int, []walletSyncEntry, error) {
-	var members []User
-	if err := lockForUpdate(tx).Where("enterprise_owner_id = ?", enterprise.Id).
-		Find(&members).Error; err != nil {
-		return 0, nil, err
-	}
-	if len(members) == 0 {
-		return 0, nil, nil
-	}
-
-	// 企业余额在企业行上一次性收紧，而不是逐个成员累加：少一轮读写，也少一次越界判断。
-	var total int64
-	for i := range members {
-		total += int64(members[i].Quota)
-	}
-	enterpriseBefore := enterprise.Quota
-	enterpriseAfter := enterpriseBefore
-
-	if total != 0 {
-		merged := decimal.NewFromInt(int64(enterpriseBefore)).Add(decimal.NewFromInt(total))
-		quota, err := common.WalletQuotaFromDecimalStrict(merged)
-		if err != nil {
-			// 成员的余额合起来把企业钱包顶过了上限。这里只能截断并留痕，
-			// 不能因此让「取消企业标记」这个操作直接失败。
-			common.SysError(fmt.Sprintf(
-				"enterprise %d wallet clamped while releasing members: %s", enterprise.Id, err.Error()))
-			quota = common.MaxWalletQuota
-		}
-		result := tx.Model(&User{}).Where("id = ? AND quota = ?", enterprise.Id, enterpriseBefore).
-			Update("quota", quota)
-		if result.Error != nil {
-			return 0, nil, result.Error
-		}
-		if result.RowsAffected != 1 {
-			return 0, nil, ErrEnterpriseWalletChanged
-		}
-		enterpriseAfter = quota
-	}
-
-	syncs := make([]walletSyncEntry, 0, len(members)+1)
-	if enterpriseAfter != enterpriseBefore {
-		syncs = append(syncs, walletSyncEntry{enterprise.Id, enterpriseBefore, enterpriseAfter})
-	}
-
-	for i := range members {
-		member := &members[i]
-		before := member.Quota
-		result := tx.Model(&User{}).Where("id = ?", member.Id).Updates(map[string]any{
-			"quota":                   0,
-			"enterprise_owner_id":     0,
-			"enterprise_group_limits": "",
-			"enterprise_model_limits": "",
-		})
-		if result.Error != nil {
-			return 0, nil, result.Error
-		}
-		if result.RowsAffected != 1 {
-			return 0, nil, ErrEnterpriseWalletChanged
-		}
-		if before != 0 {
-			syncs = append(syncs, walletSyncEntry{member.Id, before, 0})
-		}
-	}
-	return len(members), syncs, nil
+	return 0, err
 }
 
 // enterpriseLookupError 只把「确实没有这一行」翻成企业语境的错误，其余错误原样
@@ -362,7 +260,7 @@ func ListEnterpriseMembers(enterpriseId int, filter EnterpriseMemberFilter, offs
 
 	members := make([]EnterpriseMemberSummary, 0, limit)
 	if err := query.
-		Select("id", "username", "display_name", "status", "quota", "used_quota",
+		Select("id", "username", "display_name", "status", "quota", "enterprise_quota", "enterprise_frozen_quota", "used_quota",
 			"request_count", "group", "enterprise_group_limits", "enterprise_model_limits",
 			"created_at", "last_login_at").
 		Order("id ASC").Offset(offset).Limit(limit).Scan(&members).Error; err != nil {
@@ -402,7 +300,7 @@ func lockEnterpriseMemberTx(tx *gorm.DB, enterpriseId, memberId int) (*User, err
 	}
 	// 归属校验必须在取到行之后做，而且只看数据库里的值：企业控制台的每个写操作
 	// 都要经过这里，前端传什么 id 都不构成授权依据。
-	if member.EnterpriseOwnerId != enterpriseId {
+	if member.EnterpriseOwnerId != enterpriseId || member.Role != common.RoleCommonUser {
 		return nil, ErrEnterpriseNotAMember
 	}
 	return &member, nil
@@ -422,7 +320,7 @@ func CreateEnterpriseMember(enterpriseId int, member *User) error {
 		if err := lockForUpdate(tx).First(&enterprise, enterpriseId).Error; err != nil {
 			return enterpriseLookupError(err)
 		}
-		if enterprise.IsEnterprise != EnterpriseFlagYes || enterprise.Role != common.RoleCommonUser {
+		if enterprise.IsEnterprise != EnterpriseFlagYes || enterprise.Role != common.RoleCommonUser || enterprise.Status != common.UserStatusEnabled {
 			return ErrEnterpriseNotFound
 		}
 		// 锁住企业行再数人，同一家企业并发建号时上限才不会被同时越过。
@@ -462,7 +360,7 @@ func guardEnterpriseMemberCapacityTx(tx *gorm.DB, enterpriseId int) error {
 	if err := lockForUpdate(tx).First(&enterprise, enterpriseId).Error; err != nil {
 		return enterpriseLookupError(err)
 	}
-	if enterprise.IsEnterprise != EnterpriseFlagYes || enterprise.Role != common.RoleCommonUser {
+	if enterprise.IsEnterprise != EnterpriseFlagYes || enterprise.Role != common.RoleCommonUser || enterprise.Status != common.UserStatusEnabled {
 		return ErrEnterpriseNotFound
 	}
 	count, err := CountEnterpriseMembersTx(tx, enterpriseId)
@@ -483,70 +381,87 @@ func checkUsernameTakenTx(tx *gorm.DB, username string) (bool, error) {
 	return count > 0, nil
 }
 
-// SetEnterpriseMemberStatus 企业管理员停用或启用成员。
-//
-// 停用会把成员钱包里的余额全部退回企业账号。退的是带符号的真实余额：成员余额
-// 可能是负数（平台管理员手工调整过），只退正数会让欠的那部分凭空消失。
-func SetEnterpriseMemberStatus(enterpriseId, memberId int, enabled bool) (returned int, err error) {
+// SetEnterpriseMemberStatus disables the account and returns only unused grants.
+func SetEnterpriseMemberStatus(enterpriseId, memberId int, enabled bool) (int, error) {
+	return changeEnterpriseMembership(enterpriseId, memberId, common.RoleCommonUser, enabled, false)
+}
+
+func RemoveEnterpriseMember(enterpriseId, memberId int) (int, error) {
+	return changeEnterpriseMembership(enterpriseId, memberId, common.RoleCommonUser, false, true)
+}
+
+func RemoveEnterpriseMemberByAdmin(enterpriseId, memberId, operatorRole int) (int, error) {
+	if operatorRole < common.RoleAdminUser {
+		return 0, ErrEnterpriseNotAMember
+	}
+	return changeEnterpriseMembership(enterpriseId, memberId, operatorRole, false, true)
+}
+
+func changeEnterpriseMembership(enterpriseId, memberId, operatorRole int, enabled, remove bool) (returned int, err error) {
+	if enterpriseId <= 0 || memberId <= 0 || enterpriseId == memberId {
+		return 0, ErrEnterpriseNotAMember
+	}
 	var syncs []walletSyncEntry
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		syncs = syncs[:0]
-		member, err := lockEnterpriseMemberTx(tx, enterpriseId, memberId)
+		owner, member, err := lockTwoUsersForUpdate(tx, enterpriseId, memberId)
 		if err != nil {
 			return err
+		}
+		if member.Id == owner.Id || member.EnterpriseOwnerId != enterpriseId || (member.Role != common.RoleCommonUser && member.Role >= operatorRole) {
+			return ErrEnterpriseNotAMember
+		}
+		if owner.IsEnterprise != EnterpriseFlagYes {
+			return ErrEnterpriseNotFound
+		}
+		if remove && member.EnterpriseFrozenQuota != 0 {
+			return ErrEnterpriseFrozenQuota
 		}
 		status := common.UserStatusDisabled
 		if enabled {
 			status = common.UserStatusEnabled
 		}
-		if member.Status == status {
+		if !remove && member.Status == status {
 			return ErrEnterpriseMemberStatusUnchanged
 		}
-
-		if !enabled && member.Quota != 0 {
-			var enterprise User
-			if err := lockForUpdate(tx).First(&enterprise, enterpriseId).Error; err != nil {
-				return enterpriseLookupError(err)
-			}
-			returned = member.Quota
-			before := enterprise.Quota
-			after, err := applyWalletDeltaTx(tx, &enterprise, int64(member.Quota))
-			if err != nil {
+		memberBefore, ownerBefore := member.Quota, owner.Quota
+		if !enabled {
+			returned = member.EnterpriseQuota
+			if _, err := applyWalletDeltaTx(tx, &owner, int64(returned)); err != nil {
 				return err
 			}
-			syncs = append(syncs, walletSyncEntry{enterprise.Id, before, after})
-			if err := clearMemberQuotaTx(tx, member); err != nil {
+			if _, err := applyWalletDeltaTx(tx, &member, -int64(returned)); err != nil {
 				return err
 			}
+			member.EnterpriseQuota = 0
 		}
-
-		// 状态改动走 UpdateWithTx：它会因为 status 变化递增 auth_version，
-		// 把成员已经登录的会话一并吊销，停用不只是「下一个请求被拒」。
-		member.Status = status
-		return member.UpdateWithTx(tx, false)
+		updates := map[string]any{"enterprise_quota": member.EnterpriseQuota, "enterprise_wallet_version": 1, "enterprise_wallet_epoch": gorm.Expr("enterprise_wallet_epoch + 1")}
+		if remove {
+			updates["enterprise_owner_id"] = 0
+			updates["enterprise_group_limits"] = ""
+			updates["enterprise_model_limits"] = ""
+		} else {
+			updates["status"] = status
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, memberId); err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).Where("id = ?", memberId).Updates(updates).Error; err != nil {
+			return err
+		}
+		syncs = []walletSyncEntry{{owner.Id, ownerBefore, owner.Quota}, {member.Id, memberBefore, member.Quota}}
+		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	for _, sync := range syncs {
-		syncWalletCache(sync.userId, sync.before, sync.after)
+	for _, entry := range syncs {
+		syncWalletCache(entry.userId, entry.before, entry.after)
 	}
-	invalidateUserCacheBestEffort(memberId, "member")
-	return returned, nil
-}
-
-func clearMemberQuotaTx(tx *gorm.DB, member *User) error {
-	before := member.Quota
-	result := tx.Model(&User{}).Where("id = ? AND quota = ?", member.Id, before).
-		Update("quota", 0)
-	if result.Error != nil {
-		return result.Error
+	if err = PublishUserAuthCache(memberId); err != nil {
+		return returned, err
 	}
-	if result.RowsAffected != 1 {
-		return ErrEnterpriseWalletChanged
-	}
-	member.Quota = 0
-	return nil
+	_, err = RevokeAllUserSessions(memberId, "enterprise_membership_changed")
+	return returned, err
 }
 
 // TransferEnterpriseQuotaToMember 把企业账号自己钱包里的余额划给名下成员。
@@ -569,10 +484,10 @@ func TransferEnterpriseQuotaToMember(enterpriseId, memberId, quota int) (returne
 		if err != nil {
 			return err
 		}
-		if enterprise.Id != enterpriseId || enterprise.IsEnterprise != EnterpriseFlagYes {
+		if enterprise.Id != enterpriseId || enterprise.IsEnterprise != EnterpriseFlagYes || enterprise.Role != common.RoleCommonUser || enterprise.Status != common.UserStatusEnabled {
 			return ErrEnterpriseNotFound
 		}
-		if member.EnterpriseOwnerId != enterpriseId {
+		if member.EnterpriseOwnerId != enterpriseId || member.Role != common.RoleCommonUser {
 			return ErrEnterpriseNotAMember
 		}
 		if member.Status != common.UserStatusEnabled {
@@ -582,6 +497,9 @@ func TransferEnterpriseQuotaToMember(enterpriseId, memberId, quota int) (returne
 			return ErrInsufficientEnterpriseQuota
 		}
 
+		if member.EnterpriseQuota > common.MaxWalletQuota-quota {
+			return ErrWalletQuotaLimitExceeded
+		}
 		enterpriseBefore, memberBefore = enterprise.Quota, member.Quota
 		if _, err := applyWalletDeltaTx(tx, &enterprise, -int64(quota)); err != nil {
 			return err
@@ -591,7 +509,7 @@ func TransferEnterpriseQuotaToMember(enterpriseId, memberId, quota int) (returne
 			return err
 		}
 		memberAfter = after
-		return nil
+		return tx.Model(&User{}).Where("id = ?", memberId).Updates(map[string]any{"enterprise_quota": member.EnterpriseQuota + quota, "enterprise_wallet_version": 1}).Error
 	})
 	if err != nil {
 		return 0, err
@@ -613,9 +531,13 @@ func UpdateEnterpriseMemberLimits(enterpriseId, memberId int, groupLimits, model
 	if err != nil {
 		return err
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := lockEnterpriseMemberTx(tx, enterpriseId, memberId); err != nil {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		member, err := lockEnterpriseMemberTx(tx, enterpriseId, memberId)
+		if err != nil {
 			return err
+		}
+		if member.EnterpriseGroupLimits == groupJSON && member.EnterpriseModelLimits == modelJSON {
+			return nil
 		}
 		result := tx.Model(&User{}).Where("id = ?", memberId).Updates(map[string]any{
 			"enterprise_group_limits": groupJSON,
@@ -627,8 +549,13 @@ func UpdateEnterpriseMemberLimits(enterpriseId, memberId int, groupLimits, model
 		if result.RowsAffected != 1 {
 			return ErrEnterpriseWalletChanged
 		}
-		return nil
+		_, err = IncrementUserAuthVersionWithTx(tx, memberId)
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	return PublishUserAuthCache(memberId)
 }
 
 // encodeEnterpriseLimits 把白名单编码成库里的文本。nil 落成空串（不受限），

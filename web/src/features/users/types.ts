@@ -71,6 +71,8 @@ export const userSchema = z.object({
   is_enterprise: z.union([z.boolean(), z.number()]).optional(),
   /** 成员所属的企业账号 id，0 表示不属于任何企业。只有平台管理员能改。 */
   enterprise_owner_id: z.number().optional(),
+  enterprise_quota: z.number().optional(),
+  enterprise_frozen_quota: z.number().optional(),
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
   role: userRoleSchema,

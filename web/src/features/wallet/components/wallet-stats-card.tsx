@@ -97,6 +97,38 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
           </div>
         </div>
       ))}
+      {((props.user?.enterprise_owner_id ?? 0) > 0 ||
+        (props.user?.enterprise_frozen_quota ?? 0) > 0) && (
+        <div className='col-span-3 space-y-2 border-t p-4 text-sm'>
+          <dl className='grid gap-2 sm:grid-cols-3'>
+            <div>
+              <dt className='text-muted-foreground'>{t('Enterprise funds')}</dt>
+              <dd>{formatQuota(props.user?.enterprise_quota ?? 0)}</dd>
+            </div>
+            <div>
+              <dt className='text-muted-foreground'>{t('Personal funds')}</dt>
+              <dd>
+                {formatQuota(
+                  (props.user?.quota ?? 0) - (props.user?.enterprise_quota ?? 0)
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className='text-muted-foreground'>
+                {t('Frozen historical balance')}
+              </dt>
+              <dd>{formatQuota(props.user?.enterprise_frozen_quota ?? 0)}</dd>
+            </div>
+          </dl>
+          {(props.user?.enterprise_frozen_quota ?? 0) > 0 && (
+            <p className='text-muted-foreground'>
+              {t(
+                'Historical funds are frozen until a platform administrator confirms their source.'
+              )}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

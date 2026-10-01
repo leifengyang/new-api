@@ -215,6 +215,9 @@ export interface AmountRequest {
  * User wallet data
  */
 export interface UserWalletData {
+  enterprise_quota?: number
+  enterprise_frozen_quota?: number
+  enterprise_owner_id?: number
   /** User ID */
   id: number
   /** Username */

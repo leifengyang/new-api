@@ -176,6 +176,9 @@ func SetApiRouter(router *gin.Engine) {
 
 				// 企业账号标记：与会员等级同一类操作，只有平台管理员能改。
 				adminRoute.PUT("/enterprise", controller.UpdateUserEnterprise)
+				adminRoute.DELETE("/:id/enterprise", controller.RemoveEnterpriseMember)
+				adminRoute.PUT("/:id/enterprise/status", controller.UpdateEnterpriseMemberStatus)
+				adminRoute.POST("/:id/enterprise/balance", controller.ClassifyEnterpriseBalance)
 			}
 		}
 
@@ -187,6 +190,7 @@ func SetApiRouter(router *gin.Engine) {
 			enterpriseRoute.GET("/profile", controller.GetEnterpriseProfile)
 			enterpriseRoute.GET("/members", controller.GetEnterpriseMembers)
 			enterpriseRoute.POST("/members", controller.CreateEnterpriseMember)
+			enterpriseRoute.DELETE("/members/:id", controller.RemoveEnterpriseMember)
 			enterpriseRoute.GET("/members/:id/options", controller.GetEnterpriseMemberOptions)
 			enterpriseRoute.PUT("/members/:id/status", controller.UpdateEnterpriseMemberStatus)
 			enterpriseRoute.PUT("/members/:id/limits", controller.UpdateEnterpriseMemberLimits)

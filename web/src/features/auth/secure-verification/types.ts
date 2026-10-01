@@ -25,6 +25,7 @@ export type VerificationMethod =
   | 'oauth'
   | 'session'
 export type SecurityProofScope =
+  | 'enterprise.member.manage'
   | 'channel.key.read'
   | 'passkey.register'
   | 'passkey.delete'
@@ -41,6 +42,21 @@ export type SecurityProofScope =
   | 'user.delete_batch'
 
 export type VerificationOperation =
+  | {
+      scope: 'enterprise.member.manage'
+      context: {
+        member_id: number
+        action:
+          | 'password'
+          | 'remove'
+          | 'disable'
+          | 'enable'
+          | 'transfer'
+          | 'classify'
+        quota?: number
+        frozen?: number
+      }
+    }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'
@@ -57,6 +73,7 @@ export type VerificationOperation =
         | 'account.binding.bind'
         | 'account.binding.unbind'
         | 'user.delete_batch'
+        | 'enterprise.member.manage'
       >
       context?: Record<string, never>
     }

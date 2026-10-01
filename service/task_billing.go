@@ -117,6 +117,16 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
+	requestId := ""
+	if task.PrivateData.Execution != nil {
+		requestId = task.PrivateData.Execution.RequestID
+	}
+	if requestId == "" {
+		requestId = fmt.Sprintf("legacy-task:%d", task.ID)
+	}
+	if handled, err := model.SetEnterpriseTaskWalletCharge(task.UserId, requestId, task.Quota, task.Quota+delta); handled {
+		return err
+	}
 	if delta > 0 {
 		return model.DecreaseUserQuota(task.UserId, delta, false)
 	}

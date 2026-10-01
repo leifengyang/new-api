@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -33,14 +34,46 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId      int
+	requestId   string
+	initialized bool
+	tracked     bool
+	consumed    int // 实际预扣的用户额度
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
+func (w *WalletFunding) initialize() error {
+	if w.initialized {
+		return nil
+	}
+	if w.requestId == "" {
+		w.requestId = common.GetUUID()
+	}
+	handled, err := model.SetEnterpriseWalletCharge(w.userId, w.requestId, w.consumed, false)
+	w.tracked = handled
+	w.initialized = err == nil
+	return err
+}
+
 func (w *WalletFunding) PreConsume(amount int) error {
-	if amount <= 0 {
+	if amount < 0 {
+		return ErrInsufficientWalletQuota
+	}
+	if err := w.initialize(); err != nil {
+		return err
+	}
+	if w.tracked {
+		_, err := model.SetEnterpriseWalletCharge(w.userId, w.requestId, w.consumed+amount, true)
+		if errors.Is(err, model.ErrEnterpriseInsufficientQuota) {
+			return ErrInsufficientWalletQuota
+		}
+		if err == nil {
+			w.consumed += amount
+		}
+		return err
+	}
+	if amount == 0 {
 		return nil
 	}
 	reserved, err := model.TryReserveUserQuota(w.userId, amount)
@@ -50,13 +83,17 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if !reserved {
 		return ErrInsufficientWalletQuota
 	}
-	w.consumed = amount
+	w.consumed += amount
 	return nil
 }
 
 func (w *WalletFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
+	}
+	if w.tracked {
+		_, err := model.SetEnterpriseWalletCharge(w.userId, w.requestId, w.consumed+delta, false)
+		return err
 	}
 	if delta > 0 {
 		return model.DecreaseUserQuota(w.userId, delta, false)
@@ -65,11 +102,15 @@ func (w *WalletFunding) Settle(delta int) error {
 }
 
 func (w *WalletFunding) Refund() error {
+	if w.tracked {
+		return refundWithRetry(func() error {
+			_, err := model.SetEnterpriseWalletCharge(w.userId, w.requestId, 0, false)
+			return err
+		})
+	}
 	if w.consumed <= 0 {
 		return nil
 	}
-	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
-	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
 	return model.IncreaseUserQuota(w.userId, w.consumed, false)
 }
 

@@ -469,6 +469,10 @@ func TokenAuth() func(c *gin.Context) {
 			}
 			userGroup = tokenGroup
 		}
+		if limits := userCache.GetEnterpriseGroupLimits(); limits != nil && !service.GroupInUserUsableGroups(userCache.Group, limits, userGroup) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "Enterprise group access denied")
+			return
+		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 
 		err = SetupContextForToken(c, token, parts...)

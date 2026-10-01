@@ -544,12 +544,15 @@ func buildSelfUserData(user *model.User) map[string]any {
 		"member_level":      user.MemberLevel,
 		// 前端据此决定要不要显示企业控制台入口。它只是一枚用于渲染的标记，
 		// 真正的准入判定在服务端（middleware.EnterpriseAuth + 每个查询的归属收窄）。
-		"is_enterprise":   user.IsEnterprise == model.EnterpriseFlagYes,
-		"linux_do_id":     user.LinuxDOId,
-		"setting":         user.Setting,
-		"stripe_customer": user.StripeCustomer,
-		"sidebar_modules": userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":     permissions,
+		"is_enterprise":           user.IsEnterprise == model.EnterpriseFlagYes,
+		"enterprise_quota":        user.EnterpriseQuota,
+		"enterprise_frozen_quota": user.EnterpriseFrozenQuota,
+		"enterprise_owner_id":     user.EnterpriseOwnerId,
+		"linux_do_id":             user.LinuxDOId,
+		"setting":                 user.Setting,
+		"stripe_customer":         user.StripeCustomer,
+		"sidebar_modules":         userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":             permissions,
 	}
 }
 

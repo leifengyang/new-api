@@ -29,11 +29,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 
-import { updateEnterpriseMemberStatus } from '../api'
+import { updateEnterpriseMemberStatus, removeEnterpriseMember } from '../api'
 import { ENTERPRISE_MEMBER_STATUS, ERROR_MESSAGES } from '../constants'
 import type { EnterpriseMember } from '../types'
 import { useEnterprise } from './enterprise-provider'
@@ -44,21 +48,32 @@ interface EnterpriseMemberActionsProps {
 
 export function EnterpriseMemberActions(props: EnterpriseMemberActionsProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const { setOpenDialog, setActiveMember, triggerRefresh } = useEnterprise()
   const [confirmDisable, setConfirmDisable] = useState(false)
 
   const member = props.row
   const isEnabled = member.status === ENTERPRISE_MEMBER_STATUS.ENABLED
 
-  // 停用会把成员钱包里的余额退回企业账号，是一次真正的资金变动，所以走确认；
-  // 启用只是把人放回来，没有副作用，点了就生效。
+  // 停用会退回未使用的企业额度；成员状态操作均需完成安全验证。
   const setStatus = useMutation({
-    mutationFn: async (enabled: boolean) => {
-      const result = await updateEnterpriseMemberStatus(member.id, enabled)
+    mutationFn: async ({
+      enabled,
+      proofToken,
+    }: {
+      enabled: boolean
+      proofToken: string
+    }) => {
+      const result = await updateEnterpriseMemberStatus(
+        member.id,
+        enabled,
+        proofToken
+      )
       if (!result.success) throw createServerError(result)
       return result
     },
-    onSuccess: (result, enabled) => {
+    onSuccess: (result, { enabled }) => {
       if (enabled) {
         toast.success(
           t('{{username}} is enabled again', { username: member.username })
@@ -82,6 +97,34 @@ export function EnterpriseMemberActions(props: EnterpriseMemberActionsProps) {
       handleServerError(error, t(ERROR_MESSAGES.UPDATE_STATUS_FAILED))
     },
   })
+
+  const removal = useMutation({
+    mutationFn: async (proofToken: string) => {
+      const result = await removeEnterpriseMember(member.id, proofToken)
+      if (!result.success) throw createServerError(result)
+    },
+    onSuccess: () => {
+      setConfirmRemove(false)
+      triggerRefresh()
+      toast.success(t('Member removed'))
+    },
+  })
+
+  async function changeMembership(action: 'enable' | 'disable' | 'remove') {
+    const proof = await verification.requestVerification({
+      scope: 'enterprise.member.manage',
+      context: { member_id: member.id, action },
+      title: t('Verify your identity'),
+    })
+    if (!proof) return
+    if (action === 'remove') removal.mutate(proof.proof_token)
+    else {
+      setStatus.mutate({
+        enabled: action === 'enable',
+        proofToken: proof.proof_token,
+      })
+    }
+  }
 
   const openDialog = (
     dialog: 'transfer-quota' | 'member-limits' | 'reset-password'
@@ -148,7 +191,7 @@ export function EnterpriseMemberActions(props: EnterpriseMemberActionsProps) {
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
-            onClick={() => setStatus.mutate(true)}
+            onClick={() => void changeMembership('enable')}
             disabled={setStatus.isPending}
           >
             {t('Enable')}
@@ -157,21 +200,42 @@ export function EnterpriseMemberActions(props: EnterpriseMemberActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
         )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => setConfirmRemove(true)}>
+          {t('Remove member')}
+        </DropdownMenuItem>
       </DataTableRowActionMenu>
 
       <ConfirmDialog
-        open={confirmDisable}
-        onOpenChange={setConfirmDisable}
+        open={confirmDisable && !verification.isActive}
+        onOpenChange={(open) => {
+          if (!verification.isActive) setConfirmDisable(open)
+        }}
         title={t('Disable {{username}}?', { username: member.username })}
         desc={t(
-          'They can no longer sign in or call the API, and the {{quota}} left in their wallet goes back to the enterprise balance. Nothing is deleted, so you can enable them again later.',
-          { quota: formatQuota(member.quota) }
+          'Sign-in and API access will be disabled. Unused enterprise funds ({{quota}}) return to the enterprise. Personal funds are retained.',
+          { quota: formatQuota(member.enterprise_quota ?? 0) }
         )}
         confirmText={t('Disable')}
         destructive
         isLoading={setStatus.isPending}
-        handleConfirm={() => setStatus.mutate(false)}
+        handleConfirm={() => void changeMembership('disable')}
       />
+      <ConfirmDialog
+        open={confirmRemove && !verification.isActive}
+        onOpenChange={(open) => {
+          if (!verification.isActive) setConfirmRemove(open)
+        }}
+        title={t('Remove member')}
+        desc={t(
+          'Return unused enterprise funds and remove enterprise restrictions. Personal funds and account status are retained.'
+        )}
+        confirmText={t('Remove member')}
+        destructive
+        isLoading={removal.isPending}
+        handleConfirm={() => void changeMembership('remove')}
+      />
+      <SecureVerificationDialog {...verification.dialogProps} />
     </>
   )
 }

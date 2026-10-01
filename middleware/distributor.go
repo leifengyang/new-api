@@ -109,13 +109,20 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, service.EnterpriseGroupLimitsFromContext(c), playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+						if !service.GroupInUserUsableGroups(usingGroup, service.EnterpriseGroupLimitsFromContext(c), playgroundRequest.Group) {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, playgroundRequest.Group)
 					}
 				}
+			}
+		}
+		if limits := service.EnterpriseGroupLimitsFromContext(c); limits != nil {
+			group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+			if !slices.Contains(limits, group) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+				return
 			}
 		}
 		if pinned || shouldSelectChannel {

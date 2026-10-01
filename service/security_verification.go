@@ -35,6 +35,7 @@ const (
 	VerificationScopePasswordChange      = "account.password.change"
 	VerificationScopeAccountDelete       = "account.delete"
 	VerificationScopeUserBatchDelete     = "user.delete_batch"
+	VerificationScopeEnterpriseMember    = "enterprise.member.manage"
 )
 
 var (
@@ -74,6 +75,13 @@ type UserBatchDeleteContext struct {
 	UserIDs []int `json:"user_ids"`
 }
 
+type EnterpriseMemberVerificationContext struct {
+	MemberId int    `json:"member_id"`
+	Action   string `json:"action"`
+	Quota    int    `json:"quota,omitempty"`
+	Frozen   int    `json:"frozen,omitempty"`
+}
+
 // VerificationBinding contains no original operation parameters. It can safely
 // travel through a signed proof or a server-owned interactive verification flow.
 type VerificationBinding struct {
@@ -90,6 +98,34 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 	}
 	var normalized any
 	switch operation.Scope {
+	case VerificationScopeEnterpriseMember:
+		var context EnterpriseMemberVerificationContext
+		if common.Unmarshal(operation.Context, &context) != nil || context.MemberId <= 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		expected := 2
+		switch context.Action {
+		case "password", "remove", "disable", "enable":
+			if context.Quota != 0 || context.Frozen != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		case "transfer":
+			expected = 3
+			if context.Quota <= 0 || context.Quota > common.MaxWalletQuota || context.Frozen != 0 {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		case "classify":
+			expected = 4
+			if context.Frozen <= 0 || context.Frozen > common.MaxWalletQuota || context.Quota < 0 || context.Quota > context.Frozen {
+				return VerificationBinding{}, ErrVerificationContextInvalid
+			}
+		default:
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		if len(fields) != expected {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
 	case VerificationScopeChannelKeyRead:
 		var context ChannelKeyReadContext
 		if len(fields) != 1 || common.Unmarshal(fields["channel_id"], &context.ChannelID) != nil || context.ChannelID <= 0 {
@@ -221,7 +257,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
-		VerificationScopeUserBatchDelete:
+		VerificationScopeUserBatchDelete, VerificationScopeEnterpriseMember:
 		if scope == VerificationScopeAccountDelete && state.Role == common.RoleRootUser {
 			return nil, ErrVerificationForbidden
 		}

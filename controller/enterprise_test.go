@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -427,4 +428,48 @@ func TestGetEnterpriseLogsMasksChannelAndIp(t *testing.T) {
 	assert.Zero(t, item["channel"])
 	assert.NotContains(t, item["other"], "admin_info")
 	assert.Equal(t, 120.0, data["quota_total"])
+}
+
+func TestEnterpriseSensitiveActionsRequireBoundSingleUseProof(t *testing.T) {
+	owner, identity := setupSecurityEnrollmentTest(t)
+	logConn, err := model.LOG_DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logConn.Close()) })
+	require.NoError(t, model.DB.Model(owner).Update("is_enterprise", model.EnterpriseFlagYes).Error)
+	member := createEnterpriseTestUser(t, model.DB, owner.Id+1, "member", common.RoleCommonUser, owner.Id)
+	operation := service.VerificationOperation{Scope: service.VerificationScopeEnterpriseMember, Context: []byte(fmt.Sprintf(`{"member_id":%d,"action":"password"}`, member.Id))}
+	handler := func(c *gin.Context) { c.Params = memberPathParam(member.Id); ResetEnterpriseMemberPassword(c) }
+	missing := securityEnrollmentRequest("PUT", "/api/enterprise/members/password", `{"password":"ChangedPassword123!"}`, "", identity, handler)
+	assert.Contains(t, missing.Body.String(), `"success":false`)
+	wrong := service.VerificationOperation{Scope: service.VerificationScopeEnterpriseMember, Context: []byte(fmt.Sprintf(`{"member_id":%d,"action":"remove"}`, member.Id))}
+	proof := issueSecurityEnrollmentProof(t, identity, wrong, service.VerificationMethodPassword)
+	response := securityEnrollmentRequest("PUT", "/api/enterprise/members/password", `{"password":"ChangedPassword123!"}`, proof, identity, handler)
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	response = securityEnrollmentRequest("PUT", "/api/enterprise/members/password", `{"password":"ChangedPassword123!"}`, proof, identity, handler)
+	require.Contains(t, response.Body.String(), `"success":true`, response.Body.String())
+	require.NoError(t, model.DB.First(member, member.Id).Error)
+	assert.True(t, common.ValidatePasswordAndHash("ChangedPassword123!", member.Password))
+	previous := member.AuthVersion
+	response = securityEnrollmentRequest("PUT", "/api/enterprise/members/password", `{"password":"ReplayPassword123!"}`, proof, identity, handler)
+	assert.Contains(t, response.Body.String(), `"success":false`)
+	require.NoError(t, model.DB.First(member, member.Id).Error)
+	assert.Equal(t, previous, member.AuthVersion)
+	proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("user_id = ?", owner.Id).Update("expires_at", 1).Error)
+	response = securityEnrollmentRequest("PUT", "/api/enterprise/members/password", `{"password":"ExpiredPassword123!"}`, proof, identity, handler)
+	assert.Contains(t, response.Body.String(), `"success":false`)
+}
+
+func TestEnterpriseOwnerCanInspectOwnUsageButNotMemberLogs(t *testing.T) {
+	db := useEnterpriseControllerDB(t)
+	owner := newEnterpriseAccount(t, db, 1, 0)
+	for _, includeSelf := range []bool{true, false} {
+		c, _ := newEnterpriseRequest("GET", "/api/enterprise/usage?member_id=1", "", owner.Id, nil)
+		ids, ok := enterpriseUsageScopeUserIds(c, owner.Id, includeSelf)
+		assert.Equal(t, includeSelf, ok)
+		if includeSelf {
+			assert.Equal(t, []int{owner.Id}, ids)
+		}
+	}
 }

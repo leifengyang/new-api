@@ -35,33 +35,6 @@ func testEnterpriseTransferMovesQuotaBothWays(t *testing.T) {
 	requireQuotaValue(t, member.Id, 0)
 }
 
-func testEnterpriseUnmarkReleasesEveryMember(t *testing.T) {
-	t.Helper()
-	enterprise := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 700)
-	markEnterprise(t, enterprise.Id)
-
-	for id, quota := range map[int]int{2: 120, 3: 0, 4: -25} {
-		createEnterpriseUser(t, id, "m"+string(rune('0'+id)), common.RoleCommonUser, quota)
-		require.NoError(t, DB.Model(&User{}).Where("id = ?", id).Updates(map[string]any{
-			"enterprise_owner_id":     enterprise.Id,
-			"enterprise_group_limits": `["vip"]`,
-		}).Error)
-	}
-
-	released, err := SetUserEnterpriseFlag(enterprise.Id, false)
-	require.NoError(t, err)
-	assert.Equal(t, 3, released)
-	// 带符号求和：-25 也要退回去。
-	requireQuotaValue(t, enterprise.Id, 700+120+0-25)
-	for id := range map[int]int{2: 0, 3: 0, 4: 0} {
-		requireQuotaValue(t, id, 0)
-		var member User
-		require.NoError(t, DB.First(&member, id).Error)
-		assert.Zero(t, member.EnterpriseOwnerId)
-		assert.Empty(t, member.EnterpriseGroupLimits)
-	}
-}
-
 // CAS 兜底：余额在锁外被人改动过时，条件更新必须不命中，让上层重来，而不是
 // 拿着过期余额盲目覆盖。SQLite 上没有行锁，这条断言就是正确性的全部依靠。
 func testEnterpriseTransferRefusesStaleBalance(t *testing.T) {
@@ -95,7 +68,9 @@ func TestEnterpriseBehaviorAcrossDatabases(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"transfer_and_refund", testEnterpriseTransferMovesQuotaBothWays},
-		{"unmark_releases_members", testEnterpriseUnmarkReleasesEveryMember},
+		{"wallet_sources", testEnterpriseWalletSources},
+		{"orphaned_refund", testEnterpriseOrphanedRefund},
+		{"historical_migration", testEnterpriseWalletMigration},
 		{"stale_balance_cas", testEnterpriseTransferRefusesStaleBalance},
 	}
 
@@ -116,8 +91,8 @@ func TestEnterpriseBehaviorAcrossDatabases(t *testing.T) {
 // resetEnterpriseTables 每个场景都从空表开始，免得上一个场景留下的行被算进成员数。
 func resetEnterpriseTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	require.NoError(t, db.Migrator().DropTable("users", "user_sessions"))
-	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}))
+	require.NoError(t, db.Migrator().DropTable("users", "user_sessions", "enterprise_wallet_charges"))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}, &EnterpriseWalletCharge{}))
 }
 
 // useEnterpriseGlobalsFor 把包级 DB 指向给定连接，并按方言设置主库类型
@@ -135,4 +110,130 @@ func useEnterpriseGlobalsFor(t *testing.T, db *gorm.DB) {
 		common.SetMainDatabaseType(previousType)
 		common.RedisEnabled = previousCache
 	})
+}
+
+func testEnterpriseWalletSources(t *testing.T) {
+	owner := createEnterpriseUser(t, 2, "corp", common.RoleCommonUser, 1000)
+	markEnterprise(t, owner.Id)
+	member := createEnterpriseUser(t, 1, "member", common.RoleCommonUser, 200)
+	require.NoError(t, DB.Model(member).Updates(map[string]any{"enterprise_owner_id": owner.Id, "enterprise_wallet_version": 1}).Error)
+	_, err := TransferEnterpriseQuotaToMember(owner.Id, member.Id, 400)
+	require.NoError(t, err)
+	handled, err := SetEnterpriseWalletCharge(member.Id, "first", 450, true)
+	require.True(t, handled)
+	require.NoError(t, err)
+	var charge EnterpriseWalletCharge
+	require.NoError(t, DB.First(&charge).Error)
+	assert.Equal(t, 400, charge.Enterprise)
+	assert.Equal(t, 50, charge.Personal)
+	requireQuotaValue(t, member.Id, 150)
+	// Reducing the reservation restores personal funds before enterprise funds.
+	_, err = SetEnterpriseWalletCharge(member.Id, "first", 300, false)
+	require.NoError(t, err)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Equal(t, 300, member.Quota)
+	assert.Equal(t, 100, member.EnterpriseQuota)
+	_, err = SetEnterpriseWalletCharge(member.Id, "second", 50, true)
+	require.NoError(t, err)
+	returned, err := SetEnterpriseMemberStatus(owner.Id, member.Id, false)
+	require.NoError(t, err)
+	assert.Equal(t, 50, returned)
+	requireQuotaValue(t, member.Id, 200)
+	// Re-enabling must not redirect a refund from the previous membership epoch.
+	_, err = SetEnterpriseMemberStatus(owner.Id, member.Id, true)
+	require.NoError(t, err)
+	// Refunds from before the disable still belong to the enterprise.
+	for range 2 {
+		_, err = SetEnterpriseWalletCharge(member.Id, "second", 0, false)
+		require.NoError(t, err)
+	}
+	requireQuotaValue(t, owner.Id, 700)
+	requireQuotaValue(t, member.Id, 200)
+	_, err = RemoveEnterpriseMember(owner.Id, member.Id)
+	require.NoError(t, err)
+	// A late task refund after removal must not become a personal credit.
+	for range 2 {
+		_, err = SetEnterpriseTaskWalletCharge(member.Id, "first", 300, 0)
+		require.NoError(t, err)
+	}
+	requireQuotaValue(t, owner.Id, 1000)
+	requireQuotaValue(t, member.Id, 200)
+	// Negative/oversized requests cannot create credits.
+	_, err = SetEnterpriseWalletCharge(member.Id, "invalid", -1, true)
+	require.Error(t, err)
+	_, err = SetEnterpriseWalletCharge(member.Id, "insufficient", 201, true)
+	require.ErrorIs(t, err, ErrEnterpriseInsufficientQuota)
+	requireQuotaValue(t, member.Id, 200)
+}
+
+func testEnterpriseOrphanedRefund(t *testing.T) {
+	owner := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 100)
+	markEnterprise(t, owner.Id)
+	member := createEnterpriseUser(t, 2, "member", common.RoleCommonUser, 0)
+	require.NoError(t, DB.Model(member).Updates(map[string]any{"enterprise_owner_id": owner.Id, "enterprise_wallet_version": 1}).Error)
+	_, err := TransferEnterpriseQuotaToMember(owner.Id, member.Id, 100)
+	require.NoError(t, err)
+	_, err = SetEnterpriseWalletCharge(member.Id, "pending", 100, true)
+	require.NoError(t, err)
+	_, err = RemoveEnterpriseMember(owner.Id, member.Id)
+	require.NoError(t, err)
+	require.NoError(t, owner.Delete())
+	for range 2 {
+		_, err = SetEnterpriseWalletCharge(member.Id, "pending", 0, false)
+		require.NoError(t, err)
+	}
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Zero(t, member.Quota)
+	assert.Equal(t, 100, member.EnterpriseFrozenQuota)
+	require.ErrorIs(t, member.Delete(), ErrEnterpriseFrozenQuota)
+	// Unknown task refunds must respect the combined available/frozen cap.
+	require.NoError(t, DB.Model(member).Update("quota", common.MaxWalletQuota-100).Error)
+	_, err = SetEnterpriseTaskWalletCharge(member.Id, "over-cap", 1, 0)
+	require.ErrorIs(t, err, ErrWalletQuotaLimitExceeded)
+}
+
+func testEnterpriseWalletMigration(t *testing.T) {
+	owner := createEnterpriseUser(t, 1, "corp", common.RoleCommonUser, 1000)
+	markEnterprise(t, owner.Id)
+	member := createEnterpriseUser(t, 2, "legacy", common.RoleCommonUser, 500)
+	require.NoError(t, DB.Model(member).Update("enterprise_owner_id", owner.Id).Error)
+	for _, column := range []string{"enterprise_quota", "enterprise_frozen_quota", "enterprise_wallet_version", "enterprise_wallet_epoch"} {
+		require.NoError(t, DB.Migrator().DropColumn(&User{}, column))
+	}
+	// Reconstruct the latest release's schema and upgrade twice.
+	for range 2 {
+		require.NoError(t, DB.AutoMigrate(&User{}, &EnterpriseWalletCharge{}))
+		require.NoError(t, InitializeEnterpriseWallets())
+	}
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Equal(t, 500, member.EnterpriseFrozenQuota)
+	assert.Zero(t, member.Quota)
+	assert.Equal(t, 1, member.EnterpriseWalletVersion)
+	_, err := SetEnterpriseWalletCharge(member.Id, "blocked", 1, true)
+	require.ErrorIs(t, err, ErrEnterpriseInsufficientQuota)
+	_, err = RemoveEnterpriseMember(owner.Id, member.Id)
+	require.ErrorIs(t, err, ErrEnterpriseFrozenQuota)
+	require.ErrorIs(t, ClassifyEnterpriseBalance(member.Id, 499, 100), ErrEnterpriseWalletChanged)
+	require.NoError(t, ClassifyEnterpriseBalance(member.Id, 500, 300))
+	require.ErrorIs(t, ClassifyEnterpriseBalance(member.Id, 500, 300), ErrEnterpriseWalletChanged)
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Equal(t, 500, member.Quota)
+	assert.Equal(t, 300, member.EnterpriseQuota)
+	assert.Zero(t, member.EnterpriseFrozenQuota)
+	// A refund of an untraceable pre-upgrade task is also quarantined once.
+	for range 2 {
+		_, err = SetEnterpriseTaskWalletCharge(member.Id, "legacy-task", 80, 0)
+		require.NoError(t, err)
+	}
+	require.NoError(t, DB.First(member, member.Id).Error)
+	assert.Equal(t, 80, member.EnterpriseFrozenQuota)
+	assert.Equal(t, 500, member.Quota)
+	require.NoError(t, ClassifyEnterpriseBalance(member.Id, 80, 0))
+	returned, err := RemoveEnterpriseMember(owner.Id, member.Id)
+	require.NoError(t, err)
+	assert.Equal(t, 300, returned)
+	requireQuotaValue(t, member.Id, 280)
+	requireQuotaValue(t, owner.Id, 1300)
+	_, err = SetUserEnterpriseFlag(owner.Id, false)
+	require.NoError(t, err)
 }
