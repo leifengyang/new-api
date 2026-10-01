@@ -18,22 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
-import { ProfileDropdown } from '@/components/profile-dropdown'
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarRail,
-  useSidebar,
-} from '@/components/ui/sidebar'
+import { Sidebar, SidebarContent, SidebarRail } from '@/components/ui/sidebar'
 import { useLayout } from '@/context/layout-provider'
 import { useSidebarView } from '@/hooks/use-sidebar-view'
 import { MOTION_TRANSITION, MOTION_VARIANTS } from '@/lib/motion'
 
 import { NavGroup } from './nav-group'
 import { SidebarViewHeader } from './sidebar-view-header'
-import { SystemBrand } from './system-brand'
 
 /**
  * Application sidebar.
@@ -53,16 +44,12 @@ import { SystemBrand } from './system-brand'
  * in the registry; this component requires no changes.
  */
 export function AppSidebar() {
-  const { setOpenMobile } = useSidebar()
   const { collapsible, variant } = useLayout()
   const { key, view, navGroups } = useSidebarView()
   const shouldReduce = useReducedMotion()
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
-      <SidebarHeader className='h-16 justify-center'>
-        <SystemBrand />
-      </SidebarHeader>
       {view && <SidebarViewHeader view={view} />}
 
       <SidebarContent className='py-2'>
@@ -75,7 +62,7 @@ export function AppSidebar() {
             animate={MOTION_VARIANTS.sidebarSlide.animate}
             exit={shouldReduce ? undefined : MOTION_VARIANTS.sidebarSlide.exit}
             transition={MOTION_TRANSITION.fast}
-            className='flex flex-col gap-3'
+            className='flex flex-col'
           >
             {navGroups.map((props) => (
               <NavGroup key={props.id || props.title} {...props} />
@@ -84,12 +71,6 @@ export function AppSidebar() {
         </AnimatePresence>
       </SidebarContent>
 
-      <SidebarFooter>
-        <ProfileDropdown
-          presentation='sidebar'
-          onNavigate={() => setOpenMobile(false)}
-        />
-      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   )
