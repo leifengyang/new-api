@@ -79,6 +79,14 @@ export function loadSelfTestSettings(): Partial<SelfTestSettings> {
   return read<Partial<SelfTestSettings>>(SETTINGS_KEY) ?? {}
 }
 
+/** Upgrade old browser settings without retaining the previously plaintext key. */
+export function migrateSelfTestSettings(): Partial<SelfTestSettings> {
+  const stored = loadSelfTestSettings()
+  const settings = { ...stored, apiKey: '', rememberKey: false }
+  if (stored.apiKey || stored.rememberKey) write(SETTINGS_KEY, settings)
+  return settings
+}
+
 export function saveSelfTestSettings(settings: SelfTestSettings) {
   write(SETTINGS_KEY, {
     ...settings,

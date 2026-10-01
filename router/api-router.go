@@ -358,6 +358,16 @@ func SetApiRouter(router *gin.Engine) {
 		// 超级管理员管理渠道别名与手动触发（设置本身走 /api/option）。
 		degradationWatchRoute := apiRouter.Group("/degradation_watch")
 		degradationWatchRoute.Use(middleware.UserAuth())
+		selfTestRoute := degradationWatchRoute.Group("/self-test", middleware.DisableCache())
+		selfTestRoute.GET("/profiles", controller.GetSelfTestProfiles)
+		selfTestRoute.GET("/rounds", controller.GetSelfTestHistory)
+		selfTestRoute.GET("/rounds/:id", controller.GetSelfTestRound)
+		selfTestRoute.GET("/attempts/:id", controller.GetSelfTestAttempt)
+		selfTestRoute.PUT("/profiles", middleware.UserCriticalRateLimit("self-test"), controller.SaveSelfTestProfiles)
+		selfTestRoute.POST("/rounds", middleware.UserCriticalRateLimit("self-test"), controller.StartSelfTest)
+		selfTestRoute.POST("/rounds/:id/stop", controller.StopSelfTest)
+		selfTestRoute.POST("/attempts/:id/retry", middleware.UserCriticalRateLimit("self-test"), controller.RetrySelfTest)
+		selfTestRoute.POST("/models", middleware.UserCriticalRateLimit("self-test"), controller.FetchSelfTestModels)
 		{
 			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)
 			degradationWatchRoute.GET("/records/:id/html", controller.GetDegradationWatchRecordHtml)

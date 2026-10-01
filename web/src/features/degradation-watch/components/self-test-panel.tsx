@@ -16,329 +16,485 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Play, ShieldAlert, Square, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { FlaskConical, Plus, Play, Save, Square } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useFieldArray, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Dialog } from '@/components/dialog'
+import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { PasswordInput } from '@/components/password-input'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { formatTimestampToDate } from '@/lib/format'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { useDegradationWatchPrompt } from '../hooks/use-degradation-watch'
 import {
-  describeSelfTestFailure,
-  REASONING_EFFORTS,
-  runSelfTest,
-  type SelfTestResult,
-} from '../lib/self-test'
-import {
-  loadSelfTestHistory,
-  loadSelfTestSettings,
-  removeSelfTestResult,
-  saveSelfTestResult,
-  saveSelfTestSettings,
-} from '../lib/storage'
-import { ArtworkPlayerDialog } from './artwork-player-dialog'
-import { RecordCard, RecordMeta } from './record-card'
-
-/** Adapts a local result to the card the wall uses, so both look the same. */
-function toCardRecord(result: SelfTestResult, failureText: string) {
-  return {
-    id: 0,
-    model_name: result.model,
-    reasoning_effort: result.reasoningEffort,
-    channel_title: '',
-    aliased: false,
-    success: result.success,
-    failure_reason: failureText,
-    elapsed_ms: result.elapsedMs,
-    prompt_tokens: 0,
-    completion_tokens: result.completionTokens,
-    reasoning_tokens: result.reasoningTokens,
-    hidden: false,
-    created_at: result.createdAt,
-  }
-}
+  comparisonRequest,
+  comparisonSchema,
+  latestComparisonAttempts,
+  newTestGroup,
+  type ComparisonAttempt,
+  type ComparisonDetail,
+  type ComparisonInput,
+  type ComparisonRound,
+  type TestGroup,
+} from '../lib/comparison'
+import { migrateSelfTestSettings } from '../lib/storage'
+import { ComparisonGroupEditor } from './comparison-group-editor'
+import { ComparisonResult } from './comparison-results'
+import { LegacySelfTests } from './legacy-self-tests'
 
 export function SelfTestPanel() {
+  const userID = useAuthStore((state) => state.auth.user?.id)
+  return <ComparisonWorkspace key={userID} userID={userID} />
+}
+
+function ComparisonWorkspace(props: { userID: number | undefined }) {
   const { t } = useTranslation()
+  const client = useQueryClient()
   const prompt = useDegradationWatchPrompt()
-  const stored = useRef(loadSelfTestSettings()).current
-
-  const [baseUrl, setBaseUrl] = useState(stored.baseUrl ?? '')
-  const [apiKey, setApiKey] = useState(stored.apiKey ?? '')
-  const [rememberKey, setRememberKey] = useState(Boolean(stored.rememberKey))
-  const [model, setModel] = useState(stored.model ?? '')
-  const [effort, setEffort] = useState(stored.reasoningEffort ?? 'medium')
-  const [history, setHistory] = useState(loadSelfTestHistory)
-  const [running, setRunning] = useState(false)
-  const [lastFailure, setLastFailure] = useState<SelfTestResult | null>(null)
-  const [openResult, setOpenResult] = useState<SelfTestResult | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-
-  // The first enabled target is the default until the user picks another.
-  const targets = prompt.data?.targets
+  const [initialized, setInitialized] = useState(false)
+  const [selected, setSelected] = useState<number | null>(null)
+  const [retry, setRetry] = useState<ComparisonAttempt | null>(null)
+  const [retryKey, setRetryKey] = useState('')
+  const [stopAll, setStopAll] = useState(false)
+  const key = ['self-test', props.userID]
+  const profiles = useQuery({
+    queryKey: [...key, 'profiles'],
+    queryFn: () => comparisonRequest<TestGroup[]>('/profiles'),
+  })
+  const history = useQuery({
+    queryKey: [...key, 'rounds'],
+    queryFn: () => comparisonRequest<ComparisonRound[]>('/rounds'),
+    refetchInterval: 3000,
+  })
+  const roundID = selected ?? history.data?.[0]?.id
+  const detail = useQuery({
+    queryKey: [...key, 'round', roundID],
+    queryFn: () => comparisonRequest<ComparisonDetail>(`/rounds/${roundID}`),
+    enabled: !!roundID,
+    refetchInterval: (query) =>
+      query.state.data?.round.status === 'running' ? 1000 : false,
+  })
+  const form = useForm<ComparisonInput>({
+    resolver: zodResolver(comparisonSchema),
+    defaultValues: {
+      groups: [newTestGroup()],
+      prompt: '',
+      concurrency: 3,
+      timeout_seconds: 1200,
+    },
+  })
+  const groups = useFieldArray({ control: form.control, name: 'groups' })
   useEffect(() => {
-    const first = targets?.[0]
-    if (!first) return
-    const known = targets.some((target) => target.model === model)
-    if (model === '' || !known) {
-      setModel(first.model)
-      setEffort(first.reasoning_effort)
-    }
-  }, [model, targets])
-
-  function selectModel(value: string) {
-    setModel(value)
-    const target = targets?.find((item) => item.model === value)
-    if (target) setEffort(target.reasoning_effort)
-  }
-
-  useEffect(() => () => abortRef.current?.abort(), [])
-
-  if (prompt.isLoading) return <LoadingState />
-  if (prompt.isError || !prompt.data) {
+    if (initialized || !profiles.data || !prompt.data) return
+    const legacy = migrateSelfTestSettings()
+    form.reset({
+      groups: profiles.data.length
+        ? profiles.data.map((group) => ({ ...group, api_key: '' }))
+        : [
+            {
+              ...newTestGroup(),
+              name: t('Group {{number}}', { number: 1 }),
+              base_url: legacy.baseUrl ?? '',
+              model: legacy.model || prompt.data.targets[0]?.model || '',
+            },
+          ],
+      prompt: prompt.data.prompt,
+      concurrency: 3,
+      timeout_seconds: 1200,
+    })
+    setInitialized(true)
+  }, [initialized, profiles.data, prompt.data, form, t])
+  const mutation = useMutation({
+    mutationFn: async (action: {
+      kind: 'start' | 'save' | 'stop' | 'retry'
+      input?: ComparisonInput
+      attemptID?: number
+    }) => {
+      if (action.kind === 'start') {
+        const round = await comparisonRequest<ComparisonRound>(
+          '/rounds',
+          'post',
+          action.input
+        )
+        setSelected(round.id)
+      } else if (action.kind === 'save') {
+        await comparisonRequest('/profiles', 'put', {
+          groups: form.getValues('groups'),
+        })
+      } else if (action.kind === 'stop') {
+        await comparisonRequest(`/rounds/${roundID}/stop`, 'post', {
+          attempt_id: action.attemptID ?? 0,
+        })
+        setStopAll(false)
+      } else {
+        await comparisonRequest(`/attempts/${action.attemptID}/retry`, 'post', {
+          api_key: retryKey,
+        })
+        setRetry(null)
+        setRetryKey('')
+      }
+      if (action.kind === 'save' || action.kind === 'start') {
+        const saved = await comparisonRequest<TestGroup[]>('/profiles')
+        const current = form.getValues()
+        form.reset({
+          ...current,
+          groups: saved.map((group, index) => ({
+            ...group,
+            api_key:
+              action.kind === 'start'
+                ? ''
+                : (current.groups[index]?.api_key ?? ''),
+          })),
+        })
+      }
+    },
+    onSuccess: () => void client.invalidateQueries({ queryKey: key }),
+  })
+  if (profiles.isLoading || prompt.isLoading) return <LoadingState />
+  if (profiles.isError || prompt.isError) {
     return (
       <ErrorState
-        title={t('Failed to load the prompt')}
-        onRetry={() => void prompt.refetch()}
+        title={t('Failed to load the self-test')}
+        onRetry={() => {
+          void profiles.refetch()
+          void prompt.refetch()
+        }}
       />
     )
   }
-
-  const promptText = prompt.data.prompt
-  const canRun =
-    !running && baseUrl.trim() !== '' && apiKey.trim() !== '' && model !== ''
-
-  async function start() {
-    saveSelfTestSettings({
-      baseUrl,
-      apiKey,
-      rememberKey,
-      model,
-      reasoningEffort: effort,
-    })
-    const controller = new AbortController()
-    abortRef.current = controller
-    setRunning(true)
-    setLastFailure(null)
-    try {
-      const result = await runSelfTest(
-        { baseUrl, apiKey, model, reasoningEffort: effort, prompt: promptText },
-        controller.signal
-      )
-      if (result.failure === 'aborted') return
-      setHistory(saveSelfTestResult(result))
-      if (!result.success) setLastFailure(result)
-    } finally {
-      abortRef.current = null
-      setRunning(false)
-    }
-  }
-
+  const latest = latestComparisonAttempts(detail.data?.attempts ?? [])
+  const active =
+    history.data?.some((round) => round.status === 'running') ?? false
+  const completed = latest.filter(
+    (attempt) => attempt.status !== 'queued' && attempt.status !== 'running'
+  ).length
   return (
-    <div className='flex flex-col gap-6'>
-      <Alert>
-        <ShieldAlert />
-        <AlertTitle>{t('Runs in your browser')}</AlertTitle>
-        <AlertDescription>
-          {t(
-            'The request goes straight from this page to the base URL below with your key; neither is sent to this site, and results are kept only in this browser. The endpoint must allow cross-origin requests (CORS) from this page, otherwise the browser blocks it.'
-          )}
-        </AlertDescription>
-      </Alert>
-
-      <div className='grid gap-4 md:grid-cols-2'>
-        <div className='flex flex-col gap-2'>
-          <Label htmlFor='dw-base-url'>{t('Base URL')}</Label>
-          <Input
-            id='dw-base-url'
-            placeholder='https://api.example.com/v1'
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            autoComplete='off'
-          />
-        </div>
-        <div className='flex flex-col gap-2'>
-          <Label htmlFor='dw-api-key'>{t('API key')}</Label>
-          <PasswordInput
-            id='dw-api-key'
-            placeholder='sk-...'
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            autoComplete='off'
-          />
-          <label className='text-muted-foreground flex items-center gap-2 text-xs'>
-            <Checkbox
-              checked={rememberKey}
-              onCheckedChange={(checked) => setRememberKey(checked === true)}
-            />
-            {t('Remember the key in this browser')}
-          </label>
-        </div>
-        <div className='flex flex-col gap-2'>
-          <Label htmlFor='dw-model'>{t('Model')}</Label>
-          <NativeSelect
-            id='dw-model'
-            className='w-full'
-            value={model}
-            disabled={prompt.data.targets.length === 0}
-            onChange={(event) => selectModel(event.target.value)}
-          >
-            {prompt.data.targets.map((target) => (
-              <NativeSelectOption key={target.model} value={target.model}>
-                {target.model}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className='flex flex-col gap-2'>
-          <Label htmlFor='dw-effort'>{t('Reasoning effort')}</Label>
-          <NativeSelect
-            id='dw-effort'
-            className='w-full'
-            value={effort}
-            onChange={(event) => setEffort(event.target.value)}
-          >
-            {REASONING_EFFORTS.map((value) => (
-              <NativeSelectOption key={value} value={value}>
-                {value === '' ? t('Not sent') : value}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-      </div>
-
-      <div className='flex flex-col gap-2'>
-        <Label htmlFor='dw-prompt'>{t('Prompt (same as the wall)')}</Label>
-        <Textarea
-          id='dw-prompt'
-          readOnly
-          value={promptText}
-          className='min-h-32 text-xs'
-        />
-      </div>
-
-      <div className='flex items-center gap-2'>
-        <Button disabled={!canRun} onClick={() => void start()}>
-          <Play />
-          {running ? t('Drawing…') : t('Start self-test')}
-        </Button>
-        {running && (
-          <Button variant='outline' onClick={() => abortRef.current?.abort()}>
-            <Square />
-            {t('Stop')}
-          </Button>
-        )}
-        {running && (
-          <span className='text-muted-foreground text-sm'>
-            {t('Animations usually take one to a few minutes.')}
-          </span>
-        )}
-      </div>
-
-      {lastFailure?.failure === 'network' && (
-        <Alert variant='destructive'>
-          <AlertTitle>{t('The browser blocked the request')}</AlertTitle>
-          <AlertDescription>
-            {t(
-              'Either the base URL is unreachable, or the endpoint does not send CORS headers allowing this page. That is a setting on the endpoint, not something this page can work around; the wall above is tested server-side and is not affected.'
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
-      {lastFailure?.failure === 'http' && (
-        <Alert variant='destructive'>
-          <AlertTitle>{t('The endpoint returned an error')}</AlertTitle>
-          <AlertDescription className='break-all'>
-            {lastFailure.detail}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {history.length > 0 && (
-        <div className='flex flex-col gap-3'>
-          <div className='flex items-center justify-between'>
-            <h2 className='text-lg font-semibold'>
-              {t('Your recent self-tests')}
+    <div className='space-y-6'>
+      <div className='bg-card rounded-xl border p-5'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div>
+            <h2 className='flex items-center gap-2 text-lg font-semibold'>
+              <FlaskConical className='text-primary size-5' />
+              {t('Comparison lab')}
             </h2>
-            <span className='text-muted-foreground text-xs'>
-              {t('Stored in this browser only')}
-            </span>
+            <p className='text-muted-foreground mt-1 max-w-3xl text-sm'>
+              {t(
+                'Runs on the server after you leave. Configurations and the latest 20 rounds are private to your account.'
+              )}
+            </p>
           </div>
-          <div className='grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
-            {history.map((result) => (
-              <SelfTestCard
-                key={result.id}
-                result={result}
-                onOpen={setOpenResult}
-                onRemove={(id) => setHistory(removeSelfTestResult(id))}
+          <Badge variant='outline'>{t('Default timeout: 20 minutes')}</Badge>
+        </div>
+        <p className='text-muted-foreground mt-3 text-xs'>
+          {t(
+            'Use public HTTPS endpoints. Keys are sent to the server, encrypted, and removed after the round unless you choose to save them.'
+          )}
+        </p>
+      </div>
+      <form
+        onSubmit={form.handleSubmit((input) =>
+          mutation.mutate({ kind: 'start', input })
+        )}
+        className='space-y-4'
+      >
+        <fieldset disabled={mutation.isPending} className='space-y-4'>
+          <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+            {groups.fields.map((field, index) => (
+              <ComparisonGroupEditor
+                key={field.id}
+                form={form}
+                index={index}
+                removable={groups.fields.length > 1}
+                onRemove={() => groups.remove(index)}
               />
             ))}
           </div>
+          <Button
+            type='button'
+            variant='outline'
+            disabled={groups.fields.length >= 10}
+            onClick={() =>
+              groups.append({
+                ...newTestGroup(),
+                name: t('Group {{number}}', {
+                  number: groups.fields.length + 1,
+                }),
+              })
+            }
+          >
+            <Plus />
+            {t('Add test group')}
+          </Button>
+          <div className='bg-card grid gap-4 rounded-xl border p-4 md:grid-cols-[1fr_180px]'>
+            <div className='space-y-2'>
+              <Label htmlFor='comparison-prompt'>{t('Shared prompt')}</Label>
+              <Textarea
+                id='comparison-prompt'
+                className='min-h-36'
+                {...form.register('prompt')}
+              />
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                onClick={() =>
+                  form.setValue('prompt', prompt.data?.prompt ?? '')
+                }
+              >
+                {t('Use wall prompt')}
+              </Button>
+            </div>
+            <div className='space-y-4'>
+              <div className='space-y-2'>
+                <Label htmlFor='comparison-concurrency'>
+                  {t('Concurrent groups')}
+                </Label>
+                <Input
+                  id='comparison-concurrency'
+                  type='number'
+                  min={1}
+                  max={10}
+                  {...form.register('concurrency', { valueAsNumber: true })}
+                />
+              </div>
+              <div className='space-y-2'>
+                <Label htmlFor='comparison-timeout'>
+                  {t('Timeout (minutes)')}
+                </Label>
+                <Input
+                  id='comparison-timeout'
+                  type='number'
+                  min={1}
+                  max={60}
+                  value={form.watch('timeout_seconds') / 60}
+                  onChange={(event) =>
+                    form.setValue(
+                      'timeout_seconds',
+                      Number(event.target.value) * 60,
+                      { shouldValidate: true }
+                    )
+                  }
+                />
+              </div>
+            </div>
+          </div>
+          {(form.formState.errors.prompt ||
+            form.formState.errors.concurrency ||
+            form.formState.errors.timeout_seconds) && (
+            <p role='alert' className='text-destructive text-sm'>
+              {t(
+                'Enter a prompt, 1–10 concurrent groups and a 1–60 minute timeout.'
+              )}
+            </p>
+          )}
+          <div className='flex flex-wrap items-center gap-2'>
+            <Button type='submit' disabled={active}>
+              <Play />
+              {t('Start comparison')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() =>
+                void form.handleSubmit((input) =>
+                  mutation.mutate({ kind: 'save', input })
+                )()
+              }
+            >
+              <Save />
+              {t('Save configuration')}
+            </Button>
+            {active && (
+              <span role='status' className='text-muted-foreground text-xs'>
+                {t('A comparison is running in the background')}
+              </span>
+            )}
+          </div>
+        </fieldset>
+      </form>
+      <section className='space-y-4'>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <h2 className='text-lg font-semibold'>{t('Comparison results')}</h2>
+          <div className='flex flex-wrap gap-2'>
+            <NativeSelect
+              aria-label={t('Comparison history')}
+              value={roundID ?? ''}
+              onChange={(event) => setSelected(Number(event.target.value))}
+            >
+              <NativeSelectOption value='' disabled>
+                {t('Recent 20 rounds')}
+              </NativeSelectOption>
+              {history.data?.map((round) => (
+                <NativeSelectOption key={round.id} value={round.id}>
+                  #{round.id} · {formatTimestampToDate(round.created_at)}
+                  {round.status === 'running' ? ` · ${t('Running')}` : ''}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {detail.data?.round.status === 'running' && (
+              <Button
+                variant='outline'
+                disabled={mutation.isPending}
+                onClick={() => setStopAll(true)}
+              >
+                <Square />
+                {t('Stop all')}
+              </Button>
+            )}
+          </div>
         </div>
-      )}
-
-      {openResult && (
-        <ArtworkPlayerDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setOpenResult(null)
-          }}
-          title={t('Self-test')}
-          html={openResult.html}
-          failureReason={
-            openResult.success
-              ? undefined
-              : t(describeSelfTestFailure(openResult))
+        {history.isError && (
+          <ErrorState
+            title={t('Failed to load history')}
+            onRetry={() => void history.refetch()}
+          />
+        )}
+        {detail.isError && (
+          <ErrorState
+            title={t('Failed to load history')}
+            onRetry={() => void detail.refetch()}
+          />
+        )}
+        {!roundID && !history.isLoading && (
+          <EmptyState
+            title={t('No comparisons yet')}
+            description={t(
+              'Add groups and start a comparison to see live results here.'
+            )}
+          />
+        )}
+        {detail.data && (
+          <>
+            <div className='bg-muted/40 flex flex-wrap items-center justify-between gap-3 rounded-lg p-3 text-sm'>
+              <span aria-live='polite'>
+                {t('{{completed}} / {{total}} groups completed', {
+                  completed,
+                  total: latest.length,
+                })}
+              </span>
+              <Button
+                variant='ghost'
+                size='sm'
+                disabled={mutation.isPending}
+                onClick={() => {
+                  form.reset({
+                    prompt: detail.data.round.prompt,
+                    concurrency: detail.data.round.concurrency,
+                    timeout_seconds: detail.data.round.timeout_seconds,
+                    groups: latest.map((item) => {
+                      const saved = profiles.data?.find(
+                        (group) =>
+                          group.base_url === item.base_url &&
+                          group.protocol === item.protocol &&
+                          group.name === item.name
+                      )
+                      return {
+                        ...newTestGroup(),
+                        id: saved?.id ?? 0,
+                        name: item.name,
+                        base_url: item.base_url,
+                        model: item.model,
+                        protocol: item.protocol,
+                        effort: item.effort,
+                        remember_key: saved?.remember_key ?? false,
+                        has_saved_key: saved?.has_saved_key ?? false,
+                      }
+                    }),
+                  })
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+              >
+                {t('Load this round into the form')}
+              </Button>
+            </div>
+            <details className='rounded-lg border p-3 text-sm'>
+              <summary className='cursor-pointer'>
+                {t('Prompt snapshot')}
+              </summary>
+              <pre className='mt-3 max-h-48 overflow-auto text-xs whitespace-pre-wrap'>
+                {detail.data.round.prompt}
+              </pre>
+            </details>
+            <div className='overflow-x-auto pb-3'>
+              <div className='grid auto-cols-[minmax(280px,1fr)] grid-flow-col items-start gap-4'>
+                {latest.map((item) => (
+                  <ComparisonResult
+                    latest={item}
+                    key={`${roundID}-${item.group_index}`}
+                    attempts={detail.data.attempts.filter(
+                      (attempt) => attempt.group_index === item.group_index
+                    )}
+                    busy={mutation.isPending}
+                    onStop={(attemptID) =>
+                      mutation.mutate({ kind: 'stop', attemptID })
+                    }
+                    onRetry={(attempt) => {
+                      setRetry(attempt)
+                      setRetryKey('')
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+      <LegacySelfTests />
+      <Dialog
+        open={!!retry}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRetry(null)
+            setRetryKey('')
           }
-          meta={
-            <RecordMeta
-              modelName={openResult.model}
-              reasoningEffort={openResult.reasoningEffort}
-              createdAt={openResult.createdAt}
-              elapsedMs={openResult.elapsedMs}
-              reasoningTokens={openResult.reasoningTokens}
-            />
-          }
-        />
-      )}
-    </div>
-  )
-}
-
-interface SelfTestCardProps {
-  result: SelfTestResult
-  onOpen: (result: SelfTestResult) => void
-  onRemove: (id: string) => void
-}
-
-function SelfTestCard(props: SelfTestCardProps) {
-  const { t } = useTranslation()
-  const failureText = t(describeSelfTestFailure(props.result))
-  return (
-    <div className='relative'>
-      <RecordCard
-        record={toCardRecord(props.result, failureText)}
-        localHtml={props.result.html}
-        onOpen={() => props.onOpen(props.result)}
-      />
-      <Button
-        variant='secondary'
-        size='icon-xs'
-        className='absolute top-2 right-2'
-        aria-label={t('Remove')}
-        onClick={() => props.onRemove(props.result.id)}
+        }}
+        title={t('Retry group')}
+        description={t(
+          'A new attempt is added to this round. Enter the key again if it was not saved.'
+        )}
+        footer={
+          <Button
+            disabled={mutation.isPending}
+            onClick={() =>
+              mutation.mutate({ kind: 'retry', attemptID: retry?.id })
+            }
+          >
+            {t('Retry')}
+          </Button>
+        }
       >
-        <Trash2 />
-      </Button>
+        <Label htmlFor='comparison-retry-key'>{t('API key')}</Label>
+        <PasswordInput
+          id='comparison-retry-key'
+          autoComplete='off'
+          value={retryKey}
+          onChange={(event) => setRetryKey(event.target.value)}
+        />
+      </Dialog>
+      <ConfirmDialog
+        open={stopAll}
+        onOpenChange={setStopAll}
+        title={t('Stop all groups?')}
+        desc={t(
+          'Completed results are kept. Queued and running groups will be cancelled.'
+        )}
+        confirmText={t('Stop all')}
+        isLoading={mutation.isPending}
+        handleConfirm={() => mutation.mutate({ kind: 'stop' })}
+      />
     </div>
   )
 }

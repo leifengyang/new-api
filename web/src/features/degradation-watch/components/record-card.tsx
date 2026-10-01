@@ -145,6 +145,8 @@ interface RecordCardProps {
   title?: string
   /** Thumbnail mode for cells holding several channels: title only, no meta. */
   compact?: boolean
+  /** Align artwork, running and failure stages in side-by-side comparisons. */
+  previewClassName?: string
   onOpen: (record: DegradationWatchRecord) => void
 }
 
@@ -222,6 +224,9 @@ export function RecordCard(props: RecordCardProps) {
     status = record.status === 'queued' ? t('Queued') : t('Running')
     icon = <LoaderCircle className='size-3 motion-safe:animate-spin' />
     tone = 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+  } else if (record.status === 'cancelled') {
+    status = t('Cancelled')
+    tone = 'border-border bg-muted text-muted-foreground'
   }
   const error = record.error_details || record.failure_reason
   const label = failureReasonLabel(error)
@@ -244,7 +249,10 @@ export function RecordCard(props: RecordCardProps) {
       {record.success && (
         <Button
           variant='ghost'
-          className='relative m-3 mb-0 aspect-[16/10] h-auto overflow-hidden rounded-lg border p-0'
+          className={cn(
+            'relative m-3 mb-0 aspect-[16/10] h-auto overflow-hidden rounded-lg border p-0',
+            props.previewClassName
+          )}
           onClick={() => props.onOpen(record)}
           aria-label={t('View artwork')}
         >
@@ -252,7 +260,12 @@ export function RecordCard(props: RecordCardProps) {
         </Button>
       )}
       {active && (
-        <div className='mx-3 mt-3 flex items-center gap-2 rounded-lg bg-sky-500/5 px-3 py-4 text-xs text-sky-700 dark:text-sky-300'>
+        <div
+          className={cn(
+            'mx-3 mt-3 flex items-center gap-2 rounded-lg bg-sky-500/5 px-3 py-4 text-xs text-sky-700 dark:text-sky-300',
+            props.previewClassName
+          )}
+        >
           <Activity className='size-4 motion-safe:animate-pulse' />
           {record.status === 'queued'
             ? t('Waiting for an available worker')
@@ -260,7 +273,12 @@ export function RecordCard(props: RecordCardProps) {
         </div>
       )}
       {!active && !record.success && (
-        <div className='mx-3 mt-3 rounded-lg border border-rose-500/15 bg-rose-500/5'>
+        <div
+          className={cn(
+            'mx-3 mt-3 rounded-lg border border-rose-500/15 bg-rose-500/5',
+            props.previewClassName
+          )}
+        >
           <div className='flex items-center justify-between px-3 py-1 text-xs text-rose-700 dark:text-rose-300'>
             <span>{t('Error details')}</span>
             <CopyButton
