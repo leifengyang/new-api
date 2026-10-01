@@ -218,6 +218,7 @@ test.each([true, false])(
     expect(preview.textContent).toBe('Per-call · $0.25')
     fireEvent.click(preview)
     const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('tab', { name: 'Details' }))
     if (isAdmin) {
       expect(dialog.getByText('Incho')).toBeVisible()
       expect(dialog.getByText('1.0.1')).toBeVisible()

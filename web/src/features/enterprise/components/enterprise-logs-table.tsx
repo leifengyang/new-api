@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
+import { logTableClassName } from '@/features/usage-logs/components/log-table-style'
 import {
   LOG_TYPE_ALL_VALUE,
   LOG_TYPE_FILTERS,
@@ -138,6 +139,7 @@ export function EnterpriseLogsTable(props: EnterpriseLogsTableProps) {
           'No member activity matches the current filters in this period.'
         )}
         skeletonKeyPrefix='enterprise-logs-skeleton'
+        tableClassName={logTableClassName}
         applyHeaderSize
         toolbarProps={{
           filters: [
