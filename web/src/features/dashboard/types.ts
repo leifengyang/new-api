@@ -261,6 +261,9 @@ export interface AnnouncementItem {
   publishDate?: string
   type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  popupTarget?: 'home' | 'authenticated'
+  published?: boolean
+  revision?: string
 }
 
 // ============================================================================

@@ -183,6 +183,17 @@ func GetNotice(c *gin.Context) {
 	serveRevalidatedJSON(c, notice)
 }
 
+func GetAnnouncements(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	items := []map[string]any{}
+	if console_setting.GetConsoleSetting().AnnouncementsEnabled {
+		items = console_setting.GetAnnouncementsForAudience(c.GetInt("id") > 0)
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": items})
+}
+
 func GetAbout(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	about := common.OptionMap["About"]

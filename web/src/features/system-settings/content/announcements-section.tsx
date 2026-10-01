@@ -17,28 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Plus, Trash2, Save } from 'lucide-react'
+import { Plus, Trash2, Eye } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -60,6 +51,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { AnnouncementDetailModal } from '@/features/dashboard/components/overview/announcement-detail-dialog'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -73,6 +65,9 @@ type Announcement = {
   publishDate: string
   type: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  popupTarget?: 'home' | 'authenticated'
+  published?: boolean
+  revision?: string
 }
 
 type AnnouncementsSectionProps = {
@@ -87,6 +82,7 @@ const announcementSchema = z.object({
     .max(500, 'Content must be less than 500 characters'),
   publishDate: z.string().min(1, 'Publish date is required'),
   type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
+  popupTarget: z.enum(['home', 'authenticated']),
   extra: z
     .string()
     .max(100, 'Extra must be less than 100 characters')
@@ -138,7 +134,7 @@ export function AnnouncementsSection({
   const updateOption = useUpdateOption()
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [isEnabled, setIsEnabled] = useState(enabled)
-  const [hasChanges, setHasChanges] = useState(false)
+  const [preview, setPreview] = useState<Announcement | null>(null)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [showDialog, setShowDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -153,6 +149,7 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popupTarget: 'authenticated',
     },
   })
 
@@ -196,6 +193,7 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popupTarget: 'authenticated',
     })
     setShowDialog(true)
   }
@@ -207,6 +205,7 @@ export function AnnouncementsSection({
       publishDate: announcement.publishDate,
       type: announcement.type,
       extra: announcement.extra || '',
+      popupTarget: announcement.popupTarget ?? 'authenticated',
     })
     setShowDialog(true)
   }
@@ -226,56 +225,68 @@ export function AnnouncementsSection({
     setShowDeleteDialog(true)
   }
 
-  const confirmDelete = () => {
-    if (deleteTarget === 'single' && editingAnnouncement) {
-      setAnnouncements((prev) =>
-        prev.filter((item) => item.id !== editingAnnouncement.id)
-      )
-      setHasChanges(true)
-      toast.success(t('Announcement deleted. Click "Save Settings" to apply.'))
-    } else if (deleteTarget === 'batch') {
-      setAnnouncements((prev) =>
-        prev.filter((item) => !selectedIds.includes(item.id))
-      )
-      setSelectedIds([])
-      setHasChanges(true)
-      toast.success(
-        t('{{count}} announcements deleted. Click "Save Settings" to apply.', {
-          count: selectedIds.length,
-        })
-      )
-    }
-    setShowDeleteDialog(false)
-    setEditingAnnouncement(null)
-  }
-
-  const handleSubmitForm = (values: AnnouncementFormValues) => {
-    if (editingAnnouncement) {
-      setAnnouncements((prev) =>
-        prev.map((item) =>
-          item.id === editingAnnouncement.id ? { ...item, ...values } : item
-        )
-      )
-      toast.success(t('Announcement updated. Click "Save Settings" to apply.'))
-    } else {
-      const newId = Math.max(...announcements.map((item) => item.id), 0) + 1
-      setAnnouncements((prev) => [...prev, { id: newId, ...values }])
-      toast.success(t('Announcement added. Click "Save Settings" to apply.'))
-    }
-    setHasChanges(true)
-    setShowDialog(false)
-  }
-
-  const handleSaveAll = async () => {
+  const persistAnnouncements = async (next: Announcement[]) => {
     try {
       await updateOption.mutateAsync({
         key: 'console_setting.announcements',
-        value: JSON.stringify(announcements),
+        value: JSON.stringify(next),
       })
-      setHasChanges(false)
-      toast.success(t('Announcements saved successfully'))
+      setAnnouncements(next)
+      return true
     } catch (error) {
       handleServerError(error, t('Failed to save announcements'))
+      return false
+    }
+  }
+
+  const confirmDelete = async () => {
+    const ids =
+      deleteTarget === 'single' ? [editingAnnouncement?.id] : selectedIds
+    if (
+      await persistAnnouncements(
+        announcements.filter((item) => !ids.includes(item.id))
+      )
+    ) {
+      setSelectedIds([])
+      setShowDeleteDialog(false)
+      setEditingAnnouncement(null)
+    }
+  }
+
+  const handleSubmitForm = async (values: AnnouncementFormValues) => {
+    const draft: Announcement = {
+      ...values,
+      id:
+        editingAnnouncement?.id ??
+        Math.max(Date.now(), ...announcements.map((item) => item.id + 1)),
+      published: false,
+    }
+    const next = editingAnnouncement
+      ? announcements.map((item) => (item.id === draft.id ? draft : item))
+      : [...announcements, draft]
+    if (await persistAnnouncements(next)) {
+      setShowDialog(false)
+      toast.success(
+        t(
+          'Draft saved. Test the popup and confirm publication to show it to users.'
+        )
+      )
+    }
+  }
+
+  const handlePublish = async () => {
+    if (!preview || updateOption.isPending) return
+    const published = {
+      ...preview,
+      published: true,
+      revision: crypto.randomUUID(),
+    }
+    if (
+      await persistAnnouncements(
+        announcements.map((item) => (item.id === preview.id ? published : item))
+      )
+    ) {
+      setPreview(null)
     }
   }
 
@@ -315,7 +326,11 @@ export function AnnouncementsSection({
       <div className='space-y-4'>
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <div className='flex flex-wrap items-center gap-2'>
-            <Button onClick={handleAdd} size='sm'>
+            <Button
+              onClick={handleAdd}
+              size='sm'
+              disabled={updateOption.isPending}
+            >
               <Plus className='mr-2 h-4 w-4' />
               {t('Add Announcement')}
             </Button>
@@ -323,29 +338,27 @@ export function AnnouncementsSection({
               onClick={handleBatchDelete}
               size='sm'
               variant='destructive'
-              disabled={selectedIds.length === 0}
+              disabled={selectedIds.length === 0 || updateOption.isPending}
             >
               <Trash2 className='mr-2 h-4 w-4' />
               {t('Delete (')}
               {selectedIds.length})
             </Button>
-            <Button
-              onClick={handleSaveAll}
-              size='sm'
-              variant='secondary'
-              disabled={!hasChanges || updateOption.isPending}
-            >
-              <Save className='mr-2 h-4 w-4' />
-              {updateOption.isPending ? t('Saving...') : t('Save Settings')}
-            </Button>
           </div>
           <SettingsSwitchField
+            controlId='announcements-enabled'
+            disabled={updateOption.isPending}
             checked={isEnabled}
             onCheckedChange={handleToggleEnabled}
             label={t('Enabled')}
             className='py-0'
           />
         </div>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Save a draft, test the popup, then confirm publication. Editing a published announcement takes it offline until you confirm again.'
+          )}
+        </p>
 
         <StaticDataTable
           data={sortedAnnouncements}
@@ -402,10 +415,10 @@ export function AnnouncementsSection({
               header: t('Type'),
               cell: (announcement) => (
                 <StatusBadge
-                  label={
+                  label={t(
                     typeOptions.find((opt) => opt.value === announcement.type)
-                      ?.label
-                  }
+                      ?.label ?? 'Default'
+                  )}
                   variant={
                     typeOptions.find((opt) => opt.value === announcement.type)
                       ?.badgeVariant ?? 'neutral'
@@ -421,16 +434,74 @@ export function AnnouncementsSection({
               cell: (announcement) => announcement.extra || '-',
             },
             {
+              id: 'publication',
+              header: t('Status'),
+              cell: (announcement) => (
+                <StatusBadge
+                  copyable={false}
+                  variant={
+                    announcement.published === false ? 'neutral' : 'success'
+                  }
+                  label={
+                    announcement.published === false
+                      ? t('Draft')
+                      : t('Published')
+                  }
+                />
+              ),
+            },
+            {
+              id: 'popup-target',
+              header: t('Popup location'),
+              cell: (announcement) => {
+                if (!announcement.popupTarget) return t('No popup')
+                return announcement.popupTarget === 'home'
+                  ? t('Homepage popup')
+                  : t('After login popup')
+              },
+            },
+            {
               id: 'actions',
               header: t('Actions'),
               cell: (announcement) => (
-                <StaticRowActions
-                  editLabel={t('Edit')}
-                  deleteLabel={t('Delete')}
-                  menuLabel={t('Open menu')}
-                  onEdit={() => handleEdit(announcement)}
-                  onDelete={() => handleDelete(announcement)}
-                />
+                <div className='flex items-center justify-end gap-1'>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={updateOption.isPending}
+                    onClick={() => setPreview(announcement)}
+                  >
+                    <Eye className='size-4' />
+                    {t('Test popup')}
+                  </Button>
+                  {announcement.published !== false && (
+                    <Button
+                      size='sm'
+                      variant='ghost'
+                      disabled={updateOption.isPending}
+                      onClick={() =>
+                        void persistAnnouncements(
+                          announcements.map((item) =>
+                            item.id === announcement.id
+                              ? { ...item, published: false }
+                              : item
+                          )
+                        )
+                      }
+                    >
+                      {t('Unpublish')}
+                    </Button>
+                  )}
+                  <StaticRowActions
+                    editLabel={t('Edit')}
+                    deleteLabel={t('Delete')}
+                    menuLabel={t('Open menu')}
+                    onEdit={() => handleEdit(announcement)}
+                    onDelete={() => handleDelete(announcement)}
+                    editDisabled={updateOption.isPending}
+                    deleteDisabled={updateOption.isPending}
+                  />
+                </div>
               ),
             },
           ]}
@@ -458,8 +529,12 @@ export function AnnouncementsSection({
             >
               {t('Cancel')}
             </Button>
-            <Button type='submit' form={ANNOUNCEMENT_FORM_ID}>
-              {editingAnnouncement ? t('Update') : t('Add')}
+            <Button
+              type='submit'
+              form={ANNOUNCEMENT_FORM_ID}
+              disabled={updateOption.isPending}
+            >
+              {t('Save draft')}
             </Button>
           </>
         }
@@ -470,6 +545,43 @@ export function AnnouncementsSection({
             onSubmit={form.handleSubmit(handleSubmitForm)}
             className='space-y-4'
           >
+            <FormField
+              control={form.control}
+              name='popupTarget'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Popup location')}</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={[
+                      { value: 'home', label: t('Homepage popup') },
+                      { value: 'authenticated', label: t('After login popup') },
+                    ]}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value='home'>
+                        {t('Homepage popup')}
+                      </SelectItem>
+                      <SelectItem value='authenticated'>
+                        {t('After login popup')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t(
+                      'Homepage announcements are public. Login announcements are only available to signed-in users.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name='content'
@@ -530,7 +642,7 @@ export function AnnouncementsSection({
                           <div
                             className={`h-3 w-3 rounded-full ${option.color}`}
                           />
-                          {option.label}
+                          {t(option.label)}
                         </div>
                       ),
                     }))}
@@ -552,7 +664,7 @@ export function AnnouncementsSection({
                               <div
                                 className={`h-3 w-3 rounded-full ${option.color}`}
                               />
-                              {option.label}
+                              {t(option.label)}
                             </div>
                           </SelectItem>
                         ))}
@@ -588,26 +700,49 @@ export function AnnouncementsSection({
         </Form>
       </Dialog>
 
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Are you sure?')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteTarget === 'single'
-                ? t('This announcement will be removed from the list.')
-                : t('{{count}} announcements will be removed from the list.', {
-                    count: selectedIds.length,
-                  })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
-            <AlertDialogAction variant='destructive' onClick={confirmDelete}>
-              {t('Delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <AnnouncementDetailModal
+        open={preview !== null}
+        onOpenChange={(open) => {
+          if (!open && !updateOption.isPending) setPreview(null)
+        }}
+        announcement={preview}
+        footer={
+          <>
+            <Button
+              variant='outline'
+              disabled={updateOption.isPending}
+              onClick={() => setPreview(null)}
+            >
+              {t('Close')}
+            </Button>
+            {preview?.published === false && (
+              <Button
+                disabled={updateOption.isPending || !isEnabled}
+                onClick={handlePublish}
+              >
+                {t('Confirm publication')}
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <ConfirmDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        title={t('Are you sure?')}
+        desc={
+          deleteTarget === 'single'
+            ? t('This announcement will be removed from the list.')
+            : t('{{count}} announcements will be removed from the list.', {
+                count: selectedIds.length,
+              })
+        }
+        confirmText={t('Delete')}
+        destructive
+        isLoading={updateOption.isPending}
+        handleConfirm={() => void confirmDelete()}
+      />
     </SettingsSection>
   )
 }
