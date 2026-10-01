@@ -714,6 +714,7 @@ export function useCommonLogsColumns(
       {
         accessorKey: 'is_stream',
         header: t('Stream'),
+        size: 70,
         cell: ({ row }) => {
           const log = row.original
           if (!isTimingLogType(log.type)) return null
