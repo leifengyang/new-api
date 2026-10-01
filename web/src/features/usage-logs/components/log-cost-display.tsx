@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/tooltip'
 import { formatLogQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { hasToolSurcharge } from '../lib/format'
 import type { LogOtherData } from '../types'
@@ -82,6 +83,9 @@ function ToolSurchargeMarker() {
 
 export function LogCostDisplay(props: LogCostDisplayProps) {
   const { t } = useTranslation()
+  const quotaPerUnit = useSystemConfigStore(
+    (state) => state.config.currency.quotaPerUnit
+  )
   const isSubscription = props.other?.billing_source === 'subscription'
   const showToolSurcharge = hasToolSurcharge(props.other)
   const quota = isSubscription
@@ -112,7 +116,9 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
           copyable={false}
           className={cn(
             logBadgeClassName,
-            logBadgeTone.cost,
+            quota / quotaPerUnit > 0.5
+              ? logBadgeTone.highCost
+              : logBadgeTone.cost,
             'font-medium tabular-nums'
           )}
         >

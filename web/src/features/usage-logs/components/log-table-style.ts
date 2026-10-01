@@ -27,6 +27,7 @@ export const logBadgeTone = {
   model:
     'border-indigo-500/15 bg-indigo-500/6 !text-indigo-800 dark:!text-indigo-200',
   cost: 'border-emerald-500/15 bg-emerald-500/8 !text-emerald-800 dark:!text-emerald-200',
+  highCost: 'border-red-500/20 bg-red-500/10 !text-red-800 dark:!text-red-200',
   stream: 'border-sky-500/15 bg-sky-500/8 !text-sky-800 dark:!text-sky-200',
 }
 export const logTypeBadgeClassName =

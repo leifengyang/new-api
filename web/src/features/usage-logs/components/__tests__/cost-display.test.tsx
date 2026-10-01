@@ -58,6 +58,42 @@ describe('log cost display', () => {
   })
 
   test.each([
+    { quota: 249999, amount: '$0.499998', high: false },
+    { quota: 250000, amount: '$0.5', high: false },
+    { quota: 250001, amount: '$0.500002', high: true },
+  ])(
+    'uses red only for charges strictly above $0.5 ($amount)',
+    ({ quota, amount, high }) => {
+      renderCost({ quota, other: null })
+      const badge = screen
+        .getByText(amount)
+        .closest('[data-slot="status-badge"]')
+      expect(badge).toHaveClass(high ? 'bg-red-500/10' : 'bg-emerald-500/8')
+    }
+  )
+
+  test('uses the displayed subscription deduction for the high-cost threshold', () => {
+    renderCost({
+      quota: 0,
+      other: { billing_source: 'subscription', subscription_consumed: 300000 },
+    })
+    expect(
+      screen.getByText('$0.6').closest('[data-slot="status-badge"]')
+    ).toHaveClass('bg-red-500/10')
+  })
+
+  test('uses the configured quota conversion for the high-cost threshold', () => {
+    const config = useSystemConfigStore.getState().config
+    useSystemConfigStore
+      .getState()
+      .setConfig({ currency: { ...config.currency, quotaPerUnit: 1000000 } })
+    renderCost({ quota: 300000, other: null })
+    expect(
+      screen.getByText('$0.3').closest('[data-slot="status-badge"]')
+    ).toHaveClass('bg-emerald-500/8')
+  })
+
+  test.each([
     { consumed: 12500, expected: '$0.025' },
     { consumed: 0, expected: '$0' },
     { consumed: 1, expected: '$0.000002' },
