@@ -27,8 +27,8 @@ import { useTopNavLinks } from '@/hooks/use-top-nav-links'
 
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
+import { AppBreadcrumb } from './app-breadcrumb'
 import { Header } from './header'
-import { SystemBrand } from './system-brand'
 import { TopNav } from './top-nav'
 
 /**
@@ -113,9 +113,8 @@ export function AppHeader({
 
   return (
     <Header>
-      <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1'>
-        <SystemBrand variant='inline' />
-        <SystemUpdateAction presentation='version' />
+      <div className='flex min-w-0 flex-1 items-center'>
+        <AppBreadcrumb />
       </div>
 
       {leftContent ? (
@@ -125,12 +124,12 @@ export function AppHeader({
       {rightContent ?? (
         <div className='ms-auto flex shrink-0 items-center gap-1 sm:gap-2'>
           {showTopNav && (
-            <div className='me-1 hidden lg:block'>
+            <div className='me-1 hidden xl:block'>
               <TopNav links={links} />
             </div>
           )}
           {showSearch && (
-            <Search className='w-8 flex-none [&>span]:hidden sm:[&>span]:inline' />
+            <Search className='w-8 min-w-8 flex-none px-0 sm:w-8 sm:pe-0 lg:w-40 lg:ps-3 lg:pe-12 xl:w-40 [&>kbd]:hidden lg:[&>kbd]:flex [&>span]:hidden lg:[&>span]:inline' />
           )}
           {showNotifications && (
             <NotificationPopover
@@ -145,6 +144,7 @@ export function AppHeader({
             />
           )}
           <LanguageSwitcher />
+          <SystemUpdateAction presentation='version' />
           {showConfigDrawer && <ConfigDrawer />}
           {showProfileDropdown && <ProfileDropdown />}
         </div>
