@@ -94,8 +94,8 @@ For commercial licensing, please contact support@quantumnous.com
 }
 
 /* ── Default theme: ink on paper ──
- * A business-black reading of Anthropic's design language. The canvas is warm
- * paper (#f5f5f2), type is ink (#1a1917), and the single accent is a restrained
+ * A business-black reading of Anthropic's design language. The canvas is light
+ * grey (#f9f9f9), type is ink (#1a1917), and the single accent is a restrained
  * brass (#a8793c) that carries focus rings, active states and the chart's
  * second series. Primary actions are ink-black rather than a brand hue, so the
  * colour budget is spent on data and state, not on chrome.
@@ -118,7 +118,7 @@ For commercial licensing, please contact support@quantumnous.com
   /* Native form controls, scrollbars and the canvas follow the app theme
    * rather than the OS setting. */
   color-scheme: light;
-  --background: oklch(0.966 0.003 106);
+  --background: rgb(249, 249, 249);
   --foreground: oklch(0.205 0.004 80);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.205 0.004 80);
@@ -156,7 +156,7 @@ For commercial licensing, please contact support@quantumnous.com
   --overview-accent-1: oklch(0.32 0.012 80);
   --overview-accent-2: oklch(0.598 0.092 68);
   --overview-accent-3: oklch(0.52 0.066 246);
-  --sidebar: oklch(0.948 0.004 104);
+  --sidebar: rgb(249, 249, 249);
   --sidebar-foreground: oklch(0.205 0.004 80);
   --sidebar-primary: oklch(0.235 0.006 80);
   --sidebar-primary-foreground: oklch(0.975 0.003 106);
