@@ -806,6 +806,16 @@ type degradationWatchChannelItem struct {
 	LastRunAt int64    `json:"last_record_at"`
 }
 
+// The editor needs the live channel inventory before its draft targets are saved.
+// Keep this response limited to selection metadata; never serialize Channel itself.
+type degradationWatchAvailableChannel struct {
+	Id     int      `json:"id"`
+	Name   string   `json:"name"`
+	Status int      `json:"status"`
+	Groups []string `json:"groups"`
+	Models []string `json:"models"`
+}
+
 // GetDegradationWatchChannels 列出所有目标分组里的渠道，给后台填别名、单测用。
 // 别名是全局的，同一个渠道在所有目标之间共用。
 func GetDegradationWatchChannels(c *gin.Context) {
@@ -818,7 +828,12 @@ func GetDegradationWatchChannels(c *gin.Context) {
 	aliases := operation_setting.GetDegradationWatchChannelAliases()
 	matched := make([]*model.Channel, 0)
 	ids := make([]int, 0)
+	available := make([]degradationWatchAvailableChannel, 0, len(channels))
 	for _, channel := range channels {
+		available = append(available, degradationWatchAvailableChannel{
+			Id: channel.Id, Name: channel.Name, Status: channel.Status,
+			Groups: channel.GetGroups(), Models: channel.GetModels(),
+		})
 		if slices.ContainsFunc(targets, func(target operation_setting.DegradationWatchTarget) bool {
 			return slices.Contains(channel.GetGroups(), target.Group)
 		}) {
@@ -851,8 +866,9 @@ func GetDegradationWatchChannels(c *gin.Context) {
 		items = append(items, item)
 	}
 	common.ApiSuccess(c, gin.H{
-		"targets":  targets,
-		"channels": items,
+		"targets":            targets,
+		"channels":           items,
+		"available_channels": available,
 	})
 }
 

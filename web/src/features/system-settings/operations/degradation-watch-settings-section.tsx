@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Play } from 'lucide-react'
-import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { FieldSet, FieldLegend } from '@/components/ui/field'
 import {
   Form,
   FormControl,
@@ -36,19 +36,14 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  useDegradationWatchChannels,
-  useRunDegradationWatch,
-} from '@/features/degradation-watch/hooks/use-degradation-watch'
+import { useDegradationWatchChannels } from '@/features/degradation-watch/hooks/use-degradation-watch'
 import {
   DEGRADATION_WATCH_ALIAS_KEY,
   parseAliases,
   serializeAliases,
 } from '@/features/degradation-watch/lib/aliases'
-import { formatTimestampToDate } from '@/lib/format'
 
 import {
   SettingsForm,
@@ -60,6 +55,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { SafeNumberInput } from '../utils/numeric-field'
+import { DegradationWatchChannelList } from './degradation-watch-channel-list'
 import {
   findDuplicateTarget,
   MAX_DEGRADATION_WATCH_TARGETS,
@@ -72,7 +68,11 @@ import { DegradationWatchTargetsEditor } from './degradation-watch-targets-edito
 const schema = z
   .object({
     enabled: z.boolean(),
-    targets: z.array(targetSchema).max(MAX_DEGRADATION_WATCH_TARGETS),
+    targets: z
+      .array(targetSchema)
+      .min(1, 'Add at least one model to test')
+      .max(MAX_DEGRADATION_WATCH_TARGETS),
+    aliases: z.record(z.string(), z.string().default('')),
     intervalMinutes: z.coerce.number().int().min(1).max(1440),
     timeoutSeconds: z.coerce.number().int().min(30).max(3600),
     retentionPerChannel: z.coerce.number().int().min(1).max(2000),
@@ -92,7 +92,7 @@ const schema = z
 
 export type DegradationWatchValues = z.infer<typeof schema>
 type Values = DegradationWatchValues
-type ScalarField = Exclude<keyof Values, 'targets'>
+type ScalarField = Exclude<keyof Values, 'targets' | 'aliases'>
 
 const OPTION_KEYS = {
   enabled: 'degradation_watch_setting.enabled',
@@ -106,7 +106,7 @@ const OPTION_KEYS = {
 const TARGETS_KEY = 'degradation_watch_setting.targets'
 
 type DegradationWatchSettingsSectionProps = {
-  defaultValues: Values
+  defaultValues: Omit<Values, 'aliases'>
   /** The stored `channel_aliases` JSON object, channel id → alias. */
   aliasesJson: string
 }
@@ -116,34 +116,57 @@ export function DegradationWatchSettingsSection(
 ) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const queryClient = useQueryClient()
+  const channels = useDegradationWatchChannels()
 
   const form = useForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
-    defaultValues: props.defaultValues,
+    defaultValues: {
+      ...props.defaultValues,
+      aliases: parseAliases(props.aliasesJson),
+    },
   })
   const { isDirty, isSubmitting } = form.formState
   const busy = updateOption.isPending || isSubmitting
 
   async function onSubmit(values: Values) {
+    const saved = form.formState.defaultValues
     const updates: Array<{ key: string; value: string }> = []
     // Targets go first so a run triggered right after saving already sees them.
     const targets = serializeTargets(values.targets)
-    if (targets !== serializeTargets(props.defaultValues.targets)) {
+    if (
+      targets !== serializeTargets((saved?.targets ?? []) as Values['targets'])
+    ) {
       updates.push({ key: TARGETS_KEY, value: targets })
     }
     for (const field of Object.keys(OPTION_KEYS) as ScalarField[]) {
-      if (values[field] !== props.defaultValues[field]) {
+      if (values[field] !== saved?.[field]) {
         updates.push({ key: OPTION_KEYS[field], value: String(values[field]) })
       }
+    }
+    if (
+      serializeAliases(values.aliases) !==
+      serializeAliases((saved?.aliases as Values['aliases']) ?? {})
+    ) {
+      updates.push({
+        key: DEGRADATION_WATCH_ALIAS_KEY,
+        value: serializeAliases(values.aliases),
+      })
     }
     if (updates.length === 0) {
       toast.info(t('No changes to save'))
       return
     }
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
+    try {
+      for (const update of updates) {
+        await updateOption.mutateAsync(update)
+      }
+    } catch {
+      // useUpdateOption reports the failure; retain the draft for retry.
+      return
     }
     form.reset(values)
+    await queryClient.invalidateQueries({ queryKey: ['degradation-watch'] })
   }
 
   return (
@@ -186,93 +209,119 @@ export function DegradationWatchSettingsSection(
             )}
           />
 
-          <DegradationWatchTargetsEditor form={form} disabled={busy} />
+          {channels.isError ? (
+            <ErrorState
+              className='min-h-32'
+              title={t('Failed to load channels')}
+              onRetry={() => void channels.refetch()}
+            />
+          ) : null}
+          {channels.isPending && <LoadingState className='min-h-32' />}
+          <DegradationWatchTargetsEditor
+            form={form}
+            channels={channels.data?.available_channels ?? []}
+            disabled={busy || channels.isPending || channels.isError}
+          />
+          <DegradationWatchChannelList
+            form={form}
+            data={channels.data}
+            busy={busy}
+            unavailable={channels.isPending || channels.isError}
+            refreshing={channels.isFetching}
+            onRefresh={() => void channels.refetch()}
+          />
 
-          <SettingsFormGrid>
-            <FormField
-              control={form.control}
-              name='intervalMinutes'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Interval (minutes)')}</FormLabel>
-                  <FormControl>
-                    <SafeNumberInput
-                      field={field}
-                      min={1}
-                      max={1440}
-                      disabled={busy}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name='timeoutSeconds'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Request timeout (seconds)')}</FormLabel>
-                  <FormControl>
-                    <SafeNumberInput
-                      field={field}
-                      min={30}
-                      max={3600}
-                      disabled={busy}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Applies to each drawing request on its own')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name='concurrency'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Concurrent requests')}</FormLabel>
-                  <FormControl>
-                    <SafeNumberInput
-                      field={field}
-                      min={1}
-                      max={32}
-                      disabled={busy}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('Shared by all models and channels in a round')}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name='retentionPerChannel'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Attempts kept per channel and model')}</FormLabel>
-                  <FormControl>
-                    <SafeNumberInput
-                      field={field}
-                      min={1}
-                      max={2000}
-                      disabled={busy}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Older attempts, hidden ones included, are removed; the success rate covers what is kept'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </SettingsFormGrid>
+          <FieldSet className='min-w-0 rounded-xl border p-4'>
+            <FieldLegend>{t('Run parameters')}</FieldLegend>
+
+            <SettingsFormGrid>
+              <FormField
+                control={form.control}
+                name='intervalMinutes'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Interval (minutes)')}</FormLabel>
+                    <FormControl>
+                      <SafeNumberInput
+                        field={field}
+                        min={1}
+                        max={1440}
+                        disabled={busy}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='timeoutSeconds'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Request timeout (seconds)')}</FormLabel>
+                    <FormControl>
+                      <SafeNumberInput
+                        field={field}
+                        min={30}
+                        max={3600}
+                        disabled={busy}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Applies to each drawing request on its own')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='concurrency'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Concurrent requests')}</FormLabel>
+                    <FormControl>
+                      <SafeNumberInput
+                        field={field}
+                        min={1}
+                        max={32}
+                        disabled={busy}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Shared by all models and channels in a round')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='retentionPerChannel'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {t('Attempts kept per channel and model')}
+                    </FormLabel>
+                    <FormControl>
+                      <SafeNumberInput
+                        field={field}
+                        min={1}
+                        max={2000}
+                        disabled={busy}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Older attempts, hidden ones included, are removed; the success rate covers what is kept'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </SettingsFormGrid>
+          </FieldSet>
 
           <FormField
             control={form.control}
@@ -298,127 +347,6 @@ export function DegradationWatchSettingsSection(
           />
         </SettingsForm>
       </Form>
-
-      <ChannelAliasList aliasesJson={props.aliasesJson} />
     </SettingsSection>
-  )
-}
-
-interface ChannelAliasListProps {
-  aliasesJson: string
-}
-
-function ChannelAliasList(props: ChannelAliasListProps) {
-  const { t } = useTranslation()
-  const channels = useDegradationWatchChannels()
-  const updateOption = useUpdateOption()
-  const run = useRunDegradationWatch()
-  const [saved] = useState(() => parseAliases(props.aliasesJson))
-  const [aliases, setAliases] = useState(saved)
-  const dirty = serializeAliases(aliases) !== serializeAliases(saved)
-
-  async function saveAliases() {
-    await updateOption.mutateAsync({
-      key: DEGRADATION_WATCH_ALIAS_KEY,
-      value: serializeAliases(aliases),
-    })
-  }
-
-  let body = <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
-  if (channels.isError) {
-    body = (
-      <p className='text-destructive text-sm'>{t('Failed to load channels')}</p>
-    )
-  } else if (channels.data && channels.data.channels.length === 0) {
-    body = (
-      <p className='text-muted-foreground text-sm'>
-        {t('No channels in the groups of the configured models')}
-      </p>
-    )
-  } else if (channels.data) {
-    body = (
-      <div className='divide-y rounded-lg border'>
-        {channels.data.channels.map((channel) => (
-          <div
-            key={channel.id}
-            className='flex flex-wrap items-center gap-3 px-3 py-2'
-          >
-            <div className='flex min-w-40 flex-1 flex-col'>
-              <span className='text-sm font-medium'>
-                #{channel.id} {channel.name}
-              </span>
-              <span className='text-muted-foreground text-xs'>
-                {t('Last run')}: {formatTimestampToDate(channel.last_record_at)}
-              </span>
-            </div>
-            {channel.models.length === 0 && (
-              <Badge variant='outline'>{t('No configured model can run')}</Badge>
-            )}
-            <Input
-              className='w-48'
-              placeholder={t('Alias (blank = hidden)')}
-              value={aliases[String(channel.id)] ?? ''}
-              onChange={(event) =>
-                setAliases((current) => ({
-                  ...current,
-                  [String(channel.id)]: event.target.value,
-                }))
-              }
-            />
-            <div className='flex flex-wrap gap-1'>
-              {channel.models.map((modelName) => (
-                <Button
-                  key={modelName}
-                  variant='outline'
-                  size='sm'
-                  disabled={run.isPending}
-                  aria-label={t('Run {{model}} on this channel now', {
-                    model: modelName,
-                  })}
-                  onClick={() =>
-                    run.mutate({ model: modelName, channelId: channel.id })
-                  }
-                >
-                  <Play />
-                  {modelName}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  }
-
-  return (
-    <div className='flex flex-col gap-3'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <div className='flex flex-col gap-1'>
-          <h4 className='text-sm font-semibold'>{t('Channels and aliases')}</h4>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Only channels with an alias appear on the wall, under that alias. Unaliased channels are still tested and visible to admins.'
-            )}
-          </p>
-        </div>
-        <div className='flex items-center gap-2'>
-          <Button
-            variant='outline'
-            disabled={run.isPending}
-            onClick={() => run.mutate({})}
-          >
-            <Play />
-            {t('Run all now')}
-          </Button>
-          <Button
-            disabled={!dirty || updateOption.isPending}
-            onClick={() => void saveAliases()}
-          >
-            {t('Save aliases')}
-          </Button>
-        </div>
-      </div>
-      {body}
-    </div>
   )
 }

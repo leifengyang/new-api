@@ -18,68 +18,68 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
-import {
-  useFieldArray,
-  type FieldValues,
-  type UseFormReturn,
-} from 'react-hook-form'
+import { useFieldArray, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
+import { FieldSet } from '@/components/ui/field'
 import {
   FormControl,
   FormField,
   FormItem,
+  FormLabel,
   FormMessage,
 } from '@/components/ui/form'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { REASONING_EFFORTS } from '@/features/degradation-watch/lib/self-test'
-import { getModels } from '@/features/models/api'
+import type { DegradationWatchAvailableChannel } from '@/features/degradation-watch/types'
 import { getGroups } from '@/features/users/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+import type { DegradationWatchValues } from './degradation-watch-settings-section'
 import {
+  getTargetModels,
   MAX_DEGRADATION_WATCH_TARGETS,
-  type TargetValues,
 } from './degradation-watch-targets'
 
-type TargetsForm = FieldValues & { targets: TargetValues[] }
-
-interface DegradationWatchTargetsEditorProps<T extends TargetsForm> {
-  form: UseFormReturn<T>
+interface DegradationWatchTargetsEditorProps {
+  form: UseFormReturn<DegradationWatchValues>
+  channels: DegradationWatchAvailableChannel[]
   disabled: boolean
 }
 
-/** One row per tested model; the order here is the lane order on the wall. */
-export function DegradationWatchTargetsEditor<T extends TargetsForm>(
-  props: DegradationWatchTargetsEditorProps<T>
+/** Options and channel previews both follow the current draft, before saving. */
+export function DegradationWatchTargetsEditor(
+  props: DegradationWatchTargetsEditorProps
 ) {
   const { t } = useTranslation()
-  // The generic form type keeps the section's own Values; the editor only
-  // touches `targets`, so it works against that slice.
-  const form = props.form as unknown as UseFormReturn<TargetsForm>
+  const form = props.form
   const targets = useFieldArray({ control: form.control, name: 'targets' })
+  const values = useWatch({ control: form.control, name: 'targets' })
   const groups = useQuery({
     queryKey: ['degradation-watch', 'groups'],
     queryFn: async () => requireServerSuccess(await getGroups()).data ?? [],
+    staleTime: 0,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   })
-  const models = useQuery({
-    queryKey: ['degradation-watch', 'models'],
-    queryFn: async () => requireServerSuccess(await getModels()).data ?? [],
-  })
-
-  const groupOptions = groups.data ?? []
-  const modelOptions =
-    (Array.isArray(models.data)
-      ? []
-      : models.data?.items.map((m) => m.model_name)) ?? []
+  const groupOptions = [
+    ...new Set([
+      ...(groups.data ?? []),
+      ...props.channels.flatMap((channel) => channel.groups),
+    ]),
+  ].sort()
   const full = targets.fields.length >= MAX_DEGRADATION_WATCH_TARGETS
 
   return (
-    <div className='flex flex-col gap-3'>
+    <section
+      className='flex min-w-0 flex-col gap-3'
+      aria-label={t('Models to test')}
+    >
       <div className='flex flex-wrap items-center justify-between gap-2'>
-        <div className='flex flex-col gap-1'>
+        <div className='flex min-w-0 flex-col gap-1'>
           <h4 className='text-sm font-semibold'>{t('Models to test')}</h4>
           <p className='text-muted-foreground text-xs'>
             {t(
@@ -105,121 +105,47 @@ export function DegradationWatchTargetsEditor<T extends TargetsForm>(
           {t('Add model')}
         </Button>
       </div>
-
-      {targets.fields.length === 0 ? (
-        <p className='text-muted-foreground rounded-lg border border-dashed p-4 text-center text-sm'>
-          {t('No models configured yet')}
+      {targets.fields.length === 0 && (
+        <EmptyState
+          className='min-h-32'
+          bordered
+          title={t('No models configured yet')}
+        />
+      )}
+      {(form.formState.errors.targets?.message ||
+        form.formState.errors.targets?.root?.message) && (
+        <p role='alert' className='text-destructive text-sm'>
+          {t('Add at least one model to test')}
         </p>
-      ) : (
-        <div className='divide-y rounded-lg border'>
-          {targets.fields.map((item, index) => (
-            <div
-              key={item.id}
-              className='flex flex-wrap items-start gap-2 px-3 py-2'
-            >
-              <FormField
-                control={form.control}
-                name={`targets.${index}.model`}
-                render={({ field }) => (
-                  <FormItem className='min-w-40 flex-1'>
-                    <FormControl>
-                      <NativeSelect
-                        className='w-full'
-                        aria-label={t('Model')}
-                        value={field.value}
-                        onChange={(event) => field.onChange(event.target.value)}
-                        disabled={props.disabled}
-                      >
-                        {!modelOptions.includes(field.value) && field.value && (
-                          <NativeSelectOption value={field.value}>
-                            {field.value}
-                          </NativeSelectOption>
-                        )}
-                        {field.value === '' && (
-                          <NativeSelectOption value=''>
-                            {t('Select a model')}
-                          </NativeSelectOption>
-                        )}
-                        {modelOptions.map((model: string) => (
-                          <NativeSelectOption key={model} value={model}>
-                            {model}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name={`targets.${index}.group`}
-                render={({ field }) => (
-                  <FormItem className='w-40'>
-                    <FormControl>
-                      <NativeSelect
-                        className='w-full'
-                        aria-label={t('Group')}
-                        value={field.value}
-                        onChange={(event) => field.onChange(event.target.value)}
-                        disabled={props.disabled}
-                      >
-                        {!groupOptions.includes(field.value) && (
-                          <NativeSelectOption value={field.value}>
-                            {field.value || t('Select a group')}
-                          </NativeSelectOption>
-                        )}
-                        {groupOptions.map((group) => (
-                          <NativeSelectOption key={group} value={group}>
-                            {group}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name={`targets.${index}.reasoningEffort`}
-                render={({ field }) => (
-                  <FormItem className='w-32'>
-                    <FormControl>
-                      <NativeSelect
-                        className='w-full'
-                        aria-label={t('Reasoning effort')}
-                        value={field.value}
-                        onChange={(event) => field.onChange(event.target.value)}
-                        disabled={props.disabled}
-                      >
-                        {REASONING_EFFORTS.map((value) => (
-                          <NativeSelectOption key={value} value={value}>
-                            {value === '' ? t('Not sent') : value}
-                          </NativeSelectOption>
-                        ))}
-                      </NativeSelect>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
+      )}
+      {targets.fields.map((item, index) => {
+        const target = values[index] ?? item
+        const modelOptions = getTargetModels(props.channels, target.group)
+        const unavailable =
+          target.model !== '' && !modelOptions.includes(target.model)
+        return (
+          <FieldSet
+            key={item.id}
+            className='min-w-0 gap-4 rounded-xl border p-4'
+          >
+            <div className='flex flex-wrap items-center justify-between gap-2'>
               <FormField
                 control={form.control}
                 name={`targets.${index}.enabled`}
                 render={({ field }) => (
-                  <FormItem className='flex h-9 items-center'>
+                  <FormItem className='flex items-center gap-3'>
                     <FormControl>
                       <Switch
-                        aria-label={t('Enabled')}
                         checked={field.value}
                         onCheckedChange={field.onChange}
                         disabled={props.disabled}
                       />
                     </FormControl>
+                    <FormLabel>{t('Enabled')}</FormLabel>
                   </FormItem>
                 )}
               />
-              <div className='flex h-9 items-center gap-1'>
+              <div className='flex items-center gap-1'>
                 <Button
                   type='button'
                   variant='ghost'
@@ -254,9 +180,113 @@ export function DegradationWatchTargetsEditor<T extends TargetsForm>(
                 </Button>
               </div>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+            <div className='grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]'>
+              <FormField
+                control={form.control}
+                name={`targets.${index}.group`}
+                render={({ field }) => (
+                  <FormItem className='min-w-0'>
+                    <FormLabel>{t('Group')}</FormLabel>
+                    <FormControl>
+                      <NativeSelect
+                        {...field}
+                        className='w-full'
+                        disabled={props.disabled}
+                        onChange={(event) => {
+                          const group = event.target.value
+                          field.onChange(group)
+                          if (
+                            !getTargetModels(props.channels, group).includes(
+                              target.model
+                            )
+                          ) {
+                            form.setValue(`targets.${index}.model`, '', {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            })
+                          }
+                        }}
+                      >
+                        {!groupOptions.includes(field.value) && (
+                          <NativeSelectOption value={field.value}>
+                            {field.value || t('Select a group')}
+                          </NativeSelectOption>
+                        )}
+                        {groupOptions.map((group) => (
+                          <NativeSelectOption key={group} value={group}>
+                            {group}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`targets.${index}.model`}
+                render={({ field }) => (
+                  <FormItem className='min-w-0'>
+                    <FormLabel>{t('Model')}</FormLabel>
+                    <FormControl>
+                      <NativeSelect
+                        {...field}
+                        className='w-full'
+                        disabled={props.disabled || modelOptions.length === 0}
+                      >
+                        <NativeSelectOption value=''>
+                          {modelOptions.length === 0
+                            ? t('No available models in this group')
+                            : t('Select a model')}
+                        </NativeSelectOption>
+                        {unavailable && (
+                          <NativeSelectOption value={field.value} disabled>
+                            {field.value}
+                          </NativeSelectOption>
+                        )}
+                        {modelOptions.map((model) => (
+                          <NativeSelectOption key={model} value={model}>
+                            {model}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </FormControl>
+                    {unavailable && (
+                      <p className='text-destructive text-xs' role='status'>
+                        {t('This model is unavailable in the selected group')}
+                      </p>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`targets.${index}.reasoningEffort`}
+                render={({ field }) => (
+                  <FormItem className='min-w-0'>
+                    <FormLabel>{t('Reasoning effort')}</FormLabel>
+                    <FormControl>
+                      <NativeSelect
+                        {...field}
+                        className='w-full'
+                        disabled={props.disabled}
+                      >
+                        {REASONING_EFFORTS.map((value) => (
+                          <NativeSelectOption key={value} value={value}>
+                            {value === '' ? t('Not sent') : value}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            </div>
+          </FieldSet>
+        )
+      })}
+    </section>
   )
 }
