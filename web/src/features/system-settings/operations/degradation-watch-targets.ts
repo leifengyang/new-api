@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import type { DegradationWatchAvailableChannel } from '@/features/degradation-watch/types'
+
 /** Mirrors MaxDegradationWatchTargets in degradation_watch_setting.go. */
 export const MAX_DEGRADATION_WATCH_TARGETS = 20
 
@@ -40,7 +42,10 @@ export interface LegacyTarget {
  * Reads the stored `targets` JSON. An empty list means the server still runs
  * the legacy single target, so the editor starts from that one instead.
  */
-export function parseTargets(raw: string, legacy: LegacyTarget): TargetValues[] {
+export function parseTargets(
+  raw: string,
+  legacy: LegacyTarget
+): TargetValues[] {
   let parsed: unknown = []
   try {
     parsed = JSON.parse(raw || '[]')
@@ -87,4 +92,22 @@ export function findDuplicateTarget(targets: TargetValues[]): number {
     seen.add(model)
   }
   return -1
+}
+
+/** Model choices reflect enabled channels, not the paginated model metadata catalog. */
+export function getTargetModels(
+  channels: DegradationWatchAvailableChannel[],
+  group: string
+): string[] {
+  return [
+    ...new Set(
+      channels
+        .filter(
+          (channel) => channel.status === 1 && channel.groups.includes(group)
+        )
+        .flatMap((channel) =>
+          channel.models.map((model) => model.trim()).filter(Boolean)
+        )
+    ),
+  ].sort()
 }

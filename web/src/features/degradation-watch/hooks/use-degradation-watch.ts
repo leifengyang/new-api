@@ -136,6 +136,9 @@ export function useSetRecordHidden() {
 export function useDegradationWatchChannels() {
   return useQuery({
     queryKey: degradationWatchKeys.channels,
+    staleTime: 0,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const result = await getDegradationWatchChannels()
       if (!result.success || !result.data) {
@@ -147,6 +150,7 @@ export function useDegradationWatchChannels() {
 }
 
 export function useRunDegradationWatch() {
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (scope: DegradationWatchRunScope) => {
       const result = await runDegradationWatch(scope)
@@ -156,6 +160,9 @@ export function useRunDegradationWatch() {
       return result.data
     },
     onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: degradationWatchKeys.channels,
+      })
       toast.success(
         i18next.t(
           'Check queued. New artwork appears on the wall once the run finishes.'

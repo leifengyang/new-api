@@ -103,6 +103,15 @@ export interface DegradationWatchChannel {
 export interface DegradationWatchChannels {
   targets: DegradationWatchTarget[]
   channels: DegradationWatchChannel[]
+  available_channels: DegradationWatchAvailableChannel[]
+}
+
+export interface DegradationWatchAvailableChannel {
+  id: number
+  name: string
+  status: number
+  groups: string[]
+  models: string[]
 }
 
 export interface DegradationWatchRunResult {

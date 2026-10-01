@@ -2,13 +2,60 @@ package controller
 
 import (
 	"fmt"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
+	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func TestDegradationWatchChannelsIncludesUnsavedGroupsWithoutCredentials(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+	setting := operation_setting.GetDegradationWatchSetting()
+	previousSetting := *setting
+	t.Cleanup(func() { *setting = previousSetting })
+	setting.Targets = []operation_setting.DegradationWatchTarget{{Group: "alpha", Model: "model-a", Enabled: true}}
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.DegradationWatchRecord{}))
+	require.NoError(t, db.Create(&[]model.Channel{
+		{Id: 1, Name: "Alpha", Group: "alpha", Models: "model-a", Status: 1, Key: "test-secret-alpha"},
+		{Id: 2, Name: "Beta", Group: "beta", Models: "model-b,shared", Status: 1, Key: "test-secret-beta"},
+	}).Error)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	GetDegradationWatchChannels(c)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Channels  []degradationWatchChannelItem      `json:"channels"`
+			Available []degradationWatchAvailableChannel `json:"available_channels"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, recorder.Body.String())
+	require.Len(t, response.Data.Channels, 1)
+	assert.Equal(t, 1, response.Data.Channels[0].Id)
+	assert.ElementsMatch(t, []degradationWatchAvailableChannel{
+		{Id: 1, Name: "Alpha", Status: 1, Groups: []string{"alpha"}, Models: []string{"model-a"}},
+		{Id: 2, Name: "Beta", Status: 1, Groups: []string{"beta"}, Models: []string{"model-b", "shared"}},
+	}, response.Data.Available)
+	assert.NotContains(t, recorder.Body.String(), "test-secret")
+	assert.NotContains(t, recorder.Body.String(), `"key"`)
+}
 
 func TestExtractDegradationWatchHtml(t *testing.T) {
 	for _, tc := range []struct {
