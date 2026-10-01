@@ -1,9 +1,15 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/service"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -183,4 +189,167 @@ func TestGroupDegradationWatchRoundsSplitsLegacyRecordsByGapAndRepeatedSeries(t 
 	assert.Equal(t, "legacy-8", rounds[0].Key, "a repeated channel+model starts a new round")
 	assert.Equal(t, "legacy-7", rounds[1].Key)
 	assert.Equal(t, "legacy-6", rounds[2].Key, "a gap longer than the legacy window starts a new round")
+}
+
+func TestDegradationWatchRunAllPublishesIndependentLiveJobs(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previousDB, redis, cache := model.DB, common.RedisEnabled, common.MemoryCacheEnabled
+	model.DB, common.RedisEnabled, common.MemoryCacheEnabled = db, false, false
+	setting := operation_setting.GetDegradationWatchSetting()
+	previousSetting := *setting
+	t.Cleanup(func() {
+		model.DB, common.RedisEnabled, common.MemoryCacheEnabled = previousDB, redis, cache
+		*setting = previousSetting
+		_ = sqlDB.Close()
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}))
+	user := model.User{Username: "watch-test", Role: common.RoleRootUser, Group: "default", Quota: 10000, Status: 1}
+	require.NoError(t, db.Create(&user).Error)
+	release := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := common.DecodeJson(r.Body, &request); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if request.Model == "astra" {
+			http.Error(w, strings.Repeat("full error detail ", 100)+"test-channel-secret final-error-line", 429)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"<html><svg>"}}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"<circle/>"}}]}`+"\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		case <-ctx.Done():
+			return
+		}
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"</svg></html>"},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34,"total_tokens":46}}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+	base := upstream.URL
+	channel := model.Channel{Type: constant.ChannelTypeOpenAI, Name: "test-channel", Key: "test-channel-secret", BaseURL: &base, Group: "default", Models: "sol,astra", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(&channel).Error)
+	setting.Targets = []operation_setting.DegradationWatchTarget{{Model: "sol", Group: "default", Enabled: true}, {Model: "astra", Group: "default", Enabled: true}}
+	setting.Concurrency = 2
+	service.InitHttpClient()
+	done := make(chan struct{})
+	var summary degradationWatchSummary
+	var runErr error
+	go func() {
+		defer close(done)
+		summary, runErr = runDegradationWatchTask(ctx, "live-test", degradationWatchTaskPayload{}, nil)
+	}()
+	// Observe actual persisted progress before releasing the upstream response.
+	observed := assert.Eventually(t, func() bool {
+		records, err := model.ListDegradationWatchRecords(channel.Id, 0, 10, true)
+		if err != nil || len(records) != 2 {
+			return false
+		}
+		return records[0].Status == "failed" && records[1].Status == "running" && records[1].CompletionTokens > 0
+	}, 10*time.Second, 20*time.Millisecond)
+	close(release)
+	if !observed {
+		rows, _ := model.ListDegradationWatchRecords(channel.Id, 0, 10, true)
+		for _, row := range rows {
+			t.Logf("%s %s %s", row.ModelName, row.Status, row.ErrorDetails)
+		}
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("batch did not complete")
+	}
+	require.NoError(t, runErr)
+	assert.Equal(t, 1, summary.Succeeded)
+	assert.Equal(t, 1, summary.Failed)
+	records, err := model.ListDegradationWatchRecords(channel.Id, 0, 10, true)
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+	assert.Equal(t, "failed", records[0].Status)
+	assert.Contains(t, string(records[0].ErrorDetails), "final-error-line")
+	assert.NotContains(t, string(records[0].ErrorDetails), channel.Key)
+	assert.Equal(t, "succeeded", records[1].Status)
+	assert.Equal(t, 12, records[1].PromptTokens)
+	assert.Equal(t, 34, records[1].CompletionTokens)
+	assert.False(t, records[1].TokensEstimated)
+	var unchanged model.User
+	require.NoError(t, db.First(&unchanged, user.Id).Error)
+	assert.Equal(t, user.Quota, unchanged.Quota)
+	assert.Zero(t, unchanged.UsedQuota)
+}
+
+func TestDegradationWatchProgressPreservesExplicitZeroAndIgnoresPartialEvents(t *testing.T) {
+	record := degradationWatchProgress([]byte(`data: {"choices":[{"delta":{"content":"abc"}}]}`+"\n\n"+`data: {"usage":{"prompt_tokens":0,"completion_tokens":0}}`+"\n\n"+`data: {"choices":[{"delta":{"content":"partial`), "input", "sol")
+	assert.Equal(t, "abc", string(record.OutputText))
+	assert.Zero(t, record.PromptTokens)
+	assert.Zero(t, record.CompletionTokens)
+	assert.False(t, record.TokensEstimated)
+}
+
+func TestDegradationWatchModelHistoryAndDetailVisibility(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	previousDB := model.DB
+	model.DB = db
+	setting := operation_setting.GetDegradationWatchSetting()
+	previousSetting := *setting
+	t.Cleanup(func() { model.DB = previousDB; *setting = previousSetting; _ = sqlDB.Close() })
+	setting.Targets = []operation_setting.DegradationWatchTarget{{Model: "slow", Group: "default", Enabled: true}, {Model: "fast", Group: "default", Enabled: true}}
+	setting.ChannelAliases = map[string]string{"1": "Public alias"}
+	require.NoError(t, db.AutoMigrate(&model.DegradationWatchRecord{}, &model.SystemTask{}))
+	slow := &model.DegradationWatchRecord{ChannelId: 1, ModelName: "slow", FailureReason: "upstream_error", ErrorDetails: "full private upstream diagnostic", OutputText: "partial output"}
+	require.NoError(t, model.CreateDegradationWatchRecord(slow))
+	for range 12 {
+		require.NoError(t, model.CreateDegradationWatchRecord(&model.DegradationWatchRecord{ChannelId: 1, ModelName: "fast"}))
+	}
+	for _, admin := range []bool{false, true} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/api/degradation_watch/wall?model=slow", nil)
+		if admin {
+			c.Set("role", common.RoleAdminUser)
+		}
+		GetDegradationWatchWall(c)
+		var result struct {
+			Success bool
+			Data    struct {
+				Records []degradationWatchRecordItem `json:"records"`
+			}
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
+		require.True(t, result.Success, w.Body.String())
+		require.Len(t, result.Data.Records, 1)
+		assert.Equal(t, slow.Id, result.Data.Records[0].Id)
+		if admin {
+			assert.Equal(t, string(slow.ErrorDetails), result.Data.Records[0].ErrorDetails)
+		} else {
+			assert.Empty(t, result.Data.Records[0].ErrorDetails)
+			assert.Zero(t, result.Data.Records[0].ChannelId)
+		}
+	}
+	require.NoError(t, model.SetDegradationWatchRecordHidden(slow.Id, true))
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(slow.Id)}}
+	GetDegradationWatchRecord(c)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.NotContains(t, w.Body.String(), "partial output")
 }

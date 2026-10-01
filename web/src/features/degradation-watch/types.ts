@@ -24,6 +24,9 @@ export interface ApiResponse<T = unknown> {
 
 /** One attempt as the wall lists it. The artwork itself is fetched separately. */
 export interface DegradationWatchRecord {
+  status?: 'queued' | 'running' | 'succeeded' | 'failed'
+  error_details?: string
+  tokens_estimated?: boolean
   id: number
   model_name: string
   reasoning_effort: string

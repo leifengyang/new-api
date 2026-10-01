@@ -101,6 +101,9 @@ async function renderSection() {
 beforeEach(() => {
   inventory = structuredClone(catalog)
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/degradation_watch/activity') {
+      return { data: { success: true, data: { task: null, records: [] } } }
+    }
     if (url === '/api/group/') {
       return { data: { success: true, data: ['alpha', 'beta', 'empty'] } }
     }
@@ -409,4 +412,42 @@ test('parameter limits reject out of range values and preserve independently edi
     })
   )
   expect(api.put).toHaveBeenCalledTimes(1)
+})
+
+test('active batch progress is visible and prevents a duplicate run', async () => {
+  const inventoryGet = vi.mocked(api.get).getMockImplementation()
+  if (!inventoryGet) throw new Error('Missing inventory fixture')
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/degradation_watch/activity') {
+      return {
+        data: {
+          success: true,
+          data: {
+            task: { task_id: 'live', status: 'running', error: '' },
+            records: [
+              {
+                id: 1,
+                model_name: 'model-a',
+                channel_title: 'Alpha',
+                status: 'running',
+                success: false,
+                failure_reason: '',
+                created_at: 1000,
+                prompt_tokens: 12,
+                completion_tokens: 34,
+                reasoning_tokens: 0,
+                elapsed_ms: 2000,
+              },
+            ],
+          },
+        },
+      }
+    }
+    return inventoryGet(url, config)
+  })
+  await renderSection()
+  await screen.findByText('Latest detection tasks')
+  expect(screen.getByText('Running')).toBeInTheDocument()
+  expect(screen.getByText('34')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Run all now' })).toBeDisabled()
 })

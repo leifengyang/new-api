@@ -99,6 +99,9 @@ func (degradationWatchHandler) Run(ctx context.Context, task *model.SystemTask, 
 		return
 	}
 	summary, err := runDegradationWatchTask(ctx, task.TaskID, payload, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err == nil && summary.Failed > 0 {
+		err = fmt.Errorf("%d of %d detection jobs failed; see each detection record for details", summary.Failed, summary.Tested)
+	}
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -162,20 +165,41 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 		return summary, err
 	}
 	jobs := selectDegradationWatchJobs(channels, operation_setting.ResolveDegradationWatchTargets(), payload)
-	if (payload.ChannelId > 0 || payload.Model != "") && len(jobs) == 0 {
+	if len(jobs) == 0 {
 		return summary, fmt.Errorf("no eligible channel for model %q, channel %d: check the target, its group and the channel's models", payload.Model, payload.ChannelId)
 	}
 
-	var (
-		mu        sync.Mutex
-		wg        sync.WaitGroup
-		processed int
-	)
+	records := make([]*model.DegradationWatchRecord, len(jobs))
+	for i, job := range jobs {
+		records[i] = &model.DegradationWatchRecord{RunId: runId, ChannelId: job.channel.Id, ModelName: job.target.Model, ReasoningEffort: job.target.ReasoningEffort, Status: "queued", TokensEstimated: true}
+		if err := model.CreateDegradationWatchRecord(records[i]); err != nil {
+			for _, created := range records[:i] {
+				created.FailureReason = "interrupted"
+				created.ErrorDetails = model.LongText(err.Error())
+				_ = model.FinishDegradationWatchRecord(created)
+			}
+			return summary, err
+		}
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			for _, record := range records {
+				failed := &model.DegradationWatchRecord{Id: record.Id, FailureReason: "interrupted", ErrorDetails: model.LongText(ctx.Err().Error())}
+				if err := model.FinishDegradationWatchRecord(failed); err != nil {
+					common.SysError(fmt.Sprintf("degradation watch interruption: %v", err))
+				}
+			}
+		}
+	}()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var saveErr error
+	processed := 0
 	sem := make(chan struct{}, params.Concurrency)
 	if report != nil {
 		report(0, len(jobs))
 	}
-	for _, job := range jobs {
+	for i, job := range jobs {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
@@ -183,22 +207,36 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 		if ctx.Err() != nil {
 			break
 		}
+		queued := records[i]
 		wg.Go(func() {
 			defer func() { <-sem }()
-			// 超时按单次请求计：排在后面的请求不该因为前面的请求慢而被判失败。
 			requestCtx, cancel := context.WithTimeout(ctx, time.Duration(params.TimeoutSeconds)*time.Second)
 			defer cancel()
-			record := drawDegradationWatch(requestCtx, job.channel, testUserID, job.target.Model, job.target.ReasoningEffort, prompt)
-			// 父 ctx 被取消说明租约丢了，这一轮不作数；只有撞上单次时限才记成超时失败。
+			progress := func(record *model.DegradationWatchRecord) {
+				record.Id, record.Status = queued.Id, "running"
+				if err := model.UpdateDegradationWatchProgress(record); err != nil {
+					mu.Lock()
+					saveErr = err
+					mu.Unlock()
+					cancel()
+				}
+			}
+			progress(&model.DegradationWatchRecord{TokensEstimated: true})
+			// Adaptors receive an isolated request context and channel value for each model.
+			channel := *job.channel
+			record := drawDegradationWatch(requestCtx, &channel, testUserID, job.target.Model, job.target.ReasoningEffort, prompt, progress)
+			record.Id, record.RunId, record.CreatedAt = queued.Id, runId, queued.CreatedAt
 			if ctx.Err() != nil {
-				return
+				record.Success = false
+				record.FailureReason = "interrupted"
+				record.ErrorDetails = model.LongText(ctx.Err().Error())
 			}
-			record.RunId = runId
-			if err := model.CreateDegradationWatchRecord(record); err != nil {
-				common.SysError(fmt.Sprintf("degradation watch: failed to save record for channel %d model %s: %v", job.channel.Id, job.target.Model, err))
-			}
+			err := model.FinishDegradationWatchRecord(record)
 			mu.Lock()
 			defer mu.Unlock()
+			if err != nil {
+				saveErr = err
+			}
 			summary.Tested++
 			if record.Success {
 				summary.Succeeded++
@@ -212,6 +250,12 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 		})
 	}
 	wg.Wait()
+	if saveErr != nil {
+		return summary, saveErr
+	}
+	if ctx.Err() != nil {
+		return summary, ctx.Err()
+	}
 
 	// 裁剪覆盖表里出现过的所有「渠道 + 模型」：移出配置的也不能无限留着旧作品。
 	series, err := model.GetDegradationWatchRecordedSeries()
@@ -231,28 +275,37 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 // drawDegradationWatch 直连渠道发一次绘图请求。流程照抄 testChannel 的合成上下文，
 // 但刻意不做 settleTestQuota / RecordConsumeLog：检测不扣任何人的额度，也不进
 // 使用日志。一律走流式，长时间推理时非流式请求容易被中间代理掐断。
-func drawDegradationWatch(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string) *model.DegradationWatchRecord {
-	record := &model.DegradationWatchRecord{
+func drawDegradationWatch(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, progress ...func(*model.DegradationWatchRecord)) (record *model.DegradationWatchRecord) {
+	record = &model.DegradationWatchRecord{
 		ChannelId:       channel.Id,
 		ModelName:       modelName,
 		ReasoningEffort: effort,
 	}
 	tik := time.Now()
-	text, usage, err := requestDegradationWatchDrawing(ctx, channel, testUserID, modelName, effort, prompt)
-	record.ElapsedMs = time.Since(tik).Milliseconds()
-	if usage != nil {
-		record.PromptTokens = usage.PromptTokens
-		record.CompletionTokens = usage.CompletionTokens
-		record.ReasoningTokens = usage.CompletionTokenDetails.ReasoningTokens
-		if usage.OutputTokensDetails != nil && usage.OutputTokensDetails.ReasoningTokens > record.ReasoningTokens {
-			record.ReasoningTokens = usage.OutputTokensDetails.ReasoningTokens
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			record.Success = false
+			record.FailureReason = "upstream_error"
+			record.ErrorDetails = model.LongText(redactDegradationWatchError(fmt.Sprintf("Detection panic: %v", recovered), channel))
+			record.ElapsedMs = time.Since(tik).Milliseconds()
 		}
-	}
+	}()
+	record.TokensEstimated = true
+	text, _, err := requestDegradationWatchDrawing(ctx, channel, testUserID, modelName, effort, prompt, func(snapshot *model.DegradationWatchRecord) {
+		record.PromptTokens, record.CompletionTokens, record.ReasoningTokens = snapshot.PromptTokens, snapshot.CompletionTokens, snapshot.ReasoningTokens
+		record.TokensEstimated = snapshot.TokensEstimated
+		if len(progress) > 0 {
+			progress[0](snapshot)
+		}
+	})
+	record.ElapsedMs = time.Since(tik).Milliseconds()
+	record.OutputText = model.LongText(text)
 	if err != nil {
+		record.ErrorDetails = model.LongText(redactDegradationWatchError(err.Error(), channel))
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			record.FailureReason = degradationWatchReasonTimeout
 		} else {
-			record.FailureReason = err.Error()
+			record.FailureReason = redactDegradationWatchError(err.Error(), channel)
 		}
 		return record
 	}
@@ -266,7 +319,7 @@ func drawDegradationWatch(ctx context.Context, channel *model.Channel, testUserI
 	return record
 }
 
-func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string) (string, *dto.Usage, error) {
+func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, progress ...func(*model.DegradationWatchRecord)) (string, *dto.Usage, error) {
 	useResponses := normalizeChannelTestEndpoint(channel, "") == string(constant.EndpointTypeOpenAIResponse)
 	requestPath := "/v1/chat/completions"
 	relayFormat := types.RelayFormatOpenAI
@@ -275,7 +328,7 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 		relayFormat = types.RelayFormatOpenAIResponses
 	}
 
-	w := httptest.NewRecorder()
+	w := &degradationWatchStreamRecorder{ResponseRecorder: httptest.NewRecorder()}
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -288,8 +341,7 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 	c.Set("id", testUserID)
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
-	group, _ := model.GetUserGroup(testUserID, false)
-	c.Set("group", group)
+	c.Set("group", userCache.Group)
 
 	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
 		return "", nil, apiErr
@@ -325,6 +377,8 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 		return "", nil, err
 	}
 	info.IsChannelTest = true
+	info.ShouldIncludeUsage = true
+	info.SetEstimatePromptTokens(service.CountTextToken(prompt, modelName))
 	info.InitChannelMeta(c)
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return "", nil, err
@@ -362,6 +416,40 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 		}
 	}
 
+	started := time.Now()
+	raw := &degradationWatchStreamRecorder{ResponseRecorder: httptest.NewRecorder()}
+	done := make(chan struct{})
+	var updates sync.WaitGroup
+	if len(progress) > 0 {
+		updates.Go(func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					snapshot := degradationWatchProgress(w.snapshot(), prompt, modelName)
+					snapshot.ElapsedMs = time.Since(started).Milliseconds()
+					progress[0](&snapshot)
+				}
+			}
+		})
+	}
+	defer func() {
+		close(done)
+		updates.Wait()
+		if len(progress) > 0 {
+			snapshot := degradationWatchProgress(w.snapshot(), prompt, modelName)
+			upstream := degradationWatchProgress(raw.snapshot(), prompt, modelName)
+			snapshot.TokensEstimated = upstream.TokensEstimated
+			if !upstream.TokensEstimated {
+				snapshot.PromptTokens, snapshot.CompletionTokens, snapshot.ReasoningTokens = upstream.PromptTokens, upstream.CompletionTokens, upstream.ReasoningTokens
+			}
+			snapshot.ElapsedMs = time.Since(started).Milliseconds()
+			progress[0](&snapshot)
+		}
+	}()
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	resp, err := adaptor.DoRequest(c, info, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -371,23 +459,35 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
-			return "", nil, service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+			body, readErr := io.ReadAll(httpResp.Body)
+			_ = httpResp.Body.Close()
+			if readErr != nil {
+				return "", nil, fmt.Errorf("upstream HTTP %d: %w\n%s", httpResp.StatusCode, readErr, body)
+			}
+			return "", nil, fmt.Errorf("upstream HTTP %d\n%s", httpResp.StatusCode, body)
 		}
+		httpResp.Body = &degradationWatchResponseBody{ReadCloser: httpResp.Body, recorder: raw}
 	}
 	usageAny, respErr := adaptor.DoResponse(c, httpResp, info)
-	if respErr != nil {
-		return "", nil, respErr
-	}
+	body := w.snapshot()
+	text := collectDegradationWatchStreamText(body)
 	usage, _ := coerceTestUsage(usageAny, true, info.GetEstimatePromptTokens())
-
-	body, err := io.ReadAll(w.Result().Body)
-	if err != nil {
-		return "", usage, err
+	if respErr != nil {
+		return text, usage, fmt.Errorf("%s\n%s", respErr.ErrorWithStatusCode(), raw.snapshot())
 	}
 	if bodyErr := detectErrorFromTestResponseBody(body); bodyErr != nil {
-		return "", usage, bodyErr
+		return text, usage, fmt.Errorf("%w\n%s", bodyErr, body)
 	}
-	return collectDegradationWatchStreamText(body), usage, nil
+	if ctx.Err() != nil {
+		return text, usage, ctx.Err()
+	}
+	if info.StreamStatus != nil {
+		outcome := info.StreamStatus.OutcomeSnapshot()
+		if !info.StreamStatus.IsNormalEnd() || outcome.HasErrors || (outcome.ExpectsTerminal && outcome.Response == relaycommon.ResponseOutcomeUnknown) || outcome.Response == relaycommon.ResponseOutcomeFailed || outcome.Response == relaycommon.ResponseOutcomeIncomplete || outcome.Response == relaycommon.ResponseOutcomeCancelled {
+			return text, usage, fmt.Errorf("upstream stream failed: %s; outcome=%s; reason=%s\n%s", info.StreamStatus.Summary(), outcome.Response, outcome.IncompleteReason, raw.snapshot())
+		}
+	}
+	return text, usage, nil
 }
 
 // collectDegradationWatchStreamText 把 SSE 里的正文增量拼回整段文本，兼容
@@ -401,7 +501,7 @@ func collectDegradationWatchStreamText(body []byte) string {
 			continue
 		}
 		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) || !gjson.ValidBytes(payload) {
 			continue
 		}
 		event := gjson.ParseBytes(payload)
@@ -472,6 +572,9 @@ type degradationWatchRecordItem struct {
 	ChannelId        int    `json:"channel_id,omitempty"`
 	Success          bool   `json:"success"`
 	FailureReason    string `json:"failure_reason"`
+	Status           string `json:"status"`
+	ErrorDetails     string `json:"error_details,omitempty"`
+	TokensEstimated  bool   `json:"tokens_estimated"`
 	ElapsedMs        int64  `json:"elapsed_ms"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
@@ -494,6 +597,8 @@ func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bo
 		Aliased:          aliased,
 		Success:          record.Success,
 		FailureReason:    reason,
+		Status:           record.Status,
+		TokensEstimated:  record.TokensEstimated,
 		ElapsedMs:        record.ElapsedMs,
 		PromptTokens:     record.PromptTokens,
 		CompletionTokens: record.CompletionTokens,
@@ -502,12 +607,19 @@ func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bo
 		CreatedAt:        record.CreatedAt,
 	}
 	if admin {
+		item.ErrorDetails = string(record.ErrorDetails)
 		item.ChannelId = record.ChannelId
 		if !aliased {
 			item.ChannelTitle = fmt.Sprintf("#%d", record.ChannelId)
 			if channel, err := model.CacheGetChannel(record.ChannelId); err == nil && channel != nil && channel.Name != "" {
 				item.ChannelTitle = channel.Name
 			}
+		}
+	}
+	if item.Status == "" {
+		item.Status = "failed"
+		if item.Success {
+			item.Status = "succeeded"
 		}
 	}
 	return item
@@ -692,9 +804,49 @@ func parseDegradationWatchRounds(c *gin.Context) int {
 // GetDegradationWatchWall 返回检测墙的一页轮次。before 是上一页返回的
 // next_before，普通用户全程拿不到渠道 id。泳道只在第一页返回。
 func GetDegradationWatchWall(c *gin.Context) {
+	if c.Query("model") == "" {
+		if err := model.FailInterruptedDegradationWatchRecords(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	visibility := newDegradationWatchVisibility(c)
 	beforeId, _ := strconv.Atoi(c.Query("before"))
 	beforeId = max(beforeId, 0)
+	if c.Query("catalog") == "true" {
+		lanes, err := buildDegradationWatchLanes(visibility)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, gin.H{"enabled": operation_setting.GetDegradationWatchSetting().Enabled, "interval_minutes": operation_setting.ResolveDegradationWatchParams().IntervalMinutes, "lanes": lanes, "rounds": []any{}, "next_before": 0})
+		return
+	}
+	if modelName := c.Query("model"); modelName != "" {
+		filter := visibility.filter()
+		if filter.ModelNames == nil || slices.Contains(filter.ModelNames, modelName) {
+			filter.ModelNames = []string{modelName}
+		} else {
+			filter.ModelNames = []string{}
+		}
+		limit := parseDegradationWatchRounds(c)
+		records, err := model.ListDegradationWatchRecordsBefore(filter, beforeId, limit+1)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		next := 0
+		if len(records) > limit {
+			records = records[:limit]
+			next = records[limit-1].Id
+		}
+		items := make([]degradationWatchRecordItem, 0, len(records))
+		for _, record := range records {
+			items = append(items, toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases))
+		}
+		common.ApiSuccess(c, gin.H{"records": items, "next_before": next})
+		return
+	}
 
 	rounds, nextBefore, err := listDegradationWatchRounds(visibility.filter(), beforeId, parseDegradationWatchRounds(c))
 	if err != nil {
@@ -748,6 +900,49 @@ func GetDegradationWatchRecordHtml(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"html": html})
+}
+
+// Detail polling uses the same visibility policy as artwork retrieval.
+func GetDegradationWatchRecord(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorMsg(c, "invalid id")
+		return
+	}
+	visibility := newDegradationWatchVisibility(c)
+	record, err := model.GetDegradationWatchRecordMeta(id)
+	if err != nil || !visibility.canView(record) {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "record not found"})
+		return
+	}
+	output, err := model.GetDegradationWatchOutput(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output})
+}
+
+func GetDegradationWatchActivity(c *gin.Context) {
+	if err := model.FailInterruptedDegradationWatchRecords(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	task, records, err := model.GetDegradationWatchActivity()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	items := make([]degradationWatchRecordItem, 0, len(records))
+	aliases := operation_setting.GetDegradationWatchChannelAliases()
+	for _, record := range records {
+		items = append(items, toDegradationWatchRecordItem(record, true, aliases))
+	}
+	var taskInfo any
+	if task != nil {
+		taskInfo = gin.H{"task_id": task.TaskID, "status": task.Status, "error": task.Error}
+	}
+	common.ApiSuccess(c, gin.H{"task": taskInfo, "records": items})
 }
 
 type degradationWatchPromptTarget struct {
