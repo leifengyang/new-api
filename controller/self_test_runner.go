@@ -372,12 +372,22 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 	if runErr != nil {
 		return
 	}
-	html, reason := extractDegradationWatchHtml(string(attempt.Output))
-	if reason != "" {
-		runErr = fmt.Errorf("invalid artwork: %s", reason)
+	output := string(attempt.Output)
+	if strings.TrimSpace(output) == "" {
+		runErr = errors.New("no output in upstream response")
 		return
 	}
-	attempt.HTML = model.LongText(html)
+	// Self-tests accept arbitrary prompts. HTML is an optional preview, not a
+	// success requirement, and does not need the detection wall's SVG artwork.
+	lower := strings.ToLower(output)
+	start := strings.Index(lower, "<!doctype html")
+	if start < 0 {
+		start = strings.Index(lower, "<html")
+	}
+	end := strings.LastIndex(lower, "</html>")
+	if start >= 0 && end >= start {
+		attempt.HTML = model.LongText(output[start : end+len("</html>")])
+	}
 }
 
 func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt string, started time.Time) {

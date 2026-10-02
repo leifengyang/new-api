@@ -141,6 +141,8 @@ export function RecordMeta(props: RecordMetaProps) {
 interface RecordCardProps {
   record: DegradationWatchRecord
   localHtml?: string
+  /** Full self-test output, used when no HTML preview is available. */
+  localOutput?: string
   /** Channel label shown above the meta; the wall passes the alias. */
   title?: string
   /** Thumbnail mode for cells holding several channels: title only, no meta. */
@@ -148,6 +150,43 @@ interface RecordCardProps {
   /** Align artwork, running and failure stages in side-by-side comparisons. */
   previewClassName?: string
   onOpen: (record: DegradationWatchRecord) => void
+}
+
+export function TextOutputPreview(props: {
+  output: string
+  error?: string
+  title?: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className='bg-muted/30 flex size-full min-h-0 flex-col text-left'>
+      <div className='flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-3 py-2'>
+        <span className='text-muted-foreground text-xs font-medium'>
+          {props.title ?? t('Text Output')}
+        </span>
+        {props.output && (
+          <CopyButton
+            value={props.output}
+            variant='outline'
+            size='sm'
+            aria-label={t('Copy full output')}
+          >
+            {t('Copy full output')}
+          </CopyButton>
+        )}
+      </div>
+      <div className='min-h-0 flex-1 overflow-auto p-3'>
+        {props.error && (
+          <pre className='mb-3 rounded-md bg-rose-500/10 p-2 text-xs leading-relaxed break-all whitespace-pre-wrap text-rose-700 dark:text-rose-300'>
+            {props.error}
+          </pre>
+        )}
+        <pre className='text-xs leading-relaxed break-all whitespace-pre-wrap'>
+          {props.output || t('Waiting for output')}
+        </pre>
+      </div>
+    </div>
+  )
 }
 
 export function RecordUsage(props: { record: DegradationWatchRecord }) {
@@ -230,6 +269,8 @@ export function RecordCard(props: RecordCardProps) {
   }
   const error = record.error_details || record.failure_reason
   const label = failureReasonLabel(error)
+  const errorText = label ? t(label) : error
+  const showText = !active && !props.localHtml && Boolean(props.localOutput)
   return (
     <article
       className={cn(
@@ -246,7 +287,20 @@ export function RecordCard(props: RecordCardProps) {
           {status}
         </Badge>
       </div>
-      {record.success && (
+      {showText && (
+        <div
+          className={cn(
+            'm-3 mb-0 h-64 overflow-hidden rounded-lg border',
+            props.previewClassName
+          )}
+        >
+          <TextOutputPreview
+            output={props.localOutput ?? ''}
+            error={record.success ? undefined : errorText}
+          />
+        </div>
+      )}
+      {record.success && !showText && (
         <Button
           variant='ghost'
           className={cn(
@@ -272,7 +326,7 @@ export function RecordCard(props: RecordCardProps) {
             : t('Receiving model output...')}
         </div>
       )}
-      {!active && !record.success && (
+      {!active && !record.success && !showText && (
         <div
           className={cn(
             'mx-3 mt-3 rounded-lg border border-rose-500/15 bg-rose-500/5',

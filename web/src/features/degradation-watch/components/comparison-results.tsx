@@ -21,7 +21,6 @@ import { Activity, Clock3, RotateCcw, Square } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CopyButton } from '@/components/copy-button'
 import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -37,7 +36,7 @@ import {
   type ComparisonAttempt,
 } from '../lib/comparison'
 import { ArtworkPlayerDialog } from './artwork-player-dialog'
-import { RecordCard } from './record-card'
+import { RecordCard, TextOutputPreview } from './record-card'
 
 export function ComparisonResult(props: {
   latest: ComparisonAttempt
@@ -60,8 +59,8 @@ export function ComparisonResult(props: {
     queryKey: ['self-test', userID, 'attempt', attempt.id, attempt.status],
     queryFn: () =>
       comparisonRequest<ComparisonAttempt>(`/attempts/${attempt.id}`),
-    enabled: inView && (expanded || player || attempt.status === 'succeeded'),
-    refetchInterval: active && expanded ? 1000 : false,
+    enabled: player || (inView && (expanded || !active)),
+    refetchInterval: active && (expanded || player) ? 1000 : false,
   })
   const record = comparisonRecord(attempt)
   return (
@@ -88,6 +87,7 @@ export function ComparisonResult(props: {
         previewClassName='h-64 min-h-64 overflow-auto'
         title={attempt.model}
         localHtml={detail.data?.html ?? ''}
+        localOutput={detail.data?.output}
         onOpen={() => setPlayer(true)}
       />
       {detail.isError && (
@@ -167,14 +167,11 @@ export function ComparisonResult(props: {
         </NativeSelect>
       )}
       {expanded && (
-        <div className='bg-muted/50 rounded-lg border p-3'>
-          <div className='mb-2 flex justify-between text-xs'>
-            <span>{t('Live output')}</span>
-            <CopyButton value={detail.data?.output ?? ''} />
-          </div>
-          <pre className='max-h-80 overflow-auto text-xs leading-relaxed break-all whitespace-pre-wrap'>
-            {detail.data?.output || t('Waiting for output')}
-          </pre>
+        <div className='h-80 overflow-hidden rounded-lg border'>
+          <TextOutputPreview
+            output={detail.data?.output ?? ''}
+            title={t('Live output')}
+          />
         </div>
       )}
       <ArtworkPlayerDialog
@@ -182,6 +179,7 @@ export function ComparisonResult(props: {
         onOpenChange={setPlayer}
         title={`${attempt.name} · ${attempt.model}`}
         html={detail.data?.html}
+        output={detail.data?.output}
         loading={detail.isLoading}
         loadError={detail.isError}
         failureReason={

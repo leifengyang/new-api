@@ -33,7 +33,12 @@ import {
 } from '../hooks/use-degradation-watch'
 import type { DegradationWatchRecord } from '../types'
 import { ArtworkFrame } from './artwork-frame'
-import { FailurePreview, RecordMeta, RecordUsage } from './record-card'
+import {
+  FailurePreview,
+  RecordMeta,
+  RecordUsage,
+  TextOutputPreview,
+} from './record-card'
 
 interface ArtworkPlayerDialogProps {
   open: boolean
@@ -41,6 +46,7 @@ interface ArtworkPlayerDialogProps {
   title: string
   meta: ReactNode
   html?: string
+  output?: string
   loading?: boolean
   loadError?: boolean
   /** Set for a failed attempt; the stage then shows the reason instead. */
@@ -54,7 +60,11 @@ export function ArtworkPlayerDialog(props: ArtworkPlayerDialogProps) {
   const [showSource, setShowSource] = useState(false)
 
   let stage: ReactNode = null
-  if (props.failureReason !== undefined) {
+  if (props.output && (!props.html || props.failureReason !== undefined)) {
+    stage = (
+      <TextOutputPreview output={props.output} error={props.failureReason} />
+    )
+  } else if (props.failureReason !== undefined) {
     stage = <FailurePreview reason={props.failureReason} />
   } else if (props.loading) {
     stage = <LoadingState className='size-full min-h-0' />
@@ -75,7 +85,7 @@ export function ArtworkPlayerDialog(props: ArtworkPlayerDialogProps) {
   }
 
   const canToggleSource =
-    props.failureReason === undefined && props.html !== undefined
+    props.failureReason === undefined && Boolean(props.html)
 
   return (
     <Dialog

@@ -17,10 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 
+import { ComparisonResult } from '../components/comparison-results'
 import { SelfTestPanel } from '../components/self-test-panel'
+import { useInViewport } from '../hooks/use-degradation-watch'
 import {
   comparisonRequest,
   latestComparisonAttempts,
@@ -36,13 +45,129 @@ vi.mock('../hooks/use-degradation-watch', () => ({
   useDegradationWatchPrompt: () => ({
     data: { prompt: 'Draw an SVG bird', targets: [{ model: 'test-model' }] },
   }),
-  useInViewport: () => ({ ref: { current: null }, inView: false }),
+  useInViewport: vi.fn(() => ({ ref: { current: null }, inView: false })),
   useRecordHtml: () => ({}),
 }))
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(useInViewport).mockReturnValue({
+    ref: { current: null },
+    inView: false,
+  })
   localStorage.clear()
+})
+
+function renderResult(overrides: Partial<ComparisonAttempt>) {
+  const attempt: ComparisonAttempt = {
+    id: 1,
+    round_id: 12,
+    group_index: 0,
+    attempt: 1,
+    profile_id: 0,
+    name: 'Test group',
+    base_url: 'https://example.com/v1',
+    model: 'test-model',
+    protocol: 'chat',
+    effort: 'medium',
+    status: 'succeeded',
+    output: '',
+    html: '',
+    error: '',
+    input_tokens: 12,
+    output_tokens: 6,
+    reasoning_tokens: 0,
+    tokens_estimated: false,
+    elapsed_ms: 2000,
+    first_token_ms: 100,
+    created_at: 1000,
+    started_at: 1000,
+    ...overrides,
+  }
+  vi.mocked(comparisonRequest).mockResolvedValue(attempt)
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={client}>
+      <ComparisonResult
+        latest={{ ...attempt, output: '', html: '' }}
+        attempts={[]}
+        busy={false}
+        onRetry={vi.fn()}
+        onStop={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+}
+
+test.each([
+  '',
+  'invalid artwork: no_html',
+  'invalid artwork: no_svg',
+  'upstream stream ended before completion',
+])(
+  'previews and copies full raw output, preserving diagnostics: %s',
+  async (error) => {
+    const user = userEvent.setup()
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    vi.mocked(useInViewport).mockReturnValue({
+      ref: { current: null },
+      inView: true,
+    })
+    const output = `# Result\n${'Long output line\n'.repeat(100)}<script>alert(1)</script>\nFinal line`
+    const { container } = renderResult({
+      output,
+      error,
+      status: error ? 'failed' : 'succeeded',
+    })
+    await user.click(
+      await screen.findByRole('button', { name: 'Copy full output' })
+    )
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(output))
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.querySelector('iframe')).toBeNull()
+    expect(container.querySelector('pre:last-child')?.textContent).toBe(output)
+    if (error) expect(screen.getByText(error)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Details' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('pre:last-child')?.textContent).toBe(output)
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Copy full output' })
+    )
+    expect(copy).toHaveBeenLastCalledWith(output)
+    expect(
+      within(dialog).queryByRole('button', { name: 'View source' })
+    ).toBeNull()
+  }
+)
+
+test('keeps complete HTML in the sandboxed artwork preview', async () => {
+  vi.mocked(useInViewport).mockReturnValue({
+    ref: { current: null },
+    inView: true,
+  })
+  const html = '<!DOCTYPE html><html><body>HTML without SVG</body></html>'
+  renderResult({ output: `\`\`\`html\n${html}\n\`\`\``, html })
+  await waitFor(() =>
+    expect(screen.getByTitle('test-model')).toHaveAttribute(
+      'srcdoc',
+      expect.stringContaining('HTML without SVG')
+    )
+  )
+  expect(screen.queryByRole('button', { name: 'Copy full output' })).toBeNull()
+})
+
+test('opening details loads full output even when the card is outside the viewport', async () => {
+  renderResult({ output: 'Offscreen output' })
+  expect(comparisonRequest).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  expect(
+    await within(await screen.findByRole('dialog')).findByText(
+      'Offscreen output'
+    )
+  ).toBeInTheDocument()
+  expect(comparisonRequest).toHaveBeenCalledWith('/attempts/1')
 })
 
 function renderPanel() {
