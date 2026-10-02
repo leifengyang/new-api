@@ -303,6 +303,62 @@ func TestSelfTestProtocolsAndTerminalState(t *testing.T) {
 	})
 }
 
+func TestSelfTestOptionalHTMLPreview(t *testing.T) {
+	db := selfTestDB(t, "sqlite")
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	for _, tc := range []struct {
+		name, protocol, output, html string
+		stream                       bool
+	}{
+		{"plain-chat", "chat", "Answer: 42\nFinal line", "", true},
+		{"markdown-responses", "responses", "# Answer\n\n**42**\nFinal line", "", true},
+		{"json-chat", "chat", `{"answer":42}`, "", false},
+		{"html-without-svg", "responses", "```html\n<!DOCTYPE html><html><body>42</body></html>\n```", "<!DOCTYPE html><html><body>42</body></html>", false},
+		{"incomplete-html", "chat", "<html><body>partial", "", true},
+		{"empty", "chat", " \n\t", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			round, attempts := selfTestFixture(t, 1)
+			attempt := attempts[0]
+			attempt.Protocol = tc.protocol
+			secret, err := service.EncryptSelfTestKey(1, attempt.BaseURL+":"+tc.protocol, "sk-private-test")
+			require.NoError(t, err)
+			attempt.Secret = model.LongText(secret)
+			require.NoError(t, db.Model(&attempt).Updates(map[string]any{"status": "running", "runner": "test-runner"}).Error)
+			text, err := common.Marshal(tc.output)
+			require.NoError(t, err)
+			body := fmt.Sprintf(`{"choices":[{"message":{"content":%s}}]}`, text)
+			if tc.protocol == "responses" {
+				body = fmt.Sprintf(`{"output":[{"content":[{"type":"output_text","text":%s}]}]}`, text)
+			}
+			contentType := "application/json"
+			if tc.stream {
+				contentType = "text/event-stream"
+				body = fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%s}}]}\n\ndata: [DONE]\n\n", text)
+				if tc.protocol == "responses" {
+					body = fmt.Sprintf("data: {\"type\":\"response.output_text.delta\",\"delta\":%s}\n\ndata: {\"type\":\"response.completed\"}\n\n", text)
+				}
+			}
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			runSelfTestAttempt(context.Background(), round, attempt, "test-runner")
+			var result model.SelfTestAttempt
+			require.NoError(t, db.First(&result, attempt.ID).Error)
+			assert.Equal(t, tc.output, string(result.Output))
+			assert.Equal(t, tc.html, string(result.HTML))
+			if strings.TrimSpace(tc.output) == "" {
+				assert.Equal(t, "failed", result.Status)
+				assert.Contains(t, string(result.Error), "no output")
+			} else {
+				assert.Equal(t, "succeeded", result.Status)
+				assert.Empty(t, result.Error)
+			}
+		})
+	}
+}
+
 func TestSelfTestQueueConcurrencyAndTimeout(t *testing.T) {
 	db := selfTestDB(t, "sqlite")
 	oldClient := selfTestClient
