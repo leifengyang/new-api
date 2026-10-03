@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   CircleX,
   Activity,
+  ChevronRight,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -149,6 +150,7 @@ interface RecordCardProps {
   compact?: boolean
   /** Align artwork, running and failure stages in side-by-side comparisons. */
   previewClassName?: string
+  onInputClick?: () => void
   onOpen: (record: DegradationWatchRecord) => void
 }
 
@@ -156,6 +158,7 @@ export function TextOutputPreview(props: {
   output: string
   error?: string
   title?: string
+  copyLabel?: string
 }) {
   const { t } = useTranslation()
   return (
@@ -169,9 +172,9 @@ export function TextOutputPreview(props: {
             value={props.output}
             variant='outline'
             size='sm'
-            aria-label={t('Copy full output')}
+            aria-label={props.copyLabel ?? t('Copy full output')}
           >
-            {t('Copy full output')}
+            {props.copyLabel ?? t('Copy full output')}
           </CopyButton>
         )}
       </div>
@@ -189,7 +192,10 @@ export function TextOutputPreview(props: {
   )
 }
 
-export function RecordUsage(props: { record: DegradationWatchRecord }) {
+export function RecordUsage(props: {
+  record: DegradationWatchRecord
+  onInputClick?: () => void
+}) {
   const { t, i18n } = useTranslation()
   const record = props.record
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -197,18 +203,36 @@ export function RecordUsage(props: { record: DegradationWatchRecord }) {
     record.elapsed_ms > 0
       ? record.completion_tokens / (record.elapsed_ms / 1000)
       : 0
+  const inputContent = (
+    <>
+      <span className='flex w-full items-center gap-1 text-[11px]'>
+        <ArrowDown className='size-3' />
+        {t('Input tokens')}
+        {props.onInputClick && <ChevronRight className='ml-auto size-3' />}
+      </span>
+      <span className='mt-0.5 block text-lg font-semibold'>
+        {formatNumber(record.prompt_tokens, locale)}
+      </span>
+    </>
+  )
   return (
     <div className='flex flex-col gap-2 tabular-nums'>
       <div className='grid grid-cols-2 gap-2'>
-        <div className='rounded-lg bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300'>
-          <div className='flex items-center gap-1 text-[11px]'>
-            <ArrowDown className='size-3' />
-            {t('Input tokens')}
+        {props.onInputClick ? (
+          <Button
+            variant='ghost'
+            className='h-auto min-w-0 flex-col items-start gap-0 rounded-lg bg-emerald-500/10 px-3 py-2 text-left text-emerald-700 hover:bg-emerald-500/20 hover:text-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-200'
+            aria-label={t('View input details')}
+            aria-haspopup='dialog'
+            onClick={props.onInputClick}
+          >
+            {inputContent}
+          </Button>
+        ) : (
+          <div className='rounded-lg bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300'>
+            {inputContent}
           </div>
-          <div className='mt-0.5 text-lg font-semibold'>
-            {formatNumber(record.prompt_tokens, locale)}
-          </div>
-        </div>
+        )}
         <div className='rounded-lg bg-violet-500/10 px-3 py-2 text-violet-700 dark:text-violet-300'>
           <div className='flex items-center gap-1 text-[11px]'>
             <ArrowUp className='size-3' />
@@ -347,7 +371,7 @@ export function RecordCard(props: RecordCardProps) {
         </div>
       )}
       <div className='flex flex-col gap-3 p-3'>
-        <RecordUsage record={record} />
+        <RecordUsage record={record} onInputClick={props.onInputClick} />
         <div className='text-muted-foreground flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-[11px]'>
           <span>{formatTimestampToDate(record.created_at)}</span>
           <span>{record.reasoning_effort || '-'}</span>

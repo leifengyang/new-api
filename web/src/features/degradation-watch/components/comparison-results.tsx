@@ -36,9 +36,11 @@ import {
   type ComparisonAttempt,
 } from '../lib/comparison'
 import { ArtworkPlayerDialog } from './artwork-player-dialog'
+import { InputDetailsDialog } from './input-details-dialog'
 import { RecordCard, TextOutputPreview } from './record-card'
 
 export function ComparisonResult(props: {
+  prompt: string
   latest: ComparisonAttempt
   attempts: ComparisonAttempt[]
   busy: boolean
@@ -51,6 +53,7 @@ export function ComparisonResult(props: {
   const [selected, setSelected] = useState<number | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [player, setPlayer] = useState(false)
+  const [inputOpen, setInputOpen] = useState(false)
   const latest = props.latest
   const attempt = props.attempts.find((item) => item.id === selected) ?? latest
   const active = attempt.status === 'queued' || attempt.status === 'running'
@@ -89,6 +92,7 @@ export function ComparisonResult(props: {
         localHtml={detail.data?.html ?? ''}
         localOutput={detail.data?.output}
         onOpen={() => setPlayer(true)}
+        onInputClick={() => setInputOpen(true)}
       />
       {detail.isError && (
         <ErrorState
@@ -174,6 +178,13 @@ export function ComparisonResult(props: {
           />
         </div>
       )}
+      <InputDetailsDialog
+        key={attempt.id}
+        open={inputOpen}
+        onOpenChange={setInputOpen}
+        attempt={attempt}
+        prompt={props.prompt}
+      />
       <ArtworkPlayerDialog
         open={player}
         onOpenChange={setPlayer}
