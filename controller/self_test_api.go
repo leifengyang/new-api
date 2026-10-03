@@ -68,8 +68,11 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 			return nil, nil, err
 		}
 		input.Name, input.Model = strings.TrimSpace(input.Name), strings.TrimSpace(input.Model)
-		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses"}, input.Protocol) || !slices.Contains([]string{"", "none", "minimal", "low", "medium", "high", "xhigh"}, input.Effort) || len(input.APIKey) > 8192 {
+		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses", "anthropic"}, input.Protocol) || !slices.Contains([]string{"", "none", "minimal", "low", "medium", "high", "xhigh"}, input.Effort) || len(input.APIKey) > 8192 {
 			return nil, nil, errors.New("invalid group name, model, protocol, reasoning effort or key")
+		}
+		if input.Protocol == "anthropic" && input.Effort != "" {
+			return nil, nil, errors.New("Anthropic self-tests use model-default thinking; leave reasoning effort empty")
 		}
 		key := strings.TrimSpace(input.APIKey)
 		if key == "" {
@@ -272,7 +275,7 @@ func FetchSelfTestModels(c *gin.Context) {
 		selfTestResponse(c, nil, err)
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	setSelfTestAuthentication(req, input.Protocol, key)
 	res, err := selfTestClient.Do(req)
 	if err != nil {
 		selfTestResponse(c, nil, errors.New(service.RedactSelfTestSecret(err.Error(), key)))

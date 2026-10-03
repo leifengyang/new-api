@@ -535,6 +535,7 @@
     "Answers for common access and billing questions": "Ответы на частые вопросы о доступе и оплате",
     "Anthropic": "Anthropic",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages в OpenAI Chat",
+    "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic использует настройки мышления модели по умолчанию с лимитом вывода 8 192 токена.",
     "Any condition": "Любое условие",
     "Any Match (OR)": "Любое совпадение (OR)",
     "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.": "Публиковать индекс может кто угодно. Плагин, установленный из стороннего источника, получает те же права, что и загруженный вручную: изучите его код перед установкой.",

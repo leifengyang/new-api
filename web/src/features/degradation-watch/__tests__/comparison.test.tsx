@@ -105,13 +105,14 @@ function renderResult(
   )
 }
 
-test.each(['chat', 'responses'] as const)(
+test.each(['chat', 'responses', 'anthropic'] as const)(
   'opens %s input details with the keyboard and copies the complete saved input',
   async (protocol) => {
     const user = userEvent.setup()
     const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
     const prompt = `# Saved input\n${'Long prompt line\n'.repeat(80)}<script>alert(1)</script>\nFinal prompt line`
-    renderResult({ protocol, input_tokens: 9749 }, prompt)
+    const effort = protocol === 'anthropic' ? '' : 'medium'
+    renderResult({ protocol, effort, input_tokens: 9749 }, prompt)
     const input = screen.getByRole('button', { name: 'View input details' })
     input.focus()
     await user.keyboard('{Enter}')
@@ -133,8 +134,9 @@ test.each(['chat', 'responses'] as const)(
       base_url: 'https://example.com/v1',
       model: 'test-model',
       protocol,
-      reasoning_effort: 'medium',
+      reasoning_effort: effort || null,
       prompt,
+      ...(protocol === 'anthropic' ? { max_tokens: 8192 } : {}),
     })
     expect(
       within(dialog).getByText(
@@ -252,73 +254,77 @@ function renderPanel() {
   )
 }
 
-test('submits independent groups with shared prompt, concurrency three and twenty minute timeout', async () => {
-  vi.mocked(comparisonRequest).mockImplementation(async (path, method) => {
-    if (method === 'post') return { id: 12 }
-    if (path === '/rounds/12') {
-      return {
-        round: { id: 12, status: 'completed', prompt: 'Draw an SVG bird' },
-        attempts: [],
+test.each(['responses', 'anthropic'])(
+  'submits independent %s groups with shared prompt, concurrency three and twenty minute timeout',
+  async (protocol) => {
+    vi.mocked(comparisonRequest).mockImplementation(async (path, method) => {
+      if (method === 'post') return { id: 12 }
+      if (path === '/rounds/12') {
+        return {
+          round: { id: 12, status: 'completed', prompt: 'Draw an SVG bird' },
+          attempts: [],
+        }
       }
-    }
-    return []
-  })
-  renderPanel()
-  await screen.findByLabelText('Group name')
-  await waitFor(() =>
-    expect(screen.getByLabelText('Shared prompt')).toHaveValue(
-      'Draw an SVG bird'
+      return []
+    })
+    renderPanel()
+    await screen.findByLabelText('Group name')
+    await waitFor(() =>
+      expect(screen.getByLabelText('Shared prompt')).toHaveValue(
+        'Draw an SVG bird'
+      )
     )
-  )
-  fireEvent.change(screen.getByLabelText('Base URL'), {
-    target: { value: 'https://a.example/v1' },
-  })
-  fireEvent.change(screen.getByLabelText('API key'), {
-    target: { value: 'key-one' },
-  })
-  fireEvent.click(screen.getByText('Add test group'))
-  fireEvent.change(screen.getAllByLabelText('Base URL')[1], {
-    target: { value: 'https://b.example/v1' },
-  })
-  fireEvent.change(screen.getAllByLabelText('API key')[1], {
-    target: { value: 'key-two' },
-  })
-  fireEvent.change(screen.getAllByLabelText('Model')[1], {
-    target: { value: 'second-model' },
-  })
-  fireEvent.change(screen.getAllByLabelText('Protocol')[1], {
-    target: { value: 'responses' },
-  })
-  fireEvent.click(screen.getByText('Start comparison'))
-  await waitFor(() =>
-    expect(comparisonRequest).toHaveBeenCalledWith(
-      '/rounds',
-      'post',
-      expect.objectContaining({
-        concurrency: 3,
-        timeout_seconds: 1200,
-        prompt: 'Draw an SVG bird',
-        groups: [
-          expect.objectContaining({
-            base_url: 'https://a.example/v1',
-            api_key: 'key-one',
-            model: 'test-model',
-            remember_key: false,
-          }),
-          expect.objectContaining({
-            base_url: 'https://b.example/v1',
-            api_key: 'key-two',
-            model: 'second-model',
-            protocol: 'responses',
-          }),
-        ],
-      })
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://a.example/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('API key'), {
+      target: { value: 'key-one' },
+    })
+    fireEvent.click(screen.getByText('Add test group'))
+    fireEvent.change(screen.getAllByLabelText('Base URL')[1], {
+      target: { value: 'https://b.example/v1' },
+    })
+    fireEvent.change(screen.getAllByLabelText('API key')[1], {
+      target: { value: 'key-two' },
+    })
+    fireEvent.change(screen.getAllByLabelText('Model')[1], {
+      target: { value: 'second-model' },
+    })
+    fireEvent.change(screen.getAllByLabelText('Protocol')[1], {
+      target: { value: protocol },
+    })
+    fireEvent.click(screen.getByText('Start comparison'))
+    await waitFor(() =>
+      expect(comparisonRequest).toHaveBeenCalledWith(
+        '/rounds',
+        'post',
+        expect.objectContaining({
+          concurrency: 3,
+          timeout_seconds: 1200,
+          prompt: 'Draw an SVG bird',
+          groups: [
+            expect.objectContaining({
+              base_url: 'https://a.example/v1',
+              api_key: 'key-one',
+              model: 'test-model',
+              remember_key: false,
+            }),
+            expect.objectContaining({
+              base_url: 'https://b.example/v1',
+              api_key: 'key-two',
+              model: 'second-model',
+              protocol,
+              effort: protocol === 'anthropic' ? '' : 'medium',
+            }),
+          ],
+        })
+      )
     )
-  )
-  expect(
-    localStorage.getItem('degradation-watch:self-test-settings') ?? ''
-  ).not.toContain('key-one')
-})
+    expect(
+      localStorage.getItem('degradation-watch:self-test-settings') ?? ''
+    ).not.toContain('key-one')
+  }
+)
 
 test('restores a running round after remount without starting another request', async () => {
   const attempt = {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -22,6 +23,16 @@ const selfTestTaskType = "self_test_comparison"
 const selfTestMaxResponse = 4 << 20
 
 var selfTestClient = service.NewSelfTestHTTPClient()
+
+// Use the same provider authentication for model discovery and generation.
+func setSelfTestAuthentication(req *http.Request, protocol, key string) {
+	if protocol == "anthropic" {
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+}
 
 type selfTestHandler struct{}
 
@@ -207,7 +218,11 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 	}
 	payload := map[string]any{"model": attempt.Model, "stream": true}
 	path := "/chat/completions"
-	if attempt.Protocol == "responses" {
+	if attempt.Protocol == "anthropic" {
+		path = "/messages"
+		payload["messages"] = []map[string]string{{"role": "user", "content": string(round.Prompt)}}
+		payload["max_tokens"] = 8192
+	} else if attempt.Protocol == "responses" {
 		path = "/responses"
 		payload["input"] = string(round.Prompt)
 		if attempt.Effort != "" {
@@ -230,7 +245,7 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+key)
+	setSelfTestAuthentication(req, attempt.Protocol, key)
 	// Header wait must also remain cancellable through the database stop action.
 	monitorDone := make(chan struct{})
 	monitorExited := make(chan struct{})
@@ -287,31 +302,45 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 			runErr = errors.New(string(body))
 			return
 		}
-		text := gjson.GetBytes(body, "choices.0.message.content").String()
-		if attempt.Protocol == "responses" {
-			for _, item := range gjson.GetBytes(body, "output").Array() {
-				for _, content := range item.Get("content").Array() {
-					text += content.Get("text").String()
+		if attempt.Protocol == "anthropic" {
+			if !gjson.ValidBytes(body) || gjson.GetBytes(body, "type").String() != "message" {
+				runErr = fmt.Errorf("invalid Anthropic response\n%s", body)
+				return
+			}
+			compact, _ := common.Marshal(gjson.ParseBytes(body).Value())
+			fmt.Fprintf(&raw, "data: %s\n\n", compact)
+			attempt.FirstTokenMs = time.Since(started).Milliseconds()
+			if gjson.GetBytes(body, "stop_reason").String() == "max_tokens" {
+				runErr = errors.New("Anthropic response reached the 8192-token output limit")
+			}
+		} else {
+			text := gjson.GetBytes(body, "choices.0.message.content").String()
+			if attempt.Protocol == "responses" {
+				for _, item := range gjson.GetBytes(body, "output").Array() {
+					for _, content := range item.Get("content").Array() {
+						text += content.Get("text").String()
+					}
 				}
 			}
+			if text == "" {
+				runErr = fmt.Errorf("no output in upstream response\n%s", body)
+				return
+			}
+			attempt.FirstTokenMs = time.Since(started).Milliseconds()
+			usage := gjson.GetBytes(body, "usage").Raw
+			if usage == "" {
+				usage = "{}"
+			}
+			textJSON, _ := common.Marshal(text)
+			fmt.Fprintf(&raw, "data: {\"choices\":[{\"delta\":{\"content\":%s}}],\"usage\":%s}\n\n", textJSON, usage)
 		}
-		if text == "" {
-			runErr = fmt.Errorf("no output in upstream response\n%s", body)
-			return
-		}
-		attempt.FirstTokenMs = time.Since(started).Milliseconds()
-		usage := gjson.GetBytes(body, "usage").Raw
-		if usage == "" {
-			usage = "{}"
-		}
-		textJSON, _ := common.Marshal(text)
-		fmt.Fprintf(&raw, "data: {\"choices\":[{\"delta\":{\"content\":%s}}],\"usage\":%s}\n\n", textJSON, usage)
 	} else {
 		events := make(chan selfTestStreamEvent, 8)
 		go readSelfTestEvents(ctx, res.Body, events)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		completed := false
+		anthropicStopReason := ""
 	streamLoop:
 		for {
 			select {
@@ -330,7 +359,7 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 					break streamLoop
 				}
 				if event.data == "[DONE]" {
-					completed = true
+					completed = attempt.Protocol != "anthropic"
 					break streamLoop
 				}
 				if !gjson.Valid(event.data) {
@@ -344,7 +373,22 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 					break streamLoop
 				}
 				if kind == "response.completed" || obj.Get("choices.0.finish_reason").String() != "" {
-					completed = true
+					completed = attempt.Protocol != "anthropic"
+				}
+				if attempt.Protocol == "anthropic" {
+					if reason := obj.Get("delta.stop_reason").String(); kind == "message_delta" && reason != "" {
+						anthropicStopReason = reason
+					}
+					if kind == "message_stop" {
+						completed = true
+						if anthropicStopReason == "max_tokens" {
+							runErr = errors.New("Anthropic response reached the 8192-token output limit")
+						}
+						break streamLoop
+					}
+					if attempt.FirstTokenMs == 0 && (obj.Get("delta.text").String() != "" || obj.Get("delta.thinking").String() != "" || obj.Get("content_block.text").String() != "" || obj.Get("content_block.thinking").String() != "") {
+						attempt.FirstTokenMs = max(1, time.Since(started).Milliseconds())
+					}
 				}
 				if attempt.FirstTokenMs == 0 && (obj.Get("choices.0.delta.content").String() != "" || obj.Get("choices.0.delta.reasoning_content").String() != "" || strings.HasSuffix(kind, ".delta") && obj.Get("delta").String() != "") {
 					attempt.FirstTokenMs = max(1, time.Since(started).Milliseconds())
@@ -391,6 +435,11 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 }
 
 func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt string, started time.Time) {
+	if attempt.Protocol == "anthropic" {
+		applyAnthropicSelfTestProgress(attempt, raw, prompt)
+		attempt.ElapsedMs = time.Since(started).Milliseconds()
+		return
+	}
 	progress := degradationWatchProgress(raw, prompt, attempt.Model)
 	attempt.Output, attempt.InputTokens, attempt.OutputTokens = progress.OutputText, progress.PromptTokens, progress.CompletionTokens
 	attempt.ReasoningTokens, attempt.TokensEstimated = progress.ReasoningTokens, progress.TokensEstimated
@@ -413,4 +462,68 @@ func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt st
 		}
 	}
 	attempt.ElapsedMs = time.Since(started).Milliseconds()
+}
+
+// Anthropic usage patches are cumulative and may omit the input fields after
+// message_start. Preserve each last-reported counter instead of summing events.
+// This is diagnostic display only; it never settles gateway quota.
+func applyAnthropicSelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt string) {
+	var text, thinking strings.Builder
+	counts := map[string]int64{}
+	for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
+		payload, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
+		if !ok || !gjson.ValidBytes(bytes.TrimSpace(payload)) {
+			continue
+		}
+		event := gjson.ParseBytes(payload)
+		usage := event.Get("usage")
+		switch event.Get("type").String() {
+		case "message_start":
+			usage = event.Get("message.usage")
+		case "message":
+			for _, block := range event.Get("content").Array() {
+				if block.Get("type").String() == "text" {
+					text.WriteString(block.Get("text").String())
+				} else if block.Get("type").String() == "thinking" {
+					thinking.WriteString(block.Get("thinking").String())
+				}
+			}
+		case "content_block_start":
+			block := event.Get("content_block")
+			if block.Get("type").String() == "text" {
+				text.WriteString(block.Get("text").String())
+			} else if block.Get("type").String() == "thinking" {
+				thinking.WriteString(block.Get("thinking").String())
+			}
+		case "content_block_delta":
+			if event.Get("delta.type").String() == "text_delta" {
+				text.WriteString(event.Get("delta.text").String())
+			} else if event.Get("delta.type").String() == "thinking_delta" {
+				thinking.WriteString(event.Get("delta.thinking").String())
+			}
+		}
+		for _, field := range []string{"input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens", "output_tokens_details.thinking_tokens"} {
+			if value := usage.Get(field); value.Type == gjson.Number {
+				counts[field] = min(int64(math.MaxInt32), max(0, value.Int()))
+			}
+		}
+	}
+	input, hasInput := counts["input_tokens"]
+	output, hasOutput := counts["output_tokens"]
+	reasoning, hasReasoning := counts["output_tokens_details.thinking_tokens"]
+	attempt.Output = model.LongText(text.String())
+	attempt.InputTokens = service.CountTextToken(prompt, attempt.Model)
+	attempt.ReasoningTokens = int(reasoning)
+	if !hasReasoning && thinking.Len() > 0 {
+		attempt.ReasoningTokens = service.CountTextToken(thinking.String(), attempt.Model)
+	}
+	attempt.OutputTokens = service.CountTextToken(text.String(), attempt.Model) + attempt.ReasoningTokens
+	if hasInput {
+		attempt.InputTokens = int(min(int64(math.MaxInt32), input+counts["cache_creation_input_tokens"]+counts["cache_read_input_tokens"]))
+	}
+	if hasOutput {
+		// Anthropic's output_tokens already includes thinking tokens.
+		attempt.OutputTokens = int(output)
+	}
+	attempt.TokensEstimated = !hasInput || !hasOutput || (!hasReasoning && thinking.Len() > 0)
 }
