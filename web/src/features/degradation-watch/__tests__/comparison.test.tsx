@@ -58,7 +58,10 @@ beforeEach(() => {
   localStorage.clear()
 })
 
-function renderResult(overrides: Partial<ComparisonAttempt>) {
+function renderResult(
+  overrides: Partial<ComparisonAttempt>,
+  prompt = 'Saved prompt'
+) {
   const attempt: ComparisonAttempt = {
     id: 1,
     round_id: 12,
@@ -91,6 +94,7 @@ function renderResult(overrides: Partial<ComparisonAttempt>) {
   return render(
     <QueryClientProvider client={client}>
       <ComparisonResult
+        prompt={prompt}
         latest={{ ...attempt, output: '', html: '' }}
         attempts={[]}
         busy={false}
@@ -100,6 +104,73 @@ function renderResult(overrides: Partial<ComparisonAttempt>) {
     </QueryClientProvider>
   )
 }
+
+test.each(['chat', 'responses'] as const)(
+  'opens %s input details with the keyboard and copies the complete saved input',
+  async (protocol) => {
+    const user = userEvent.setup()
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    const prompt = `# Saved input\n${'Long prompt line\n'.repeat(80)}<script>alert(1)</script>\nFinal prompt line`
+    renderResult({ protocol, input_tokens: 9749 }, prompt)
+    const input = screen.getByRole('button', { name: 'View input details' })
+    input.focus()
+    await user.keyboard('{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: 'Input details' })
+    expect(within(dialog).getByText('Upstream reported')).toBeInTheDocument()
+    expect(dialog.querySelector('pre')?.textContent).toBe(prompt)
+    expect(dialog.querySelector('script')).toBeNull()
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Copy prompt' })
+    )
+    expect(copy).toHaveBeenLastCalledWith(prompt)
+    await user.click(
+      within(dialog).getByRole('tab', { name: 'Request parameters' })
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Copy request parameters' })
+    )
+    expect(JSON.parse(copy.mock.calls.at(-1)?.[0] ?? '{}')).toEqual({
+      base_url: 'https://example.com/v1',
+      model: 'test-model',
+      protocol,
+      reasoning_effort: 'medium',
+      prompt,
+    })
+    expect(
+      within(dialog).getByText(
+        'Saved settings, not a raw request capture. Authentication headers and API keys are excluded.'
+      )
+    ).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(comparisonRequest).not.toHaveBeenCalled()
+  }
+)
+
+test.each([
+  {
+    status: 'running' as const,
+    tokens_estimated: true,
+    label: 'Includes estimates',
+  },
+  { status: 'queued' as const, tokens_estimated: false, label: 'Queued' },
+  {
+    status: 'failed' as const,
+    tokens_estimated: false,
+    input_tokens: 0,
+    output_tokens: 0,
+    label: 'Not available',
+  },
+])(
+  'labels input statistics honestly for $status tasks',
+  async ({ label, ...attempt }) => {
+    renderResult(attempt)
+    fireEvent.click(screen.getByRole('button', { name: 'View input details' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Input details' })
+    expect(within(dialog).getByText(label)).toBeInTheDocument()
+    expect(within(dialog).queryByText('Upstream reported')).toBeNull()
+  }
+)
 
 test.each([
   '',

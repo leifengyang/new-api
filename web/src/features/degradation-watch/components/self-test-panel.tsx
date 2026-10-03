@@ -432,6 +432,7 @@ function ComparisonWorkspace(props: { userID: number | undefined }) {
               <div className='grid auto-cols-[minmax(280px,1fr)] grid-flow-col items-start gap-4'>
                 {latest.map((item) => (
                   <ComparisonResult
+                    prompt={detail.data.round.prompt}
                     latest={item}
                     key={`${roundID}-${item.group_index}`}
                     attempts={detail.data.attempts.filter(
