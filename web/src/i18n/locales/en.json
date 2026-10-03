@@ -535,6 +535,7 @@
     "Answers for common access and billing questions": "Answers for common access and billing questions",
     "Anthropic": "Anthropic",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages to OpenAI Chat",
+    "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic uses model-default thinking and an 8,192-token output limit.",
     "Any condition": "Any condition",
     "Any Match (OR)": "Any Match (OR)",
     "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.": "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.",

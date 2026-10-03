@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useInViewport } from '../hooks/use-degradation-watch'
 import {
   comparisonRecord,
+  comparisonProtocolLabels,
   comparisonRequest,
   type ComparisonAttempt,
 } from '../lib/comparison'
@@ -76,7 +77,7 @@ export function ComparisonResult(props: {
           <h3 className='truncate font-semibold'>{attempt.name}</h3>
         </div>
         <Badge variant='secondary'>
-          {attempt.protocol === 'responses' ? 'Responses' : 'Chat'}
+          {comparisonProtocolLabels[attempt.protocol]}
         </Badge>
       </div>
       <p

@@ -535,6 +535,7 @@
     "Answers for common access and billing questions": "アクセスと請求に関するよくある質問への回答",
     "Anthropic": "Anthropic",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages から OpenAI Chat",
+    "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic はモデル既定の思考設定を使用し、出力上限は 8,192 トークンです。",
     "Any condition": "いずれかを満たす",
     "Any Match (OR)": "いずれか一致（OR）",
     "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.": "インデックスは誰でも公開できます。サードパーティのソースからインストールしたプラグインは、手動でアップロードしたものと全く同じ権限を持ちます。インストール前にソースを確認してください。",

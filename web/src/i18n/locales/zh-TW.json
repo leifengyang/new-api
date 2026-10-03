@@ -535,6 +535,7 @@
     "Answers for common access and billing questions": "存取與收費常見問題解答",
     "Anthropic": "Anthropic",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages 到 OpenAI Chat",
+    "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic 使用模型預設思考設定，輸出上限為 8,192 Token。",
     "Any condition": "任一符合",
     "Any Match (OR)": "任一滿足（OR）",
     "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.": "任何人都可以發布索引。從第三方來源安裝的外掛與你手動上傳的外掛擁有完全相同的權限，請在安裝前審查其原始碼。",

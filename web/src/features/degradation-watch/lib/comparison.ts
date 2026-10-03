@@ -26,7 +26,7 @@ export const groupSchema = z.object({
   name: z.string().trim().min(1).max(128),
   base_url: z.string().url().max(1024),
   model: z.string().trim().min(1).max(128),
-  protocol: z.enum(['chat', 'responses']),
+  protocol: z.enum(['chat', 'responses', 'anthropic']),
   effort: z.string(),
   api_key: z.string().max(8192),
   remember_key: z.boolean(),
@@ -57,7 +57,7 @@ export interface ComparisonAttempt {
   name: string
   base_url: string
   model: string
-  protocol: 'chat' | 'responses'
+  protocol: 'chat' | 'responses' | 'anthropic'
   effort: string
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
   output: string
@@ -76,6 +76,12 @@ export interface ComparisonDetail {
   round: ComparisonRound
   attempts: ComparisonAttempt[]
 }
+
+export const comparisonProtocolLabels = {
+  chat: 'Chat Completions',
+  responses: 'Responses',
+  anthropic: 'Anthropic Messages',
+} as const
 
 export function newTestGroup(): TestGroup {
   return {

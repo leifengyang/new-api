@@ -122,9 +122,12 @@ export function ComparisonGroupEditor(props: {
             <NativeSelect
               id={`${id}-protocol`}
               {...props.form.register(`${prefix}.protocol`, {
-                onChange: () => {
+                onChange: (event) => {
                   props.form.setValue(`${prefix}.has_saved_key`, false)
                   setModels([])
+                  if (event.target.value === 'anthropic') {
+                    props.form.setValue(`${prefix}.effort`, '')
+                  }
                 },
               })}
             >
@@ -134,12 +137,16 @@ export function ComparisonGroupEditor(props: {
               <NativeSelectOption value='responses'>
                 Responses
               </NativeSelectOption>
+              <NativeSelectOption value='anthropic'>
+                Anthropic Messages
+              </NativeSelectOption>
             </NativeSelect>
           </div>
           <div className='space-y-1.5'>
             <Label htmlFor={`${id}-effort`}>{t('Reasoning effort')}</Label>
             <NativeSelect
               id={`${id}-effort`}
+              disabled={group.protocol === 'anthropic'}
               {...props.form.register(`${prefix}.effort`)}
             >
               <NativeSelectOption value=''>{t('Default')}</NativeSelectOption>
@@ -153,6 +160,13 @@ export function ComparisonGroupEditor(props: {
             </NativeSelect>
           </div>
         </div>
+        {group.protocol === 'anthropic' && (
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'Anthropic uses model-default thinking and an 8,192-token output limit.'
+            )}
+          </p>
+        )}
         <div className='space-y-1.5'>
           <Label htmlFor={`${id}-model`}>{t('Model')}</Label>
           <div className='flex gap-2'>

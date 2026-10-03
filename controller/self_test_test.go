@@ -86,11 +86,14 @@ func selfTestAPI(t *testing.T, handler gin.HandlerFunc, userID, id int, body any
 	return recorder
 }
 
-func selfTestFixture(t *testing.T, count int) (model.SelfTestRound, []model.SelfTestAttempt) {
+func selfTestFixture(t *testing.T, count int, protocol ...string) (model.SelfTestRound, []model.SelfTestAttempt) {
 	t.Helper()
 	inputs := make([]selfTestGroupInput, count)
 	for i := range count {
 		inputs[i] = selfTestGroupInput{Name: fmt.Sprintf("group-%d", i), BaseURL: "https://example.com/v1", Model: "model-test", Protocol: "chat", Effort: "medium", APIKey: "sk-private-test", RememberKey: i == 0}
+		if len(protocol) > 0 {
+			inputs[i].Protocol, inputs[i].Effort = protocol[0], ""
+		}
 	}
 	profiles, attempts, err := prepareSelfTestGroups(1, inputs, true)
 	require.NoError(t, err)
@@ -111,7 +114,8 @@ func TestSelfTestDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Log(dialect, version)
-			round, attempts := selfTestFixture(t, 2)
+			round, attempts := selfTestFixture(t, 2, "anthropic")
+			assert.Equal(t, "anthropic", attempts[0].Protocol)
 			for range 2 {
 				var sqlLog bytes.Buffer
 				migrationLogger := logger.New(log.New(&sqlLog, "", 0), logger.Config{LogLevel: logger.Info})
@@ -142,6 +146,7 @@ func TestSelfTestDatabaseMatrix(t *testing.T) {
 			var stored []model.SelfTestAttempt
 			require.NoError(t, db.Where("round_id = ?", round.ID).Order("id").Find(&stored).Error)
 			require.Len(t, stored, 3)
+			assert.Equal(t, "anthropic", stored[2].Protocol)
 			assert.Equal(t, strings.Repeat("full diagnostic ", 6000), string(stored[0].Error))
 			for _, item := range stored {
 				assert.Empty(t, item.Secret)
@@ -222,6 +227,11 @@ func TestSelfTestAPIDefaultsAndSavedKeyScope(t *testing.T) {
 	_, _, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
 	assert.Error(t, err)
 	group.BaseURL = profile.BaseURL
+	group.Protocol = "anthropic"
+	group.Effort = ""
+	_, _, err = prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+	assert.Error(t, err, "saved credentials must not cross protocol boundaries")
+	group.Protocol = "chat"
 	_, _, err = prepareSelfTestGroups(2, []selfTestGroupInput{group}, true)
 	assert.Error(t, err)
 	_, attempts, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
@@ -301,6 +311,99 @@ func TestSelfTestProtocolsAndTerminalState(t *testing.T) {
 		require.NoError(t, db.First(&result, attempt.ID).Error)
 		assert.Equal(t, "cancelled", result.Status)
 	})
+}
+
+func TestSelfTestAnthropicMessages(t *testing.T) {
+	db := selfTestDB(t, "sqlite")
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	stream := "data: " + `{"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":30,"cache_read_input_tokens":60,"output_tokens":1}}}` + "\n\n" +
+		"data: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hello "}}` + "\n\n" +
+		"data: " + `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}` + "\n\n" +
+		"data: " + `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":20,"output_tokens_details":{"thinking_tokens":3}}}` + "\n\n" +
+		"data: " + `{"type":"message_delta","usage":{"output_tokens":22}}` + "\n\n"
+	for _, tc := range []struct {
+		name, body, contentType, status, output, errorText string
+		inputTokens, outputTokens, thinkingTokens          int
+	}{
+		{"stream", stream + "data: {\"type\":\"message_stop\"}\n\n", "text/event-stream", "succeeded", "Hello world", "", 102, 22, 3},
+		{"json", "{\n\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"<html><body>Hello</body></html>\"}],\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":60,\"output_tokens\":22}}", "application/json", "succeeded", "<html><body>Hello</body></html>", "", 72, 22, 0},
+		{"truncated", stream, "text/event-stream", "failed", "Hello world", "before completion", 102, 22, 3},
+		{"stream-error", stream + "data: {\"type\":\"error\",\"error\":{\"message\":\"sk-private-test full diagnostic tail\"}}\n\n", "text/event-stream", "failed", "Hello world", "[REDACTED] full diagnostic tail", 102, 22, 3},
+		{"output-limit", strings.Replace(stream, "end_turn", "max_tokens", 1) + "data: {\"type\":\"message_stop\"}\n\n", "text/event-stream", "failed", "Hello world", "8192-token output limit", 102, 22, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			round, attempts := selfTestFixture(t, 1, "anthropic")
+			attempt := attempts[0]
+			require.NoError(t, db.Model(&attempt).Updates(map[string]any{"status": "running", "runner": "anthropic-test"}).Error)
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				assert.Equal(t, "/v1/messages", req.URL.Path)
+				assert.Equal(t, "sk-private-test", req.Header.Get("x-api-key"))
+				assert.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
+				assert.Empty(t, req.Header.Get("Authorization"))
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				assert.Equal(t, "draw", gjson.GetBytes(body, "messages.0.content").String())
+				assert.EqualValues(t, 8192, gjson.GetBytes(body, "max_tokens").Int())
+				assert.True(t, gjson.GetBytes(body, "stream").Bool())
+				assert.False(t, gjson.GetBytes(body, "reasoning_effort").Exists())
+				assert.False(t, gjson.GetBytes(body, "stream_options").Exists())
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{tc.contentType}}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}
+			runSelfTestAttempt(context.Background(), round, attempt, "anthropic-test")
+			var result model.SelfTestAttempt
+			require.NoError(t, db.First(&result, attempt.ID).Error)
+			assert.Equal(t, tc.status, result.Status)
+			assert.Equal(t, tc.output, string(result.Output))
+			assert.Equal(t, tc.inputTokens, result.InputTokens)
+			assert.Equal(t, tc.outputTokens, result.OutputTokens)
+			assert.Equal(t, tc.thinkingTokens, result.ReasoningTokens)
+			assert.False(t, result.TokensEstimated)
+			assert.Empty(t, result.Secret)
+			assert.NotContains(t, string(result.Error), "sk-private-test")
+			if tc.errorText != "" {
+				assert.Contains(t, string(result.Error), tc.errorText)
+			} else {
+				assert.Empty(t, result.Error)
+			}
+			if tc.name == "json" {
+				assert.Equal(t, tc.output, string(result.HTML))
+			}
+		})
+	}
+	t.Run("model-discovery", func(t *testing.T) {
+		selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/v1/models", req.URL.Path)
+			assert.Equal(t, "discovery-key", req.Header.Get("x-api-key"))
+			assert.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
+			assert.Empty(t, req.Header.Get("Authorization"))
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"claude-sonnet-4-5"}]}`))}, nil
+		})}
+		group := selfTestGroupInput{Name: "claude", BaseURL: "https://example.com/v1", Protocol: "anthropic", APIKey: "discovery-key"}
+		response := selfTestAPI(t, FetchSelfTestModels, 1, 0, group)
+		require.Equal(t, 200, response.Code, response.Body.String())
+		assert.Equal(t, "claude-sonnet-4-5", gjson.Get(response.Body.String(), "data.0").String())
+		group.Effort = "high"
+		assert.Equal(t, 400, selfTestAPI(t, FetchSelfTestModels, 1, 0, group).Code)
+	})
+}
+
+func TestSelfTestAnthropicLiveUsage(t *testing.T) {
+	var attempt model.SelfTestAttempt
+	raw := []byte("data: " + `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":90}}}` + "\n\n" +
+		"data: " + `{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"Let me think"}}` + "\n\n" +
+		"data: " + `{"type":"content_block_delta","delta":{"type":"text_delta","text":"Answer"}}` + "\n\n")
+	applyAnthropicSelfTestProgress(&attempt, raw, "prompt")
+	assert.Equal(t, "Answer", string(attempt.Output))
+	assert.Equal(t, 100, attempt.InputTokens)
+	assert.Greater(t, attempt.ReasoningTokens, 0)
+	assert.True(t, attempt.TokensEstimated)
+	raw = append(raw, []byte("data: "+`{"type":"message_delta","usage":{"output_tokens":30,"output_tokens_details":{"thinking_tokens":7}}}`+"\n\n")...)
+	applyAnthropicSelfTestProgress(&attempt, raw, "prompt")
+	assert.Equal(t, 100, attempt.InputTokens)
+	assert.Equal(t, 30, attempt.OutputTokens)
+	assert.Equal(t, 7, attempt.ReasoningTokens)
+	assert.False(t, attempt.TokensEstimated)
 }
 
 func TestSelfTestOptionalHTMLPreview(t *testing.T) {

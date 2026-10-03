@@ -25,7 +25,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
-import type { ComparisonAttempt } from '../lib/comparison'
+import {
+  comparisonProtocolLabels,
+  type ComparisonAttempt,
+} from '../lib/comparison'
 import { TextOutputPreview } from './record-card'
 
 export function InputDetailsDialog(props: {
@@ -53,6 +56,7 @@ export function InputDetailsDialog(props: {
     protocol: attempt.protocol,
     reasoning_effort: attempt.effort || null,
     prompt: props.prompt,
+    ...(attempt.protocol === 'anthropic' ? { max_tokens: 8192 } : {}),
   }
 
   return (
@@ -88,9 +92,7 @@ export function InputDetailsDialog(props: {
             <div className='flex flex-wrap gap-2'>
               <Badge variant='secondary'>user</Badge>
               <Badge variant='outline'>
-                {attempt.protocol === 'responses'
-                  ? 'Responses'
-                  : 'Chat Completions'}
+                {comparisonProtocolLabels[attempt.protocol]}
               </Badge>
               <Badge variant='outline'>
                 {t('Reasoning effort')}: {attempt.effort || '-'}

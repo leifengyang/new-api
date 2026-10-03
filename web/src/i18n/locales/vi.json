@@ -535,6 +535,7 @@
     "Answers for common access and billing questions": "Câu trả lời cho các câu hỏi thường gặp về truy cập và thanh toán",
     "Anthropic": "Anthropic",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages sang OpenAI Chat",
+    "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic dùng chế độ suy nghĩ mặc định của mô hình, với giới hạn đầu ra 8.192 token.",
     "Any condition": "Thỏa mãn bất kỳ",
     "Any Match (OR)": "Bất kỳ khớp (OR)",
     "Anyone can publish an index. A plugin installed from a third-party source has the same access as one you upload by hand: review its source before installing.": "Bất kỳ ai cũng có thể công bố một chỉ mục. Plugin cài từ nguồn bên thứ ba có quyền truy cập hệt như plugin bạn tự tải lên: hãy xem mã nguồn trước khi cài.",
