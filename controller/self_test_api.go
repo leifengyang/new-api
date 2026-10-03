@@ -12,20 +12,22 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
 type selfTestGroupInput struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
-	Protocol    string `json:"protocol"`
-	Effort      string `json:"effort"`
-	APIKey      string `json:"api_key"`
-	RememberKey bool   `json:"remember_key"`
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	BaseURL         string `json:"base_url"`
+	Model           string `json:"model"`
+	Protocol        string `json:"protocol"`
+	Effort          string `json:"effort"`
+	MaxOutputTokens *uint  `json:"max_output_tokens"`
+	APIKey          string `json:"api_key"`
+	RememberKey     bool   `json:"remember_key"`
 }
 
 type selfTestInput struct {
@@ -74,6 +76,13 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 		if input.Protocol == "anthropic" && input.Effort != "" {
 			return nil, nil, errors.New("Anthropic self-tests use model-default thinking; leave reasoning effort empty")
 		}
+		if input.MaxOutputTokens == nil {
+			limit := uint(32768)
+			input.MaxOutputTokens = &limit
+		}
+		if *input.MaxOutputTokens == 0 || helper.ExceedsMaxTokensLimit(input.MaxOutputTokens) {
+			return nil, nil, errors.New("max_output_tokens must be between 1 and 1073741823")
+		}
 		key := strings.TrimSpace(input.APIKey)
 		if key == "" {
 			for _, existing := range saved {
@@ -96,11 +105,12 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 			return nil, nil, errors.New("enter an API key for each group")
 		}
 		profile := model.SelfTestProfile{UserID: userID, Name: input.Name, BaseURL: base, Model: input.Model, Protocol: input.Protocol, Effort: input.Effort, RememberKey: input.RememberKey}
+		profile.MaxOutputTokens = input.MaxOutputTokens
 		if input.RememberKey {
 			profile.Secret = model.LongText(secret)
 		}
 		profiles = append(profiles, profile)
-		attempts = append(attempts, model.SelfTestAttempt{Name: input.Name, BaseURL: base, Model: input.Model, Protocol: input.Protocol, Effort: input.Effort, Secret: model.LongText(secret)})
+		attempts = append(attempts, model.SelfTestAttempt{Name: input.Name, BaseURL: base, Model: input.Model, Protocol: input.Protocol, Effort: input.Effort, MaxOutputTokens: input.MaxOutputTokens, Secret: model.LongText(secret)})
 	}
 	return profiles, attempts, nil
 }

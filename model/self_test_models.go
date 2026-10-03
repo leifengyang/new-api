@@ -10,16 +10,17 @@ import (
 
 // Self tests are private diagnostics, never gateway billing records.
 type SelfTestProfile struct {
-	ID          int      `json:"id"`
-	UserID      int      `json:"-" gorm:"index"`
-	Name        string   `json:"name" gorm:"size:128"`
-	BaseURL     string   `json:"base_url" gorm:"size:1024"`
-	Model       string   `json:"model" gorm:"size:128"`
-	Protocol    string   `json:"protocol" gorm:"size:32"`
-	Effort      string   `json:"effort" gorm:"size:32"`
-	RememberKey bool     `json:"remember_key"`
-	Secret      LongText `json:"-"`
-	HasSavedKey bool     `json:"has_saved_key" gorm:"-"`
+	ID              int      `json:"id"`
+	UserID          int      `json:"-" gorm:"index"`
+	Name            string   `json:"name" gorm:"size:128"`
+	BaseURL         string   `json:"base_url" gorm:"size:1024"`
+	Model           string   `json:"model" gorm:"size:128"`
+	Protocol        string   `json:"protocol" gorm:"size:32"`
+	Effort          string   `json:"effort" gorm:"size:32"`
+	MaxOutputTokens *uint    `json:"max_output_tokens"`
+	RememberKey     bool     `json:"remember_key"`
+	Secret          LongText `json:"-"`
+	HasSavedKey     bool     `json:"has_saved_key" gorm:"-"`
 }
 
 type SelfTestRound struct {
@@ -45,6 +46,7 @@ type SelfTestAttempt struct {
 	Model           string   `json:"model" gorm:"size:128"`
 	Protocol        string   `json:"protocol" gorm:"size:32"`
 	Effort          string   `json:"effort" gorm:"size:32"`
+	MaxOutputTokens *uint    `json:"max_output_tokens"`
 	Secret          LongText `json:"-"`
 	Runner          string   `json:"-" gorm:"size:64"`
 	Status          string   `json:"status" gorm:"size:16;index"`
@@ -163,8 +165,8 @@ func RetrySelfTestAttempt(userID, id int, secret LongText) error {
 		if err := lockForUpdate(tx).Where("user_id = ?", userID).First(&round, previous.RoundID).Error; err != nil {
 			return err
 		}
-		if previous.Status != "failed" && previous.Status != "cancelled" {
-			return errors.New("only failed or cancelled attempts can be retried")
+		if previous.Status != "failed" && previous.Status != "cancelled" && previous.Status != "incomplete" {
+			return errors.New("only failed, incomplete or cancelled attempts can be retried")
 		}
 		var latest SelfTestAttempt
 		if err := tx.Where("round_id = ? AND group_index = ?", round.ID, previous.GroupIndex).Order("id desc").First(&latest).Error; err != nil {
@@ -185,6 +187,7 @@ func RetrySelfTestAttempt(userID, id int, secret LongText) error {
 			return err
 		}
 		next := SelfTestAttempt{UserID: userID, RoundID: round.ID, GroupIndex: previous.GroupIndex, Attempt: previous.Attempt + 1, ProfileID: previous.ProfileID, Name: previous.Name, BaseURL: previous.BaseURL, Model: previous.Model, Protocol: previous.Protocol, Effort: previous.Effort, Secret: secret, Status: "queued", CreatedAt: time.Now().Unix()}
+		next.MaxOutputTokens = previous.MaxOutputTokens
 		return tx.Create(&next).Error
 	})
 }

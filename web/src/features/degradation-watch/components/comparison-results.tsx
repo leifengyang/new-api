@@ -21,6 +21,7 @@ import { Activity, Clock3, RotateCcw, Square } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -67,6 +68,24 @@ export function ComparisonResult(props: {
     refetchInterval: active && (expanded || player) ? 1000 : false,
   })
   const record = comparisonRecord(attempt)
+  if (attempt.status === 'incomplete') {
+    let outputLimited = /^(max_output_tokens|max_tokens):/.test(attempt.error)
+    try {
+      const diagnostic = JSON.parse(attempt.error)
+      const reason = (diagnostic.response ?? diagnostic).incomplete_details
+        ?.reason
+      outputLimited = reason === 'max_output_tokens'
+    } catch {
+      // Native Anthropic and Chat length stops use a concise diagnostic.
+    }
+    record.error_details = outputLimited
+      ? t(
+          'Output limit reached. Generated content is preserved. Load this round into the form and increase the output limit to test again.'
+        )
+      : t(
+          'The upstream response is incomplete. Generated content is preserved; see the diagnostic for the reason.'
+        )
+  }
   return (
     <div ref={ref} className='min-w-0 space-y-3'>
       <div className='flex items-center justify-between gap-2'>
@@ -95,6 +114,19 @@ export function ComparisonResult(props: {
         onOpen={() => setPlayer(true)}
         onInputClick={() => setInputOpen(true)}
       />
+      {attempt.status === 'incomplete' && (
+        <details className='rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs'>
+          <summary className='cursor-pointer text-amber-700 dark:text-amber-300'>
+            {t('Upstream diagnostic')}
+          </summary>
+          <div className='mt-2 flex justify-end'>
+            <CopyButton value={attempt.error} />
+          </div>
+          <pre className='max-h-48 overflow-auto break-all whitespace-pre-wrap'>
+            {attempt.error}
+          </pre>
+        </details>
+      )}
       {detail.isError && (
         <ErrorState
           title={t('Failed to load the artwork')}
@@ -142,7 +174,9 @@ export function ComparisonResult(props: {
           </Button>
         )}
         {attempt.id === latest.id &&
-          (attempt.status === 'failed' || attempt.status === 'cancelled') &&
+          (attempt.status === 'failed' ||
+            attempt.status === 'cancelled' ||
+            attempt.status === 'incomplete') &&
           attempt.attempt < 10 && (
             <Button
               variant='outline'
@@ -195,8 +229,10 @@ export function ComparisonResult(props: {
         loading={detail.isLoading}
         loadError={detail.isError}
         failureReason={
-          attempt.status === 'failed' || attempt.status === 'cancelled'
-            ? attempt.error
+          attempt.status === 'failed' ||
+          attempt.status === 'cancelled' ||
+          attempt.status === 'incomplete'
+            ? record.error_details
             : undefined
         }
         meta={<span className='text-xs'>{attempt.effort}</span>}

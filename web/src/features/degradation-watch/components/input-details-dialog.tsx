@@ -50,13 +50,23 @@ export function InputDetailsDialog(props: {
   }
   // Only the immutable round and attempt snapshots belong in this view.
   // Do not serialize profiles or form state: they can contain API keys.
+  const outputSettings: Record<string, number> = {}
+  if (attempt.protocol === 'anthropic') {
+    outputSettings.max_tokens = attempt.max_output_tokens ?? 8192
+  } else if (attempt.max_output_tokens) {
+    const field =
+      attempt.protocol === 'responses'
+        ? 'max_output_tokens'
+        : 'max_completion_tokens'
+    outputSettings[field] = attempt.max_output_tokens
+  }
   const settings = {
     base_url: attempt.base_url,
     model: attempt.model,
     protocol: attempt.protocol,
     reasoning_effort: attempt.effort || null,
     prompt: props.prompt,
-    ...(attempt.protocol === 'anthropic' ? { max_tokens: 8192 } : {}),
+    ...outputSettings,
   }
 
   return (

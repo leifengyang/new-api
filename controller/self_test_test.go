@@ -147,6 +147,8 @@ func TestSelfTestDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Where("round_id = ?", round.ID).Order("id").Find(&stored).Error)
 			require.Len(t, stored, 3)
 			assert.Equal(t, "anthropic", stored[2].Protocol)
+			require.NotNil(t, stored[2].MaxOutputTokens)
+			assert.EqualValues(t, 32768, *stored[2].MaxOutputTokens)
 			assert.Equal(t, strings.Repeat("full diagnostic ", 6000), string(stored[0].Error))
 			for _, item := range stored {
 				assert.Empty(t, item.Secret)
@@ -256,6 +258,7 @@ func TestSelfTestProtocolsAndTerminalState(t *testing.T) {
 	}{
 		{"chat", "chat", "data: {\"choices\":[{\"delta\":{\"content\":\"<html><svg/></html>\"}}]}\n\ndata: {\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"completion_tokens_details\":{\"reasoning_tokens\":2}}}\n\ndata: [DONE]\n\n", 200, "succeeded", 12, 4, 2},
 		{"responses", "responses", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"<html><svg/></html>\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":18,\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":3}}}}\n\n", 200, "succeeded", 18, 6, 3},
+		{"chat-length", "chat", "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":\"length\"}]}\n\ndata: {\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4}}\n\ndata: [DONE]\n\n", 200, "incomplete", 12, 4, 0},
 		{"http-error", "chat", "diagnostic sk-private-test tail", 429, "failed", 0, 0, 0},
 		{"stream-error", "responses", "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"sk-private-test diagnostic tail\"}}}\n\n", 200, "failed", 0, 0, 0},
 		{"truncated", "chat", "data: {\"choices\":[{\"delta\":{\"content\":\"<html><svg/></html>\"}}]}\n\n", 200, "failed", 0, 0, 0},
@@ -275,9 +278,11 @@ func TestSelfTestProtocolsAndTerminalState(t *testing.T) {
 				assert.Equal(t, "model-test", gjson.GetBytes(body, "model").String())
 				if tc.protocol == "responses" {
 					assert.Equal(t, "/v1/responses", req.URL.Path)
+					assert.EqualValues(t, 32768, gjson.GetBytes(body, "max_output_tokens").Int())
 					assert.Equal(t, "draw", gjson.GetBytes(body, "input").String())
 				} else {
 					assert.Equal(t, "draw", gjson.GetBytes(body, "messages.0.content").String())
+					assert.EqualValues(t, 32768, gjson.GetBytes(body, "max_completion_tokens").Int())
 				}
 				return &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
 			})}
@@ -295,6 +300,12 @@ func TestSelfTestProtocolsAndTerminalState(t *testing.T) {
 				assert.False(t, result.TokensEstimated)
 			} else {
 				assert.NotEmpty(t, result.Error)
+			}
+			if tc.expected == "incomplete" {
+				assert.Equal(t, "partial", string(result.Output))
+				assert.Equal(t, tc.input, result.InputTokens)
+				assert.Equal(t, tc.output, result.OutputTokens)
+				assert.False(t, result.TokensEstimated)
 			}
 		})
 	}
@@ -330,7 +341,7 @@ func TestSelfTestAnthropicMessages(t *testing.T) {
 		{"json", "{\n\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"<html><body>Hello</body></html>\"}],\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":60,\"output_tokens\":22}}", "application/json", "succeeded", "<html><body>Hello</body></html>", "", 72, 22, 0},
 		{"truncated", stream, "text/event-stream", "failed", "Hello world", "before completion", 102, 22, 3},
 		{"stream-error", stream + "data: {\"type\":\"error\",\"error\":{\"message\":\"sk-private-test full diagnostic tail\"}}\n\n", "text/event-stream", "failed", "Hello world", "[REDACTED] full diagnostic tail", 102, 22, 3},
-		{"output-limit", strings.Replace(stream, "end_turn", "max_tokens", 1) + "data: {\"type\":\"message_stop\"}\n\n", "text/event-stream", "failed", "Hello world", "8192-token output limit", 102, 22, 3},
+		{"output-limit", strings.Replace(stream, "end_turn", "max_tokens", 1) + "data: {\"type\":\"message_stop\"}\n\n", "text/event-stream", "incomplete", "Hello world", "max_tokens:", 102, 22, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			round, attempts := selfTestFixture(t, 1, "anthropic")
@@ -344,7 +355,7 @@ func TestSelfTestAnthropicMessages(t *testing.T) {
 				body, err := io.ReadAll(req.Body)
 				require.NoError(t, err)
 				assert.Equal(t, "draw", gjson.GetBytes(body, "messages.0.content").String())
-				assert.EqualValues(t, 8192, gjson.GetBytes(body, "max_tokens").Int())
+				assert.EqualValues(t, 32768, gjson.GetBytes(body, "max_tokens").Int())
 				assert.True(t, gjson.GetBytes(body, "stream").Bool())
 				assert.False(t, gjson.GetBytes(body, "reasoning_effort").Exists())
 				assert.False(t, gjson.GetBytes(body, "stream_options").Exists())
@@ -562,4 +573,62 @@ func TestSelfTestLiveProgress(t *testing.T) {
 	assert.Equal(t, 30, progress.OutputTokens)
 	assert.Equal(t, 10, progress.ReasoningTokens)
 	assert.False(t, progress.TokensEstimated)
+}
+
+func TestSelfTestIncompleteResponses(t *testing.T) {
+	db := selfTestDB(t, "sqlite")
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	response := `{"object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"hidden"}]},{"type":"message","content":[{"type":"output_text","text":"<html>partial output"}]}],"usage":{"prompt_tokens":532,"completion_tokens":8192,"input_tokens":532,"output_tokens":8192}}`
+	for _, tc := range []struct{ name, body, contentType string }{
+		{"terminal-only", "data: {\"type\":\"response.incomplete\",\"response\":" + response + "}\n\n", "text/event-stream"},
+		{"delta-and-snapshot", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"<html>partial\"}\n\ndata: {\"type\":\"response.incomplete\",\"response\":" + response + "}\n\n", "text/event-stream"},
+		{"json", response, "application/json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			round, attempts := selfTestFixture(t, 1, "responses")
+			attempt := attempts[0]
+			require.NoError(t, db.Model(&attempt).Updates(map[string]any{"status": "running", "runner": "limit-test"}).Error)
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				assert.EqualValues(t, 32768, gjson.GetBytes(body, "max_output_tokens").Int())
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{tc.contentType}}, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}
+			runSelfTestAttempt(context.Background(), round, attempt, "limit-test")
+			var result model.SelfTestAttempt
+			require.NoError(t, db.First(&result, attempt.ID).Error)
+			assert.Equal(t, "incomplete", result.Status)
+			assert.Equal(t, "<html>partial output", string(result.Output))
+			assert.Empty(t, result.HTML)
+			assert.Equal(t, 532, result.InputTokens)
+			assert.Equal(t, 8192, result.OutputTokens)
+			assert.False(t, result.TokensEstimated)
+			assert.Contains(t, string(result.Error), "max_output_tokens")
+			assert.Empty(t, result.Secret)
+			require.NoError(t, model.RetrySelfTestAttempt(1, result.ID, attempt.Secret))
+			var retry model.SelfTestAttempt
+			require.NoError(t, db.Where("round_id = ?", round.ID).Order("id desc").First(&retry).Error)
+			assert.Equal(t, result.MaxOutputTokens, retry.MaxOutputTokens)
+			require.NoError(t, db.Model(&retry).Update("status", "cancelled").Error)
+			require.NoError(t, model.FinishSelfTestRound(round.ID))
+		})
+	}
+}
+
+func TestSelfTestOutputLimitValidation(t *testing.T) {
+	selfTestDB(t, "sqlite")
+	for _, limit := range []uint{0, 1073741824, ^uint(0)} {
+		group := selfTestGroupInput{Name: "limit", BaseURL: "https://example.com", Model: "model", Protocol: "responses", APIKey: "fixture", MaxOutputTokens: &limit}
+		_, _, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+		assert.Error(t, err)
+	}
+	limit := uint(65536)
+	for _, protocol := range []string{"chat", "responses", "anthropic"} {
+		group := selfTestGroupInput{Name: "limit", BaseURL: "https://example.com", Model: "model", Protocol: protocol, APIKey: "fixture", MaxOutputTokens: &limit}
+		profiles, attempts, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+		require.NoError(t, err)
+		assert.Equal(t, &limit, profiles[0].MaxOutputTokens)
+		assert.Equal(t, &limit, attempts[0].MaxOutputTokens)
+	}
 }
