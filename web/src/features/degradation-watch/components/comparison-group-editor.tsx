@@ -162,11 +162,35 @@ export function ComparisonGroupEditor(props: {
         </div>
         {group.protocol === 'anthropic' && (
           <p className='text-muted-foreground text-xs leading-relaxed'>
-            {t(
-              'Anthropic uses model-default thinking and an 8,192-token output limit.'
-            )}
+            {t('Anthropic uses model-default thinking.')}
           </p>
         )}
+        <div className='space-y-1.5'>
+          <Label htmlFor={`${id}-output-limit`}>
+            {t('Maximum output tokens')}
+          </Label>
+          <Input
+            id={`${id}-output-limit`}
+            type='number'
+            min={1}
+            max={1073741823}
+            step={1}
+            {...props.form.register(`${prefix}.max_output_tokens`, {
+              valueAsNumber: true,
+            })}
+          />
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'Default: 32,768. Increase for long output; the model and channel may impose a lower limit.'
+            )}
+          </p>
+          {props.form.formState.errors.groups?.[props.index]
+            ?.max_output_tokens && (
+            <p role='alert' className='text-destructive text-xs'>
+              {t('Enter a whole number between 1 and 1,073,741,823.')}
+            </p>
+          )}
+        </div>
         <div className='space-y-1.5'>
           <Label htmlFor={`${id}-model`}>{t('Model')}</Label>
           <div className='flex gap-2'>

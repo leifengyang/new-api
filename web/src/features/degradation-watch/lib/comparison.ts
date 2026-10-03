@@ -28,6 +28,7 @@ export const groupSchema = z.object({
   model: z.string().trim().min(1).max(128),
   protocol: z.enum(['chat', 'responses', 'anthropic']),
   effort: z.string(),
+  max_output_tokens: z.number().int().min(1).max(1073741823).optional(),
   api_key: z.string().max(8192),
   remember_key: z.boolean(),
   has_saved_key: z.boolean(),
@@ -59,7 +60,14 @@ export interface ComparisonAttempt {
   model: string
   protocol: 'chat' | 'responses' | 'anthropic'
   effort: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  max_output_tokens?: number | null
+  status:
+    | 'queued'
+    | 'running'
+    | 'succeeded'
+    | 'failed'
+    | 'cancelled'
+    | 'incomplete'
   output: string
   html: string
   error: string
@@ -91,6 +99,7 @@ export function newTestGroup(): TestGroup {
     model: '',
     protocol: 'chat',
     effort: 'medium',
+    max_output_tokens: 32768,
     api_key: '',
     remember_key: false,
     has_saved_key: false,

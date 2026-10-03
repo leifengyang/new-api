@@ -29,6 +29,7 @@ import {
   CircleX,
   Activity,
   ChevronRight,
+  CircleAlert,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -290,6 +291,11 @@ export function RecordCard(props: RecordCardProps) {
   } else if (record.status === 'cancelled') {
     status = t('Cancelled')
     tone = 'border-border bg-muted text-muted-foreground'
+  } else if (record.status === 'incomplete') {
+    status = t('Output incomplete')
+    icon = <CircleAlert className='size-3' />
+    tone =
+      'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
   }
   const error = record.error_details || record.failure_reason
   const label = failureReasonLabel(error)

@@ -112,7 +112,10 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
     const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
     const prompt = `# Saved input\n${'Long prompt line\n'.repeat(80)}<script>alert(1)</script>\nFinal prompt line`
     const effort = protocol === 'anthropic' ? '' : 'medium'
-    renderResult({ protocol, effort, input_tokens: 9749 }, prompt)
+    renderResult(
+      { protocol, effort, input_tokens: 9749, max_output_tokens: 65536 },
+      prompt
+    )
     const input = screen.getByRole('button', { name: 'View input details' })
     input.focus()
     await user.keyboard('{Enter}')
@@ -136,7 +139,11 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
       protocol,
       reasoning_effort: effort || null,
       prompt,
-      ...(protocol === 'anthropic' ? { max_tokens: 8192 } : {}),
+      [{
+        chat: 'max_completion_tokens',
+        responses: 'max_output_tokens',
+        anthropic: 'max_tokens',
+      }[protocol]]: 65536,
     })
     expect(
       within(dialog).getByText(
@@ -293,6 +300,9 @@ test.each(['responses', 'anthropic'])(
     fireEvent.change(screen.getAllByLabelText('Protocol')[1], {
       target: { value: protocol },
     })
+    fireEvent.change(screen.getAllByLabelText('Maximum output tokens')[1], {
+      target: { value: '65536' },
+    })
     fireEvent.click(screen.getByText('Start comparison'))
     await waitFor(() =>
       expect(comparisonRequest).toHaveBeenCalledWith(
@@ -315,6 +325,7 @@ test.each(['responses', 'anthropic'])(
               model: 'second-model',
               protocol,
               effort: protocol === 'anthropic' ? '' : 'medium',
+              max_output_tokens: 65536,
             }),
           ],
         })
@@ -408,4 +419,69 @@ test('legacy migration removes plaintext keys while preserving history and non-s
   expect(localStorage.getItem('degradation-watch:self-test-history')).toBe(
     '[{"id":"legacy"}]'
   )
+})
+
+test('incomplete output keeps copyable text and puts the full upstream diagnostic behind a disclosure', async () => {
+  const user = userEvent.setup()
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+  vi.mocked(useInViewport).mockReturnValue({
+    ref: { current: null },
+    inView: true,
+  })
+  const output = '<html>partial output'
+  const error = JSON.stringify({
+    type: 'response.incomplete',
+    response: {
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+    },
+  })
+  renderResult({
+    status: 'incomplete',
+    output,
+    error,
+    output_tokens: 8192,
+    max_output_tokens: 32768,
+  })
+  expect(screen.getByText('Output incomplete')).toBeInTheDocument()
+  expect(
+    await screen.findByText(
+      'Output limit reached. Generated content is preserved. Load this round into the form and increase the output limit to test again.'
+    )
+  ).toBeInTheDocument()
+  await user.click(
+    await screen.findByRole('button', { name: 'Copy full output' })
+  )
+  expect(copy).toHaveBeenLastCalledWith(output)
+  const summary = screen.getByText('Upstream diagnostic')
+  const details = summary.closest('details')
+  if (!details) throw new Error('Missing diagnostic disclosure')
+  expect(details.open).toBe(false)
+  await user.click(summary)
+  expect(details.open).toBe(true)
+  expect(within(details).getByText(error)).toBeInTheDocument()
+  await user.click(within(details).getByRole('button'))
+  expect(copy).toHaveBeenLastCalledWith(error)
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
+})
+
+test('an incomplete content-filter response is not labeled as an output limit merely because it includes max_output_tokens', async () => {
+  const error = JSON.stringify({
+    type: 'response.incomplete',
+    response: {
+      max_output_tokens: 32768,
+      incomplete_details: { reason: 'content_filter' },
+    },
+  })
+  renderResult({ status: 'incomplete', error })
+  expect(
+    await screen.findByText(
+      'The upstream response is incomplete. Generated content is preserved; see the diagnostic for the reason.'
+    )
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText(
+      'Output limit reached. Generated content is preserved. Load this round into the form and increase the output limit to test again.'
+    )
+  ).toBeNull()
 })

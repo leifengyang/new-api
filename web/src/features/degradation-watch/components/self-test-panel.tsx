@@ -102,7 +102,11 @@ function ComparisonWorkspace(props: { userID: number | undefined }) {
     const legacy = migrateSelfTestSettings()
     form.reset({
       groups: profiles.data.length
-        ? profiles.data.map((group) => ({ ...group, api_key: '' }))
+        ? profiles.data.map((group) => ({
+            ...group,
+            max_output_tokens: group.max_output_tokens ?? 32768,
+            api_key: '',
+          }))
         : [
             {
               ...newTestGroup(),
@@ -153,6 +157,7 @@ function ComparisonWorkspace(props: { userID: number | undefined }) {
           ...current,
           groups: saved.map((group, index) => ({
             ...group,
+            max_output_tokens: group.max_output_tokens ?? 32768,
             api_key:
               action.kind === 'start'
                 ? ''
@@ -409,6 +414,9 @@ function ComparisonWorkspace(props: { userID: number | undefined }) {
                         model: item.model,
                         protocol: item.protocol,
                         effort: item.effort,
+                        max_output_tokens:
+                          item.max_output_tokens ??
+                          (item.protocol === 'anthropic' ? 8192 : 32768),
                         remember_key: saved?.remember_key ?? false,
                         has_saved_key: saved?.has_saved_key ?? false,
                       }

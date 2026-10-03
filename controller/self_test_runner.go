@@ -185,6 +185,7 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 	var raw bytes.Buffer
 	key := ""
 	var runErr error
+	incomplete := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			runErr = errors.New("self-test worker failed unexpectedly")
@@ -193,6 +194,9 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 		attempt.Status = "succeeded"
 		if runErr != nil {
 			attempt.Status = "failed"
+			if incomplete {
+				attempt.Status = "incomplete"
+			}
 			attempt.Error = model.LongText(service.RedactSelfTestSecret(runErr.Error(), key))
 		}
 		attempt.Output = model.LongText(service.RedactSelfTestSecret(string(attempt.Output), key))
@@ -217,20 +221,32 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 		return
 	}
 	payload := map[string]any{"model": attempt.Model, "stream": true}
+	// Old attempts retain their original request semantics when retried.
+	limit := attempt.MaxOutputTokens
+	if limit == nil && attempt.Protocol == "anthropic" {
+		legacyLimit := uint(8192)
+		limit = &legacyLimit
+	}
 	path := "/chat/completions"
 	if attempt.Protocol == "anthropic" {
 		path = "/messages"
 		payload["messages"] = []map[string]string{{"role": "user", "content": string(round.Prompt)}}
-		payload["max_tokens"] = 8192
+		payload["max_tokens"] = *limit
 	} else if attempt.Protocol == "responses" {
 		path = "/responses"
 		payload["input"] = string(round.Prompt)
+		if limit != nil {
+			payload["max_output_tokens"] = *limit
+		}
 		if attempt.Effort != "" {
 			payload["reasoning"] = map[string]any{"effort": attempt.Effort}
 		}
 	} else {
 		payload["messages"] = []map[string]string{{"role": "user", "content": string(round.Prompt)}}
 		payload["stream_options"] = map[string]bool{"include_usage": true}
+		if limit != nil {
+			payload["max_completion_tokens"] = *limit
+		}
 		if attempt.Effort != "" {
 			payload["reasoning_effort"] = attempt.Effort
 		}
@@ -311,17 +327,27 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 			fmt.Fprintf(&raw, "data: %s\n\n", compact)
 			attempt.FirstTokenMs = time.Since(started).Milliseconds()
 			if gjson.GetBytes(body, "stop_reason").String() == "max_tokens" {
-				runErr = errors.New("Anthropic response reached the 8192-token output limit")
+				incomplete = true
+				runErr = fmt.Errorf("max_tokens: upstream reached the output limit (requested %d tokens)", *limit)
+			}
+		} else if attempt.Protocol == "responses" {
+			response := gjson.ParseBytes(body)
+			if response.Get("response").IsObject() {
+				response = response.Get("response")
+			}
+			status := response.Get("status").String()
+			if status == "" {
+				status = "completed"
+			}
+			compact, _ := common.Marshal(map[string]any{"type": "response." + status, "response": response.Value()})
+			fmt.Fprintf(&raw, "data: %s\n\n", compact)
+			attempt.FirstTokenMs = max(1, time.Since(started).Milliseconds())
+			if status := response.Get("status").String(); status == "incomplete" || status == "failed" || status == "cancelled" {
+				incomplete = status == "incomplete"
+				runErr = errors.New(string(body))
 			}
 		} else {
 			text := gjson.GetBytes(body, "choices.0.message.content").String()
-			if attempt.Protocol == "responses" {
-				for _, item := range gjson.GetBytes(body, "output").Array() {
-					for _, content := range item.Get("content").Array() {
-						text += content.Get("text").String()
-					}
-				}
-			}
 			if text == "" {
 				runErr = fmt.Errorf("no output in upstream response\n%s", body)
 				return
@@ -333,6 +359,10 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 			}
 			textJSON, _ := common.Marshal(text)
 			fmt.Fprintf(&raw, "data: {\"choices\":[{\"delta\":{\"content\":%s}}],\"usage\":%s}\n\n", textJSON, usage)
+			if gjson.GetBytes(body, "choices.0.finish_reason").String() == "length" {
+				incomplete = true
+				runErr = errors.New("max_output_tokens: upstream reached the output limit")
+			}
 		}
 	} else {
 		events := make(chan selfTestStreamEvent, 8)
@@ -368,12 +398,20 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 				}
 				obj := gjson.Parse(event.data)
 				kind := obj.Get("type").String()
+				// Terminal events carry the final output and usage even when incomplete.
+				compact, _ := common.Marshal(obj.Value())
+				fmt.Fprintf(&raw, "data: %s\n\n", compact)
 				if obj.Get("error").Exists() || kind == "response.failed" || kind == "response.incomplete" || kind == "error" {
+					incomplete = kind == "response.incomplete"
 					runErr = errors.New(event.data)
 					break streamLoop
 				}
 				if kind == "response.completed" || obj.Get("choices.0.finish_reason").String() != "" {
 					completed = attempt.Protocol != "anthropic"
+				}
+				if obj.Get("choices.0.finish_reason").String() == "length" {
+					incomplete = true
+					runErr = errors.New("max_output_tokens: upstream reached the output limit")
 				}
 				if attempt.Protocol == "anthropic" {
 					if reason := obj.Get("delta.stop_reason").String(); kind == "message_delta" && reason != "" {
@@ -382,7 +420,8 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 					if kind == "message_stop" {
 						completed = true
 						if anthropicStopReason == "max_tokens" {
-							runErr = errors.New("Anthropic response reached the 8192-token output limit")
+							incomplete = true
+							runErr = fmt.Errorf("max_tokens: upstream reached the output limit (requested %d tokens)", *limit)
 						}
 						break streamLoop
 					}
@@ -393,8 +432,6 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 				if attempt.FirstTokenMs == 0 && (obj.Get("choices.0.delta.content").String() != "" || obj.Get("choices.0.delta.reasoning_content").String() != "" || strings.HasSuffix(kind, ".delta") && obj.Get("delta").String() != "") {
 					attempt.FirstTokenMs = max(1, time.Since(started).Milliseconds())
 				}
-				compact, _ := common.Marshal(obj.Value())
-				fmt.Fprintf(&raw, "data: %s\n\n", compact)
 				if kind == "response.completed" {
 					break streamLoop
 				}
@@ -413,6 +450,9 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 		}
 	}
 	applySelfTestProgress(&attempt, raw.Bytes(), string(round.Prompt), started)
+	if attempt.FirstTokenMs == 0 && attempt.Output != "" {
+		attempt.FirstTokenMs = max(1, time.Since(started).Milliseconds())
+	}
 	if runErr != nil {
 		return
 	}
@@ -441,6 +481,41 @@ func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt st
 		return
 	}
 	progress := degradationWatchProgress(raw, prompt, attempt.Model)
+	// A final Responses snapshot is authoritative; it may contain text missing
+	// from deltas. Replace rather than append, so text is never duplicated.
+	var snapshot strings.Builder
+	hasOutputUsage := false
+	for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
+		payload, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
+		if !ok || !gjson.ValidBytes(bytes.TrimSpace(payload)) {
+			continue
+		}
+		event := gjson.ParseBytes(payload)
+		for _, field := range []string{"usage.output_tokens", "usage.completion_tokens", "response.usage.output_tokens", "response.usage.completion_tokens"} {
+			hasOutputUsage = hasOutputUsage || event.Get(field).Type == gjson.Number
+		}
+		switch event.Get("type").String() {
+		case "response.completed", "response.incomplete", "response.failed", "response.cancelled":
+		default:
+			continue
+		}
+		if response := event.Get("response"); response.Get("output").IsArray() {
+			for _, item := range response.Get("output").Array() {
+				for _, part := range item.Get("content").Array() {
+					if part.Get("type").String() == "output_text" {
+						snapshot.WriteString(part.Get("text").String())
+					}
+				}
+			}
+			if snapshot.Len() > 0 {
+				progress.OutputText = model.LongText(snapshot.String())
+			}
+			snapshot.Reset()
+		}
+	}
+	if !hasOutputUsage {
+		progress.CompletionTokens = service.CountTextToken(string(progress.OutputText), attempt.Model)
+	}
 	attempt.Output, attempt.InputTokens, attempt.OutputTokens = progress.OutputText, progress.PromptTokens, progress.CompletionTokens
 	attempt.ReasoningTokens, attempt.TokensEstimated = progress.ReasoningTokens, progress.TokensEstimated
 	if progress.TokensEstimated {
