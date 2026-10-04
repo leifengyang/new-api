@@ -51,7 +51,7 @@ export async function getDegradationWatchHistory(
   ApiResponse<{ records: DegradationWatchRecord[]; next_before: number }>
 > {
   const res = await api.get('/api/degradation_watch/wall', {
-    params: { model, before, rounds: 10 },
+    params: { model, before, rounds: 4 },
   })
   return res.data
 }

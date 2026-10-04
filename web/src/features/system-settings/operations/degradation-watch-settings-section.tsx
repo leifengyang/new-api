@@ -313,7 +313,7 @@ export function DegradationWatchSettingsSection(
                     </FormControl>
                     <FormDescription>
                       {t(
-                        'Older attempts, hidden ones included, are removed; the success rate covers what is kept'
+                        'Attempts beyond this limit or older than 7 days are deleted, including hidden attempts and their content. Running checks are kept until they finish.'
                       )}
                     </FormDescription>
                     <FormMessage />

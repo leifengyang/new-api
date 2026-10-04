@@ -73,6 +73,7 @@ export interface DegradationWatchRound {
 }
 
 export interface DegradationWatchWall {
+  retention_since?: number
   enabled: boolean
   interval_minutes: number
   /** Only on the first page. */

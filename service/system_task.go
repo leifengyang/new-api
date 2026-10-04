@@ -135,6 +135,7 @@ func StartSystemTaskRunner() {
 
 			var lastScheduler time.Time
 			var lastStaleLockCleanup time.Time
+			var lastWatchCleanup time.Time
 			runPass := func() {
 				// The scheduler/stale-lock pass is throttled independently of the
 				// claim pass: wakeups (e.g. a manual log cleanup) should claim
@@ -144,6 +145,13 @@ func StartSystemTaskRunner() {
 					lastStaleLockCleanup = now
 					if err := model.ExpireStaleSystemTaskLocks(common.GetTimestamp()); err != nil {
 						logger.LogWarn(context.Background(), fmt.Sprintf("system task stale lock cleanup failed: %v", err))
+					}
+				}
+				// Retention runs independently of whether scheduled detection is enabled.
+				if now.Sub(lastWatchCleanup) >= time.Minute {
+					lastWatchCleanup = now
+					if _, err := model.PruneExpiredDegradationWatchRecords(now.Unix()); err != nil {
+						logger.LogWarn(context.Background(), fmt.Sprintf("degradation watch retention cleanup failed: %v", err))
 					}
 				}
 				if now.Sub(lastScheduler) >= systemTaskSchedulerInterval {

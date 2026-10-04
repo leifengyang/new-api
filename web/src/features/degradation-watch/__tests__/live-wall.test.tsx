@@ -29,22 +29,20 @@ import {
 import type { ReactNode } from 'react'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { getDegradationWatchHistory } from '../api'
+import { getDegradationWatchHistory, getDegradationWatchWall } from '../api'
 import { RecordCard } from '../components/record-card'
 import { WatchWall } from '../components/watch-wall'
-import {
-  useDegradationWatchHistory,
-  useDegradationWatchWall,
-} from '../hooks/use-degradation-watch'
 import type { DegradationWatchRecord } from '../types'
 
-vi.mock('../hooks/use-degradation-watch', () => ({
+vi.mock('../hooks/use-degradation-watch', async (original) => ({
+  ...(await original<typeof import('../hooks/use-degradation-watch')>()),
   useInViewport: () => ({ ref: { current: null }, inView: true }),
   useRecordHtml: () => ({}),
-  useDegradationWatchHistory: vi.fn(),
-  useDegradationWatchWall: vi.fn(),
 }))
-vi.mock('../api', () => ({ getDegradationWatchHistory: vi.fn() }))
+vi.mock('../api', () => ({
+  getDegradationWatchHistory: vi.fn(),
+  getDegradationWatchWall: vi.fn(),
+}))
 afterEach(() => vi.useRealTimers())
 
 vi.mock('../components/artwork-player-dialog', () => ({
@@ -98,73 +96,77 @@ test('failed cards retain the complete diagnostic with line breaks', () => {
   expect(screen.getByText(/request-id: final-line/).textContent).toBe(details)
 })
 
-test('each model displays its own recent history without empty round placeholders', () => {
-  vi.mocked(useDegradationWatchWall).mockReturnValue({
+test('each model starts with four cards and loads older checks only on request', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  vi.mocked(getDegradationWatchWall).mockResolvedValue({
+    success: true,
     data: {
+      enabled: true,
+      interval_minutes: 10,
+      rounds: [],
+      next_before: 0,
       lanes: ['sol', 'astra'].map((model) => ({
         model,
         configured: true,
         enabled: true,
-        total: 1,
+        reasoning_effort: 'high',
+        total: 8,
         succeeded: 0,
+        visible: 8,
+        avg_elapsed_ms: 0,
+        last_record_at: 1000,
       })),
     },
-  } as ReturnType<typeof useDegradationWatchWall>)
-  vi.mocked(useDegradationWatchHistory).mockImplementation(
-    (model) =>
-      ({
+  })
+  let newestID = 8
+  vi.mocked(getDegradationWatchHistory).mockImplementation(
+    async (model, before) => {
+      const top = before ? before - 1 : newestID
+      return {
+        success: true,
         data: {
-          records: [
-            {
-              ...record,
-              id: model === 'sol' ? 20 : 1,
-              model_name: model,
-              channel_title: `${model} channel`,
-              created_at: model === 'sol' ? 2000 : 1000,
-            },
-          ],
-          next_before: 0,
-        },
-      }) as ReturnType<typeof useDegradationWatchHistory>
-  )
-  render(<WatchWall />)
-  expect(
-    within(screen.getByRole('region', { name: 'sol' })).getByText('sol channel')
-  ).toBeInTheDocument()
-  expect(
-    within(screen.getByRole('region', { name: 'astra' })).getByText(
-      'astra channel'
-    )
-  ).toBeInTheDocument()
-  expect(screen.queryAllByText('—')).toHaveLength(0)
-})
-
-test('paging a lane replaces its cards and lets the user return to recent records', () => {
-  vi.mocked(useDegradationWatchWall).mockReturnValue({
-    data: { lanes: [{ model: 'sol', total: 30, succeeded: 30 }] },
-  } as ReturnType<typeof useDegradationWatchWall>)
-  vi.mocked(useDegradationWatchHistory).mockImplementation(
-    (_model, before) =>
-      ({
-        data: {
-          records: Array.from({ length: 10 }, (_, i) => ({
+          records: Array.from({ length: 4 }, (_, i) => ({
             ...record,
-            id: (before || 30) - i,
-            channel_title: `check-${(before || 30) - i}`,
+            id: top - i,
+            model_name: model,
+            channel_title: `${model}-${top - i}`,
           })),
-          next_before: before ? 0 : 20,
+          next_before: top > 4 ? top - 3 : 0,
         },
-      }) as ReturnType<typeof useDegradationWatchHistory>
+      }
+    }
   )
-  render(<WatchWall />)
-  expect(screen.getAllByRole('article')).toHaveLength(10)
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
-  expect(screen.queryByText('check-30')).toBeNull()
-  expect(screen.getByText('check-20')).toBeInTheDocument()
-  expect(screen.getAllByRole('article')).toHaveLength(10)
-  fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
-  expect(screen.getByText('check-30')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <WatchWall />
+    </QueryClientProvider>
+  )
+  const lane = within(await screen.findByRole('region', { name: 'sol' }))
+  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(4))
+  expect(lane.queryByText('sol-4')).toBeNull()
+  fireEvent.click(lane.getByRole('button', { name: 'Load more' }))
+  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(8))
+  expect(lane.getByText('sol-8')).toBeInTheDocument()
+  expect(lane.getByText('sol-1')).toBeInTheDocument()
+  expect(lane.queryByRole('button', { name: 'Load more' })).toBeNull()
+  expect(
+    within(screen.getByRole('region', { name: 'astra' })).getAllByRole(
+      'article'
+    )
+  ).toHaveLength(4)
+  newestID = 10
+  await act(async () => {
+    await client.refetchQueries({ queryKey: ['degradation-watch', 'wall'] })
+  })
+  expect(lane.getAllByRole('article')).toHaveLength(8)
+  expect(lane.queryByText('sol-10')).toBeNull()
+  fireEvent.click(lane.getByRole('button', { name: 'Refresh' }))
+  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(4))
+  expect(await lane.findByText('sol-10')).toBeInTheDocument()
+  view.unmount()
+  client.clear()
 })
 
 test('history polls the current page without polling old completed pages or invisible lanes', async () => {
@@ -226,6 +228,62 @@ test('history polls the current page without polling old completed pages or invi
     await vi.advanceTimersByTimeAsync(5000)
   })
   expect(getDegradationWatchHistory).toHaveBeenCalledTimes(calls)
+  view.unmount()
+  client.clear()
+})
+
+test('cached expired cards disappear when the server retention window advances, while running checks remain', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const wall = {
+    enabled: true,
+    interval_minutes: 10,
+    rounds: [],
+    next_before: 0,
+    retention_since: 0,
+    lanes: [
+      {
+        model: 'sol',
+        configured: true,
+        enabled: true,
+        reasoning_effort: 'high',
+        total: 1,
+        succeeded: 0,
+        visible: 1,
+        avg_elapsed_ms: 0,
+        last_record_at: 1000,
+      },
+    ],
+  }
+  vi.mocked(getDegradationWatchWall).mockResolvedValue({
+    success: true,
+    data: wall,
+  })
+  vi.mocked(getDegradationWatchHistory).mockResolvedValue({
+    success: true,
+    data: {
+      records: [
+        { ...record, id: 1, channel_title: 'expired check', status: 'failed' },
+        { ...record, id: 2, channel_title: 'running check', status: 'running' },
+      ],
+      next_before: 0,
+    },
+  })
+  const view = render(
+    <QueryClientProvider client={client}>
+      <WatchWall />
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText('expired check')).toBeInTheDocument()
+  await act(async () => {
+    client.setQueryData(['degradation-watch', 'wall'], {
+      ...wall,
+      retention_since: 1001,
+    })
+  })
+  await waitFor(() => expect(screen.queryByText('expired check')).toBeNull())
+  expect(screen.getByText('running check')).toBeInTheDocument()
   view.unmount()
   client.clear()
 })

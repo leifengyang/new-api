@@ -255,3 +255,52 @@ func TestDegradationWatchLiveDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestDegradationWatchSevenDayRetentionMatrix(t *testing.T) {
+	const now int64 = 1800000000
+	cutoff := now - DegradationWatchRetentionSeconds
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := useDegradationWatchMatrixDB(t, dialect)
+			fixtures := []DegradationWatchRecord{
+				{ChannelId: 1, ModelName: "sol", Status: "succeeded", Success: true, CreatedAt: cutoff - 1, Html: "expired html", OutputText: "expired output"},
+				{ChannelId: 1, ModelName: "sol", Status: "failed", Hidden: true, CreatedAt: cutoff - 1, ErrorDetails: "expired error"},
+				{ChannelId: 1, ModelName: "sol", CreatedAt: cutoff - 1},
+				{ChannelId: 1, ModelName: "sol", Status: "succeeded", Success: true, CreatedAt: cutoff, Html: "boundary html"},
+				{ChannelId: 1, ModelName: "sol", Status: "failed", CreatedAt: now},
+				{ChannelId: 1, ModelName: "sol", Status: "running", CreatedAt: cutoff - 1},
+				{ChannelId: 1, ModelName: "sol", Status: "queued", CreatedAt: cutoff - 1},
+			}
+			require.NoError(t, db.Create(&fixtures).Error)
+			filter := DegradationWatchRecordFilter{ModelNames: []string{"sol"}, IncludeHidden: true, Since: cutoff}
+			page, err := ListDegradationWatchRecordsBefore(filter, 0, 10)
+			require.NoError(t, err)
+			require.Len(t, page, 4, "expired completed content is excluded even before cleanup runs")
+			assert.Equal(t, []int{fixtures[6].Id, fixtures[5].Id, fixtures[4].Id, fixtures[3].Id}, []int{page[0].Id, page[1].Id, page[2].Id, page[3].Id})
+			stats, err := GetDegradationWatchModelStats(nil, cutoff)
+			require.NoError(t, err)
+			require.Contains(t, stats, "sol")
+			assert.EqualValues(t, 2, stats["sol"].Total)
+			assert.EqualValues(t, 1, stats["sol"].Succeeded)
+			deleted, err := PruneExpiredDegradationWatchRecords(now)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, deleted)
+			for _, record := range fixtures[:3] {
+				_, err = GetDegradationWatchRecordHtml(record.Id)
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+				_, err = GetDegradationWatchOutput(record.Id)
+				assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			}
+			html, err := GetDegradationWatchRecordHtml(fixtures[3].Id)
+			require.NoError(t, err)
+			assert.Equal(t, "boundary html", html)
+			deleted, err = PruneExpiredDegradationWatchRecords(now)
+			require.NoError(t, err)
+			assert.Zero(t, deleted, "repeated cleanup is idempotent and preserves active tasks")
+			require.NoError(t, FinishDegradationWatchRecord(&fixtures[5]))
+			deleted, err = PruneExpiredDegradationWatchRecords(now)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, deleted, "an expired task is removed after finishing")
+		})
+	}
+}

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Bird } from 'lucide-react'
+import { Bird, ArrowRight, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -38,9 +38,6 @@ import type { DegradationWatchLane, DegradationWatchRecord } from '../types'
 import { RecordPlayerDialog } from './artwork-player-dialog'
 import { RecordCard } from './record-card'
 
-/** Lanes stay readable on narrow screens by scrolling sideways instead of shrinking. */
-const LANE_MIN_WIDTH = 300
-
 interface LaneHeaderProps {
   lane: DegradationWatchLane
 }
@@ -59,7 +56,7 @@ function LaneHeader(props: LaneHeaderProps) {
         }).format(rate)
 
   return (
-    <div className='bg-background sticky top-0 z-10 flex flex-col gap-1 border-b px-3 py-2'>
+    <div className='flex min-w-0 flex-1 flex-col gap-1 px-4 py-3'>
       <div className='flex items-center gap-2'>
         <span className='truncate font-semibold'>{lane.model}</span>
         {!lane.configured && (
@@ -88,64 +85,120 @@ function LaneHeader(props: LaneHeaderProps) {
   )
 }
 
+function HistoryPage(props: {
+  model: string
+  since: number
+  before: number
+  enabled: boolean
+  last: boolean
+  onMore: (next: number, newest: number) => void
+  onOpen: (record: DegradationWatchRecord) => void
+}) {
+  const { t } = useTranslation()
+  const history = useDegradationWatchHistory(
+    props.model,
+    props.before,
+    props.enabled
+  )
+  const records = (history.data?.records ?? []).filter(
+    (record) =>
+      record.created_at >= props.since ||
+      record.status === 'queued' ||
+      record.status === 'running'
+  )
+  return (
+    <div
+      className='flex shrink-0 items-start gap-3'
+      aria-busy={history.isFetching}
+    >
+      {history.isLoading && (
+        <div className='w-64'>
+          <LoadingState />
+        </div>
+      )}
+      {history.isError && (
+        <div className='w-64'>
+          <ErrorState
+            title={t('Failed to load the degradation watch')}
+            onRetry={() => void history.refetch()}
+          />
+        </div>
+      )}
+      {!history.isLoading && !history.isError && records.length === 0 && (
+        <EmptyState title={t('No artwork yet')} className='min-h-40' />
+      )}
+      {records.map((record) => (
+        <div
+          key={record.id}
+          className='w-[max(16rem,calc((100cqw-10.5rem)/4))] shrink-0'
+        >
+          <RecordCard
+            record={record}
+            title={record.channel_title}
+            onOpen={props.onOpen}
+          />
+        </div>
+      ))}
+      {props.last &&
+        records.length > 0 &&
+        Boolean(history.data?.next_before) && (
+          <Button
+            variant='outline'
+            className='my-auto h-auto min-h-32 w-24 flex-col gap-3 border-dashed whitespace-normal'
+            disabled={history.isFetching}
+            onClick={() => {
+              const next = history.data?.next_before
+              if (next && records.length) props.onMore(next, records[0].id)
+            }}
+          >
+            <ArrowRight className='size-5' aria-hidden='true' />
+            {t('Load more')}
+          </Button>
+        )}
+    </div>
+  )
+}
+
 function ModelLane(props: {
   lane: DegradationWatchLane
+  since: number
   onOpen: (record: DegradationWatchRecord) => void
 }) {
   const { t } = useTranslation()
   const [cursors, setCursors] = useState<number[]>([0])
   const { ref, inView } = useInViewport<HTMLElement>('0px')
-  const history = useDegradationWatchHistory(
-    props.lane.model,
-    cursors.at(-1),
-    inView
-  )
-  const records = history.data?.records ?? []
   return (
     <section
       ref={ref}
-      className='bg-muted/20 min-w-0 not-last:border-r'
+      className='bg-muted/20 @container min-w-0 overflow-hidden rounded-xl border'
       aria-label={props.lane.model}
     >
-      <LaneHeader lane={props.lane} />
-      <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
-        <Button
-          variant='ghost'
-          size='sm'
-          disabled={cursors.length === 1 || history.isFetching}
-          onClick={() => setCursors((current) => current.slice(0, -1))}
-        >
-          {t('Previous page')}
-        </Button>
-        <Button
-          variant='ghost'
-          size='sm'
-          disabled={!history.data?.next_before || history.isFetching}
-          onClick={() => {
-            const next = history.data?.next_before
-            if (next) setCursors((current) => [...current, next])
-          }}
-        >
-          {t('Next page')}
-        </Button>
+      <div className='flex items-center gap-3 border-b pr-4'>
+        <LaneHeader lane={props.lane} />
+        {cursors[0] !== 0 && (
+          <Button variant='ghost' size='sm' onClick={() => setCursors([0])}>
+            <RefreshCw aria-hidden='true' />
+            {t('Refresh')}
+          </Button>
+        )}
       </div>
-      <div className='flex flex-col gap-3 p-3'>
-        {history.isLoading && <LoadingState />}
-        {history.isError && (
-          <ErrorState
-            title={t('Failed to load the degradation watch')}
-            onRetry={() => void history.refetch()}
-          />
-        )}
-        {!history.isLoading && !history.isError && records.length === 0 && (
-          <EmptyState title={t('No artwork yet')} className='min-h-40' />
-        )}
-        {records.map((record) => (
-          <RecordCard
-            key={record.id}
-            record={record}
-            title={record.channel_title}
+      <div className='flex items-start gap-3 overflow-x-auto p-3' tabIndex={0}>
+        {cursors.map((before, index) => (
+          <HistoryPage
+            key={before === cursors[0] ? 'latest' : before}
+            model={props.lane.model}
+            since={props.since}
+            before={before}
+            enabled={inView}
+            last={index === cursors.length - 1}
             onOpen={props.onOpen}
+            onMore={(next, newest) =>
+              setCursors((current) => {
+                // Anchor the first page when browsing history so live inserts cannot create gaps.
+                const anchored = current[0] === 0 ? [newest + 1] : current
+                return [...anchored, next]
+              })
+            }
           />
         ))}
       </div>
@@ -175,7 +228,7 @@ export function WatchWall() {
       <Alert>
         <AlertDescription>
           {t(
-            'Each model has its own latest checks, newest first. Running checks update automatically.'
+            'Each model shows its latest 4 checks. Load more on the right. Completed checks and their content are deleted after 7 days.'
           )}
         </AlertDescription>
       </Alert>
@@ -183,19 +236,17 @@ export function WatchWall() {
         <EmptyState icon={Bird} title={t('No artwork yet')} />
       ) : (
         <div
-          className='max-h-[calc(100dvh-14rem)] overflow-auto rounded-xl border'
+          className='flex min-w-0 flex-col gap-4'
           data-testid='degradation-watch-grid'
         >
-          <div
-            className='grid items-start'
-            style={{
-              gridTemplateColumns: `repeat(${lanes.length}, minmax(${LANE_MIN_WIDTH}px, 1fr))`,
-            }}
-          >
-            {lanes.map((lane) => (
-              <ModelLane key={lane.model} lane={lane} onOpen={setOpenRecord} />
-            ))}
-          </div>
+          {lanes.map((lane) => (
+            <ModelLane
+              key={lane.model}
+              lane={lane}
+              since={first.retention_since ?? 0}
+              onOpen={setOpenRecord}
+            />
+          ))}
         </div>
       )}
       <RecordPlayerDialog
