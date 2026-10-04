@@ -30,7 +30,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 
-import { comparisonRequest, type ComparisonInput } from '../lib/comparison'
+import {
+  comparisonEfforts,
+  comparisonRequest,
+  type ComparisonInput,
+} from '../lib/comparison'
 
 export function ComparisonGroupEditor(props: {
   form: UseFormReturn<ComparisonInput>
@@ -43,6 +47,8 @@ export function ComparisonGroupEditor(props: {
   const prefix = `groups.${props.index}` as const
   const [models, setModels] = useState<string[]>([])
   const group = props.form.watch(prefix)
+  const errors = props.form.formState.errors.groups?.[props.index]
+  const efforts = comparisonEfforts(group.protocol, group.model)
   const fetchModels = useMutation({
     mutationFn: () =>
       comparisonRequest<string[]>(
@@ -126,9 +132,10 @@ export function ComparisonGroupEditor(props: {
                   setModels([])
                   const effort = props.form.getValues(`${prefix}.effort`)
                   if (
-                    (event.target.value === 'anthropic' &&
-                      ['none', 'minimal'].includes(effort)) ||
-                    (event.target.value !== 'anthropic' && effort === 'max')
+                    !comparisonEfforts(
+                      event.target.value,
+                      group.model
+                    ).includes(effort)
                   ) {
                     props.form.setValue(`${prefix}.effort`, '')
                   }
@@ -150,24 +157,40 @@ export function ComparisonGroupEditor(props: {
             <Label htmlFor={`${id}-effort`}>{t('Reasoning effort')}</Label>
             <NativeSelect
               id={`${id}-effort`}
+              aria-invalid={!!errors?.effort}
               {...props.form.register(`${prefix}.effort`)}
             >
               <NativeSelectOption value=''>{t('Default')}</NativeSelectOption>
               {(group.protocol === 'anthropic'
                 ? ['low', 'medium', 'high', 'xhigh', 'max']
-                : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+                : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
               ).map((value) => (
-                <NativeSelectOption key={value} value={value}>
+                <NativeSelectOption
+                  key={value}
+                  value={value}
+                  disabled={!efforts.includes(value)}
+                >
                   {value}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
           </div>
         </div>
-        {group.protocol === 'anthropic' && (
+        {errors?.effort && (
+          <p role='alert' className='text-destructive text-xs'>
+            {t('Choose a supported reasoning effort for this model.')}
+          </p>
+        )}
+        {group.protocol === 'anthropic' ? (
           <p className='text-muted-foreground text-xs leading-relaxed'>
             {t(
               'Anthropic effort support depends on the model and channel. Select Default to use model defaults.'
+            )}
+          </p>
+        ) : (
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'Supported effort levels vary by model and channel. Default omits the parameter.'
             )}
           </p>
         )}
@@ -242,7 +265,7 @@ export function ComparisonGroupEditor(props: {
             ))}
           </NativeSelect>
         )}
-        {props.form.formState.errors.groups?.[props.index] && (
+        {(errors?.name || errors?.base_url || errors?.model) && (
           <p role='alert' className='text-destructive text-xs'>
             {t('Complete the group name, HTTPS URL and model.')}
           </p>

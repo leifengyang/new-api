@@ -21,18 +21,39 @@ import { z } from 'zod'
 import { api } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
-export const groupSchema = z.object({
-  id: z.number(),
-  name: z.string().trim().min(1).max(128),
-  base_url: z.string().url().max(1024),
-  model: z.string().trim().min(1).max(128),
-  protocol: z.enum(['chat', 'responses', 'anthropic']),
-  effort: z.string(),
-  max_output_tokens: z.number().int().min(1).max(1073741823).optional(),
-  api_key: z.string().max(8192),
-  remember_key: z.boolean(),
-  has_saved_key: z.boolean(),
-})
+// Keep exact-model restrictions aligned with prepareSelfTestGroups. Unknown
+// gateway aliases retain protocol choices rather than guessed model limits.
+export function comparisonEfforts(protocol: string, model: string): string[] {
+  if (
+    protocol === 'anthropic' ||
+    ['gpt-6.1-sol', 'gpt-6-astra'].includes(model.trim())
+  ) {
+    return ['', 'low', 'medium', 'high', 'xhigh', 'max']
+  }
+  return ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+}
+
+export const groupSchema = z
+  .object({
+    id: z.number(),
+    name: z.string().trim().min(1).max(128),
+    base_url: z.string().url().max(1024),
+    model: z.string().trim().min(1).max(128),
+    protocol: z.enum(['chat', 'responses', 'anthropic']),
+    effort: z.string(),
+    max_output_tokens: z.number().int().min(1).max(1073741823).optional(),
+    api_key: z.string().max(8192),
+    remember_key: z.boolean(),
+    has_saved_key: z.boolean(),
+  })
+  .refine(
+    (group) =>
+      comparisonEfforts(group.protocol, group.model).includes(group.effort),
+    {
+      path: ['effort'],
+      message: 'Choose a supported reasoning effort for this model.',
+    }
+  )
 export const comparisonSchema = z.object({
   groups: z.array(groupSchema).min(1).max(10),
   prompt: z.string().trim().min(1).max(32000),

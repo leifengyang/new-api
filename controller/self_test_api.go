@@ -70,11 +70,16 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 			return nil, nil, err
 		}
 		input.Name, input.Model = strings.TrimSpace(input.Name), strings.TrimSpace(input.Model)
-		efforts := []string{"", "none", "minimal", "low", "medium", "high", "xhigh"}
-		if input.Protocol == "anthropic" {
+		efforts := []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
+		// Only exact, verified model IDs have model-specific restrictions. Gateway
+		// aliases may expose different capabilities; do not infer them from prefixes.
+		if input.Protocol == "anthropic" || input.Model == "gpt-6.1-sol" || input.Model == "gpt-6-astra" {
 			efforts = []string{"", "low", "medium", "high", "xhigh", "max"}
 		}
-		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses", "anthropic"}, input.Protocol) || !slices.Contains(efforts, input.Effort) || len(input.APIKey) > 8192 {
+		if !slices.Contains(efforts, input.Effort) {
+			return nil, nil, errors.New("unsupported reasoning effort for this model and protocol; choose Default or a supported level")
+		}
+		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses", "anthropic"}, input.Protocol) || len(input.APIKey) > 8192 {
 			return nil, nil, errors.New("invalid group name, model, protocol, reasoning effort or key")
 		}
 		if input.MaxOutputTokens == nil {

@@ -63,13 +63,15 @@ export function InputDetailsDialog(props: {
         : 'max_completion_tokens'
     outputSettings[field] = attempt.max_output_tokens
   }
+  if (attempt.effort && attempt.protocol === 'responses') {
+    outputSettings.reasoning = { effort: attempt.effort }
+  } else if (attempt.effort && attempt.protocol === 'chat') {
+    outputSettings.reasoning_effort = attempt.effort
+  }
   const settings = {
     base_url: attempt.base_url,
     model: attempt.model,
     protocol: attempt.protocol,
-    ...(attempt.protocol !== 'anthropic' && {
-      reasoning_effort: attempt.effort || null,
-    }),
     prompt: props.prompt,
     ...outputSettings,
   }
