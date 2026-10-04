@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Activity, Clock3, RotateCcw, Square } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
@@ -56,28 +56,34 @@ export function ComparisonResult(props: {
   const [expanded, setExpanded] = useState(false)
   const [player, setPlayer] = useState(false)
   const [inputOpen, setInputOpen] = useState(false)
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false)
   const latest = props.latest
   const attempt = props.attempts.find((item) => item.id === selected) ?? latest
   const active = attempt.status === 'queued' || attempt.status === 'running'
-  const { ref, inView } = useInViewport<HTMLDivElement>()
+  const { ref, inView } = useInViewport<HTMLDivElement>('0px')
   const detail = useQuery({
     queryKey: ['self-test', userID, 'attempt', attempt.id, attempt.status],
     queryFn: () =>
       comparisonRequest<ComparisonAttempt>(`/attempts/${attempt.id}`),
     enabled: player || (inView && (expanded || !active)),
-    refetchInterval: active && (expanded || player) ? 1000 : false,
+    staleTime: active ? 0 : Infinity,
+    gcTime: 2 * 60_000,
+    refetchInterval: active && ((inView && expanded) || player) ? 1000 : false,
   })
   const record = comparisonRecord(attempt)
-  if (attempt.status === 'incomplete') {
-    let outputLimited = /^(max_output_tokens|max_tokens):/.test(attempt.error)
+  const outputLimited = useMemo(() => {
+    if (attempt.status !== 'incomplete') return false
     try {
       const diagnostic = JSON.parse(attempt.error)
       const reason = (diagnostic.response ?? diagnostic).incomplete_details
         ?.reason
-      outputLimited = reason === 'max_output_tokens'
+      return reason === 'max_output_tokens'
     } catch {
       // Native Anthropic and Chat length stops use a concise diagnostic.
+      return /^(max_output_tokens|max_tokens):/.test(attempt.error)
     }
+  }, [attempt.status, attempt.error])
+  if (attempt.status === 'incomplete') {
     record.error_details = outputLimited
       ? t(
           'Output limit reached. Generated content is preserved. Load this round into the form and increase the output limit to test again.'
@@ -110,21 +116,28 @@ export function ComparisonResult(props: {
         previewClassName='h-64 min-h-64 overflow-auto'
         title={attempt.model}
         localHtml={detail.data?.html ?? ''}
-        localOutput={detail.data?.output}
+        localOutput={inView ? detail.data?.output : undefined}
         onOpen={() => setPlayer(true)}
         onInputClick={() => setInputOpen(true)}
       />
       {attempt.status === 'incomplete' && (
-        <details className='rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs'>
+        <details
+          className='rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs'
+          onToggle={(event) => setDiagnosticOpen(event.currentTarget.open)}
+        >
           <summary className='cursor-pointer text-amber-700 dark:text-amber-300'>
             {t('Upstream diagnostic')}
           </summary>
-          <div className='mt-2 flex justify-end'>
-            <CopyButton value={attempt.error} />
-          </div>
-          <pre className='max-h-48 overflow-auto break-all whitespace-pre-wrap'>
-            {attempt.error}
-          </pre>
+          {diagnosticOpen && (
+            <>
+              <div className='mt-2 flex justify-end'>
+                <CopyButton value={attempt.error} />
+              </div>
+              <pre className='max-h-48 overflow-auto break-all whitespace-pre-wrap'>
+                {attempt.error}
+              </pre>
+            </>
+          )}
         </details>
       )}
       {detail.isError && (
@@ -205,7 +218,7 @@ export function ComparisonResult(props: {
           ))}
         </NativeSelect>
       )}
-      {expanded && (
+      {expanded && inView && (
         <div className='h-80 overflow-hidden rounded-lg border'>
           <TextOutputPreview
             output={detail.data?.output ?? ''}

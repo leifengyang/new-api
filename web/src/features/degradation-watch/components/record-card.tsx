@@ -55,7 +55,7 @@ interface ArtworkPreviewProps {
 /** Loads and mounts the artwork only while the card is near the viewport. */
 function ArtworkPreview(props: ArtworkPreviewProps) {
   const { t } = useTranslation()
-  const { ref, inView } = useInViewport<HTMLDivElement>()
+  const { ref, inView } = useInViewport<HTMLDivElement>('0px')
   const html = useRecordHtml(
     props.record.id,
     inView && props.localHtml === undefined
@@ -304,7 +304,7 @@ export function RecordCard(props: RecordCardProps) {
   return (
     <article
       className={cn(
-        'bg-card flex min-w-0 flex-col overflow-hidden rounded-xl border shadow-sm',
+        'bg-card flex min-w-0 flex-col overflow-hidden rounded-xl border shadow-sm [content-visibility:auto] [contain-intrinsic-size:auto_480px]',
         active && 'border-sky-500/30'
       )}
     >

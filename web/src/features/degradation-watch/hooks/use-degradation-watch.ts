@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  useInfiniteQuery,
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -67,12 +67,19 @@ export function useDegradationWatchWall() {
   })
 }
 
-export function useDegradationWatchHistory(model: string) {
-  return useInfiniteQuery({
-    queryKey: [...degradationWatchKeys.wall, 'model', model],
-    initialPageParam: 0,
-    queryFn: async ({ pageParam }) => {
-      const result = await getDegradationWatchHistory(model, pageParam)
+export function useDegradationWatchHistory(
+  model: string,
+  before = 0,
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [...degradationWatchKeys.wall, 'model', model, before],
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: before === 0 ? 0 : Infinity,
+    gcTime: 2 * 60_000,
+    queryFn: async () => {
+      const result = await getDegradationWatchHistory(model, before)
       if (!result.success || !result.data) {
         throw createServerError(
           result,
@@ -81,13 +88,16 @@ export function useDegradationWatchHistory(model: string) {
       }
       return result.data
     },
-    getNextPageParam: (page) => page.next_before || undefined,
-    refetchInterval: (query) =>
-      query.state.data?.pages[0]?.records.some(
-        (record) => record.status === 'queued' || record.status === 'running'
-      )
-        ? 1_000
-        : 5_000,
+    refetchInterval: (query) => {
+      if (
+        query.state.data?.records.some(
+          (record) => record.status === 'queued' || record.status === 'running'
+        )
+      ) {
+        return 1_000
+      }
+      return before === 0 ? 5_000 : false
+    },
   })
 }
 

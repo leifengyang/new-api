@@ -28,6 +28,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import { ComparisonResult } from '../components/comparison-results'
+import { LegacySelfTests } from '../components/legacy-self-tests'
 import { SelfTestPanel } from '../components/self-test-panel'
 import { useInViewport } from '../hooks/use-degradation-watch'
 import {
@@ -636,3 +637,28 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
     expect(settings).not.toHaveProperty('output_config')
   }
 )
+
+test('legacy history is read and rendered only after opening its disclosure', async () => {
+  localStorage.setItem(
+    'degradation-watch:self-test-history',
+    JSON.stringify([
+      {
+        id: 'legacy',
+        model: 'legacy-model',
+        html: '<html>large history</html>',
+      },
+    ])
+  )
+  const read = vi.spyOn(Storage.prototype, 'getItem')
+  render(<LegacySelfTests />)
+  expect(read).not.toHaveBeenCalledWith('degradation-watch:self-test-history')
+  expect(screen.queryByText('legacy-model')).toBeNull()
+  const details = screen
+    .getByText('Stored in this browser only')
+    .closest('details')
+  if (!details) throw new Error('Missing history disclosure')
+  details.open = true
+  fireEvent(details, new Event('toggle'))
+  expect(await screen.findByText('legacy-model')).toBeInTheDocument()
+  read.mockRestore()
+})
