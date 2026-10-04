@@ -39,6 +39,27 @@ type DegradationWatchRecord struct {
 
 const maxDegradationWatchFailureReasonRunes = 500
 
+// DegradationWatchRetentionSeconds is the maximum age of completed wall content.
+const DegradationWatchRetentionSeconds int64 = 7 * 24 * 60 * 60
+
+// PruneExpiredDegradationWatchRecords bounds each cleanup pass to avoid a large
+// delete blocking the task runner. HTML, output and diagnostics belong to this row.
+func PruneExpiredDegradationWatchRecords(now int64) (int64, error) {
+	cutoff := now - DegradationWatchRetentionSeconds
+	if cutoff <= 0 {
+		return 0, errors.New("invalid retention cutoff")
+	}
+	var ids []int
+	err := DB.Model(&DegradationWatchRecord{}).
+		Where("created_at < ? AND status NOT IN ?", cutoff, []string{"queued", "running"}).
+		Order("created_at asc").Limit(500).Pluck("id", &ids).Error
+	if err != nil || len(ids) == 0 {
+		return 0, err
+	}
+	result := DB.Where("id IN ? AND status NOT IN ?", ids, []string{"queued", "running"}).Delete(&DegradationWatchRecord{})
+	return result.RowsAffected, result.Error
+}
+
 // degradationWatchListColumns 是列表查询要的列，刻意不含 html。
 var degradationWatchListColumns = []string{
 	"id", "channel_id", "run_id", "model_name", "reasoning_effort", "success", "failure_reason",
@@ -221,13 +242,14 @@ type DegradationWatchModelStats struct {
 
 // GetDegradationWatchModelStats 按模型汇总。channelIds 非 nil 时只统计这些渠道
 // （普通用户只该看到配了别名的渠道），nil 表示全部。
-func GetDegradationWatchModelStats(channelIds []int) (map[string]*DegradationWatchModelStats, error) {
+func GetDegradationWatchModelStats(channelIds []int, since int64) (map[string]*DegradationWatchModelStats, error) {
 	stats := make(map[string]*DegradationWatchModelStats)
 	if channelIds != nil && len(channelIds) == 0 {
 		return stats, nil
 	}
 	query := DB.Model(&DegradationWatchRecord{}).
 		Where("status NOT IN ?", []string{"queued", "running"}).
+		Where("created_at >= ?", since).
 		Select("model_name, COUNT(*) AS total, "+
 			"SUM(CASE WHEN success = ? THEN 1 ELSE 0 END) AS succeeded, "+
 			"SUM(CASE WHEN hidden = ? THEN 1 ELSE 0 END) AS visible, "+
@@ -249,6 +271,7 @@ func GetDegradationWatchModelStats(channelIds []int) (map[string]*DegradationWat
 
 // DegradationWatchRecordFilter 限定检测墙能看到的记录。nil 切片表示不限。
 type DegradationWatchRecordFilter struct {
+	Since         int64
 	ChannelIds    []int
 	ModelNames    []string
 	IncludeHidden bool
@@ -270,6 +293,9 @@ func ListDegradationWatchRecordsBefore(filter DegradationWatchRecordFilter, befo
 	}
 	if !filter.IncludeHidden {
 		query = query.Where("hidden = ?", false)
+	}
+	if filter.Since > 0 {
+		query = query.Where("(created_at >= ? OR status IN ?)", filter.Since, []string{"queued", "running"})
 	}
 	if beforeId > 0 {
 		query = query.Where("id < ?", beforeId)

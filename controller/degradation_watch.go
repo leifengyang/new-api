@@ -697,10 +697,11 @@ func newDegradationWatchVisibility(c *gin.Context) degradationWatchVisibility {
 }
 
 func (v degradationWatchVisibility) filter() model.DegradationWatchRecordFilter {
+	since := common.GetTimestamp() - model.DegradationWatchRetentionSeconds
 	if v.admin {
-		return model.DegradationWatchRecordFilter{IncludeHidden: true}
+		return model.DegradationWatchRecordFilter{IncludeHidden: true, Since: since}
 	}
-	filter := model.DegradationWatchRecordFilter{ChannelIds: []int{}, ModelNames: []string{}}
+	filter := model.DegradationWatchRecordFilter{ChannelIds: []int{}, ModelNames: []string{}, Since: since}
 	for id := range v.aliases {
 		if channelId, err := strconv.Atoi(id); err == nil && channelId > 0 {
 			filter.ChannelIds = append(filter.ChannelIds, channelId)
@@ -727,7 +728,7 @@ func (v degradationWatchVisibility) canView(record *model.DegradationWatchRecord
 // buildDegradationWatchLanes 按配置顺序列出泳道；管理员额外看到表里还有记录、
 // 但已经移出配置的模型，排在最后。
 func buildDegradationWatchLanes(v degradationWatchVisibility) ([]degradationWatchLane, error) {
-	stats, err := model.GetDegradationWatchModelStats(v.filter().ChannelIds)
+	stats, err := model.GetDegradationWatchModelStats(v.filter().ChannelIds, common.GetTimestamp()-model.DegradationWatchRetentionSeconds)
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +820,7 @@ func GetDegradationWatchWall(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		common.ApiSuccess(c, gin.H{"enabled": operation_setting.GetDegradationWatchSetting().Enabled, "interval_minutes": operation_setting.ResolveDegradationWatchParams().IntervalMinutes, "lanes": lanes, "rounds": []any{}, "next_before": 0})
+		common.ApiSuccess(c, gin.H{"enabled": operation_setting.GetDegradationWatchSetting().Enabled, "interval_minutes": operation_setting.ResolveDegradationWatchParams().IntervalMinutes, "lanes": lanes, "rounds": []any{}, "next_before": 0, "retention_since": visibility.filter().Since})
 		return
 	}
 	if modelName := c.Query("model"); modelName != "" {
@@ -867,6 +868,7 @@ func GetDegradationWatchWall(c *gin.Context) {
 		"enabled":          operation_setting.GetDegradationWatchSetting().Enabled,
 		"interval_minutes": operation_setting.ResolveDegradationWatchParams().IntervalMinutes,
 		"rounds":           rounds,
+		"retention_since":  visibility.filter().Since,
 		"next_before":      nextBefore,
 	}
 	if beforeId == 0 {
