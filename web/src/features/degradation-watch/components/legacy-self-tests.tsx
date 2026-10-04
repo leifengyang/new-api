@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
 
 import type { SelfTestResult } from '../lib/self-test'
@@ -27,25 +28,38 @@ import { ArtworkPlayerDialog } from './artwork-player-dialog'
 
 export function LegacySelfTests() {
   const { t } = useTranslation()
-  const [history] = useState(loadSelfTestHistory)
+  const [history, setHistory] = useState<SelfTestResult[] | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [selected, setSelected] = useState<SelfTestResult | null>(null)
-  if (!history.length) return null
   return (
-    <details className='rounded-xl border p-4'>
+    <details
+      className='rounded-xl border p-4'
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open)
+        if (event.currentTarget.open && history === null) {
+          setHistory(loadSelfTestHistory())
+        }
+      }}
+    >
       <summary className='cursor-pointer text-sm'>
         {t('Stored in this browser only')}
       </summary>
-      <div className='mt-3 flex flex-wrap gap-2'>
-        {history.map((item) => (
-          <Button
-            key={item.id}
-            variant='outline'
-            onClick={() => setSelected(item)}
-          >
-            {item.model}
-          </Button>
-        ))}
-      </div>
+      {expanded && (
+        <div className='mt-3 flex flex-wrap gap-2'>
+          {history?.length === 0 && (
+            <EmptyState title={t('No artwork yet')} className='min-h-24' />
+          )}
+          {history?.map((item) => (
+            <Button
+              key={item.id}
+              variant='outline'
+              onClick={() => setSelected(item)}
+            >
+              {item.model}
+            </Button>
+          ))}
+        </div>
+      )}
       {selected && (
         <ArtworkPlayerDialog
           open

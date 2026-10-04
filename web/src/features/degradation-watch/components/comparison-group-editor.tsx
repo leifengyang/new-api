@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation } from '@tanstack/react-query'
 import { Download, Trash2 } from 'lucide-react'
 import { useId, useState } from 'react'
-import { Controller, type UseFormReturn } from 'react-hook-form'
+import { Controller, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { PasswordInput } from '@/components/password-input'
@@ -46,7 +46,7 @@ export function ComparisonGroupEditor(props: {
   const id = useId()
   const prefix = `groups.${props.index}` as const
   const [models, setModels] = useState<string[]>([])
-  const group = props.form.watch(prefix)
+  const group = useWatch({ control: props.form.control, name: prefix })
   const errors = props.form.formState.errors.groups?.[props.index]
   const efforts = comparisonEfforts(group.protocol, group.model)
   const fetchModels = useMutation({

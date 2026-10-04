@@ -58,6 +58,7 @@ interface ArtworkPlayerDialogProps {
 export function ArtworkPlayerDialog(props: ArtworkPlayerDialogProps) {
   const { t } = useTranslation()
   const [showSource, setShowSource] = useState(false)
+  if (!props.open) return null
 
   let stage: ReactNode = null
   if (props.output && (!props.html || props.failureReason !== undefined)) {

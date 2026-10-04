@@ -31,6 +31,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import {
   useDegradationWatchWall,
   useDegradationWatchHistory,
+  useInViewport,
 } from '../hooks/use-degradation-watch'
 import { formatElapsed, successRate } from '../lib/artwork'
 import type { DegradationWatchLane, DegradationWatchRecord } from '../types'
@@ -92,20 +93,42 @@ function ModelLane(props: {
   onOpen: (record: DegradationWatchRecord) => void
 }) {
   const { t } = useTranslation()
-  const history = useDegradationWatchHistory(props.lane.model)
-  const records = [
-    ...new Map(
-      (history.data?.pages.flatMap((page) => page.records) ?? []).map(
-        (record) => [record.id, record]
-      )
-    ).values(),
-  ]
+  const [cursors, setCursors] = useState<number[]>([0])
+  const { ref, inView } = useInViewport<HTMLElement>('0px')
+  const history = useDegradationWatchHistory(
+    props.lane.model,
+    cursors.at(-1),
+    inView
+  )
+  const records = history.data?.records ?? []
   return (
     <section
+      ref={ref}
       className='bg-muted/20 min-w-0 not-last:border-r'
       aria-label={props.lane.model}
     >
       <LaneHeader lane={props.lane} />
+      <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
+        <Button
+          variant='ghost'
+          size='sm'
+          disabled={cursors.length === 1 || history.isFetching}
+          onClick={() => setCursors((current) => current.slice(0, -1))}
+        >
+          {t('Previous page')}
+        </Button>
+        <Button
+          variant='ghost'
+          size='sm'
+          disabled={!history.data?.next_before || history.isFetching}
+          onClick={() => {
+            const next = history.data?.next_before
+            if (next) setCursors((current) => [...current, next])
+          }}
+        >
+          {t('Next page')}
+        </Button>
+      </div>
       <div className='flex flex-col gap-3 p-3'>
         {history.isLoading && <LoadingState />}
         {history.isError && (
@@ -125,15 +148,6 @@ function ModelLane(props: {
             onOpen={props.onOpen}
           />
         ))}
-        {history.hasNextPage && (
-          <Button
-            variant='outline'
-            disabled={history.isFetchingNextPage}
-            onClick={() => void history.fetchNextPage()}
-          >
-            {history.isFetchingNextPage ? t('Loading...') : t('Load more')}
-          </Button>
-        )}
       </div>
     </section>
   )

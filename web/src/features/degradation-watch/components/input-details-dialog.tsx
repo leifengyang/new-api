@@ -38,6 +38,7 @@ export function InputDetailsDialog(props: {
   prompt: string
 }) {
   const { t, i18n } = useTranslation()
+  if (!props.open) return null
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const attempt = props.attempt
   let source = t('Upstream reported')
