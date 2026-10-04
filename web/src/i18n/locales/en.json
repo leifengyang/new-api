@@ -534,6 +534,7 @@
     "Answer": "Answer",
     "Answers for common access and billing questions": "Answers for common access and billing questions",
     "Anthropic": "Anthropic",
+    "Anthropic effort support depends on the model and channel. Select Default to use model defaults.": "Anthropic effort support depends on the model and channel. Select Default to use model defaults.",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages to OpenAI Chat",
     "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic uses model-default thinking and an 8,192-token output limit.",
     "Anthropic uses model-default thinking.": "Anthropic uses model-default thinking.",

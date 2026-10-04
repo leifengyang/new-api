@@ -111,7 +111,7 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
     const user = userEvent.setup()
     const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
     const prompt = `# Saved input\n${'Long prompt line\n'.repeat(80)}<script>alert(1)</script>\nFinal prompt line`
-    const effort = protocol === 'anthropic' ? '' : 'medium'
+    const effort = 'medium'
     renderResult(
       { protocol, effort, input_tokens: 9749, max_output_tokens: 65536 },
       prompt
@@ -137,7 +137,9 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
       base_url: 'https://example.com/v1',
       model: 'test-model',
       protocol,
-      reasoning_effort: effort || null,
+      ...(protocol === 'anthropic'
+        ? { output_config: { effort } }
+        : { reasoning_effort: effort }),
       prompt,
       [{
         chat: 'max_completion_tokens',
@@ -324,7 +326,7 @@ test.each(['responses', 'anthropic'])(
               api_key: 'key-two',
               model: 'second-model',
               protocol,
-              effort: protocol === 'anthropic' ? '' : 'medium',
+              effort: 'medium',
               max_output_tokens: 65536,
             }),
           ],
@@ -484,4 +486,69 @@ test('an incomplete content-filter response is not labeled as an output limit me
       'Output limit reached. Generated content is preserved. Load this round into the form and increase the output limit to test again.'
     )
   ).toBeNull()
+})
+
+test('switching a saved group to Anthropic keeps model discovery and native effort available', async () => {
+  vi.mocked(comparisonRequest).mockImplementation(async (path) => {
+    if (path === '/profiles') {
+      return [
+        {
+          id: 7,
+          name: 'Saved gateway',
+          base_url: 'https://example.com/v1',
+          model: 'claude-opus-5-5',
+          protocol: 'chat',
+          effort: 'medium',
+          max_output_tokens: 32768,
+          remember_key: true,
+          has_saved_key: true,
+        },
+      ]
+    }
+    if (path === '/models') return ['claude-opus-5-5']
+    return []
+  })
+  renderPanel()
+  await screen.findByDisplayValue('Saved gateway')
+  fireEvent.change(screen.getByLabelText('Protocol'), {
+    target: { value: 'anthropic' },
+  })
+  const effort = screen.getByLabelText('Reasoning effort')
+  expect(effort).toBeEnabled()
+  expect(effort).toHaveValue('medium')
+  expect(within(effort).queryByRole('option', { name: 'none' })).toBeNull()
+  fireEvent.change(effort, { target: { value: 'max' } })
+  const fetch = screen.getByRole('button', { name: 'Fetch models' })
+  expect(fetch).toBeEnabled()
+  fireEvent.click(fetch)
+  await screen.findByLabelText('Fetched models')
+  expect(comparisonRequest).toHaveBeenCalledWith(
+    '/models',
+    'post',
+    expect.objectContaining({
+      id: 7,
+      protocol: 'anthropic',
+      effort: 'max',
+      api_key: '',
+      has_saved_key: true,
+    })
+  )
+  fireEvent.change(screen.getByLabelText('Protocol'), {
+    target: { value: 'responses' },
+  })
+  expect(effort).toHaveValue('')
+  expect(fetch).toBeEnabled()
+  fireEvent.change(effort, { target: { value: 'minimal' } })
+  fireEvent.change(screen.getByLabelText('Protocol'), {
+    target: { value: 'anthropic' },
+  })
+  expect(effort).toHaveValue('')
+  fireEvent.change(screen.getByLabelText('Base URL'), {
+    target: { value: 'https://other.example/v1' },
+  })
+  expect(fetch).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('API key'), {
+    target: { value: 'new-fixture-key' },
+  })
+  expect(fetch).toBeEnabled()
 })

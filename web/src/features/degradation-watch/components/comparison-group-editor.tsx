@@ -123,9 +123,13 @@ export function ComparisonGroupEditor(props: {
               id={`${id}-protocol`}
               {...props.form.register(`${prefix}.protocol`, {
                 onChange: (event) => {
-                  props.form.setValue(`${prefix}.has_saved_key`, false)
                   setModels([])
-                  if (event.target.value === 'anthropic') {
+                  const effort = props.form.getValues(`${prefix}.effort`)
+                  if (
+                    (event.target.value === 'anthropic' &&
+                      ['none', 'minimal'].includes(effort)) ||
+                    (event.target.value !== 'anthropic' && effort === 'max')
+                  ) {
                     props.form.setValue(`${prefix}.effort`, '')
                   }
                 },
@@ -146,23 +150,25 @@ export function ComparisonGroupEditor(props: {
             <Label htmlFor={`${id}-effort`}>{t('Reasoning effort')}</Label>
             <NativeSelect
               id={`${id}-effort`}
-              disabled={group.protocol === 'anthropic'}
               {...props.form.register(`${prefix}.effort`)}
             >
               <NativeSelectOption value=''>{t('Default')}</NativeSelectOption>
-              {['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].map(
-                (value) => (
-                  <NativeSelectOption key={value} value={value}>
-                    {value}
-                  </NativeSelectOption>
-                )
-              )}
+              {(group.protocol === 'anthropic'
+                ? ['low', 'medium', 'high', 'xhigh', 'max']
+                : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+              ).map((value) => (
+                <NativeSelectOption key={value} value={value}>
+                  {value}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
           </div>
         </div>
         {group.protocol === 'anthropic' && (
           <p className='text-muted-foreground text-xs leading-relaxed'>
-            {t('Anthropic uses model-default thinking.')}
+            {t(
+              'Anthropic effort support depends on the model and channel. Select Default to use model defaults.'
+            )}
           </p>
         )}
         <div className='space-y-1.5'>

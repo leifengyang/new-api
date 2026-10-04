@@ -232,6 +232,9 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 		path = "/messages"
 		payload["messages"] = []map[string]string{{"role": "user", "content": string(round.Prompt)}}
 		payload["max_tokens"] = *limit
+		if attempt.Effort != "" {
+			payload["output_config"] = map[string]string{"effort": attempt.Effort}
+		}
 	} else if attempt.Protocol == "responses" {
 		path = "/responses"
 		payload["input"] = string(round.Prompt)
