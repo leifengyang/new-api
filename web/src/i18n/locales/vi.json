@@ -534,6 +534,7 @@
     "Answer": "Trả lời",
     "Answers for common access and billing questions": "Câu trả lời cho các câu hỏi thường gặp về truy cập và thanh toán",
     "Anthropic": "Anthropic",
+    "Anthropic effort support depends on the model and channel. Select Default to use model defaults.": "Mức độ suy luận Anthropic được hỗ trợ tùy theo mô hình và kênh. Chọn Mặc định để dùng thiết lập mặc định của mô hình.",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages sang OpenAI Chat",
     "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic dùng chế độ suy nghĩ mặc định của mô hình, với giới hạn đầu ra 8.192 token.",
     "Anthropic uses model-default thinking.": "Anthropic dùng chế độ suy nghĩ mặc định của mô hình.",

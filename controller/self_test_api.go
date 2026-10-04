@@ -70,11 +70,12 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 			return nil, nil, err
 		}
 		input.Name, input.Model = strings.TrimSpace(input.Name), strings.TrimSpace(input.Model)
-		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses", "anthropic"}, input.Protocol) || !slices.Contains([]string{"", "none", "minimal", "low", "medium", "high", "xhigh"}, input.Effort) || len(input.APIKey) > 8192 {
-			return nil, nil, errors.New("invalid group name, model, protocol, reasoning effort or key")
+		efforts := []string{"", "none", "minimal", "low", "medium", "high", "xhigh"}
+		if input.Protocol == "anthropic" {
+			efforts = []string{"", "low", "medium", "high", "xhigh", "max"}
 		}
-		if input.Protocol == "anthropic" && input.Effort != "" {
-			return nil, nil, errors.New("Anthropic self-tests use model-default thinking; leave reasoning effort empty")
+		if input.Name == "" || len(input.Name) > 128 || len(input.Model) > 128 || (requireKey && input.Model == "") || !slices.Contains([]string{"chat", "responses", "anthropic"}, input.Protocol) || !slices.Contains(efforts, input.Effort) || len(input.APIKey) > 8192 {
+			return nil, nil, errors.New("invalid group name, model, protocol, reasoning effort or key")
 		}
 		if input.MaxOutputTokens == nil {
 			limit := uint(32768)
@@ -86,8 +87,10 @@ func prepareSelfTestGroups(userID int, inputs []selfTestGroupInput, requireKey b
 		key := strings.TrimSpace(input.APIKey)
 		if key == "" {
 			for _, existing := range saved {
-				if existing.ID == input.ID && existing.BaseURL == base && existing.Protocol == input.Protocol && existing.Secret != "" {
-					key, err = service.DecryptSelfTestKey(userID, base+":"+input.Protocol, string(existing.Secret))
+				// Protocol changes may reuse this owner's key at the same endpoint.
+				// Open with its saved binding, then seal for the selected protocol below.
+				if existing.ID == input.ID && existing.BaseURL == base && existing.Secret != "" {
+					key, err = service.DecryptSelfTestKey(userID, base+":"+existing.Protocol, string(existing.Secret))
 					if err != nil {
 						return nil, nil, err
 					}
@@ -262,6 +265,8 @@ func FetchSelfTestModels(c *gin.Context) {
 	if !bindSelfTest(c, &input) {
 		return
 	}
+	// Model discovery does not depend on generation settings being complete.
+	input.Effort, input.MaxOutputTokens = "", nil
 	if input.Name == "" {
 		input.Name = "models"
 	}

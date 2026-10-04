@@ -114,6 +114,27 @@ func TestSelfTestDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Log(dialect, version)
+			group := selfTestGroupInput{Name: "saved", BaseURL: "https://example.com/v1", Model: "claude-opus-5-5", Protocol: "chat", APIKey: "discovery-key", RememberKey: true}
+			saved := selfTestAPI(t, SaveSelfTestProfiles, 1, 0, selfTestInput{Groups: []selfTestGroupInput{group}})
+			require.Equal(t, 200, saved.Code, saved.Body.String())
+			group.ID = int(gjson.Get(saved.Body.String(), "data.0.id").Int())
+			group.Protocol, group.Effort, group.APIKey = "anthropic", "max", ""
+			oldClient := selfTestClient
+			t.Cleanup(func() { selfTestClient = oldClient })
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				assert.Equal(t, "discovery-key", req.Header.Get("x-api-key"))
+				assert.Empty(t, req.Header.Get("Authorization"))
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"claude-opus-5-5"}]}`))}, nil
+			})}
+			discovery := selfTestAPI(t, FetchSelfTestModels, 1, 0, group)
+			require.Equal(t, 200, discovery.Code, discovery.Body.String())
+			assert.Equal(t, "claude-opus-5-5", gjson.Get(discovery.Body.String(), "data.0").String())
+			saved = selfTestAPI(t, SaveSelfTestProfiles, 1, 0, selfTestInput{Groups: []selfTestGroupInput{group}})
+			require.Equal(t, 200, saved.Code, saved.Body.String())
+			assert.Equal(t, "max", gjson.Get(saved.Body.String(), "data.0.effort").String())
+			assert.NotContains(t, saved.Body.String(), "discovery-key")
+			group.ID = int(gjson.Get(saved.Body.String(), "data.0.id").Int())
+			require.Equal(t, 200, selfTestAPI(t, FetchSelfTestModels, 1, 0, group).Code)
 			round, attempts := selfTestFixture(t, 2, "anthropic")
 			assert.Equal(t, "anthropic", attempts[0].Protocol)
 			for range 2 {
@@ -231,8 +252,13 @@ func TestSelfTestAPIDefaultsAndSavedKeyScope(t *testing.T) {
 	group.BaseURL = profile.BaseURL
 	group.Protocol = "anthropic"
 	group.Effort = ""
-	_, _, err = prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
-	assert.Error(t, err, "saved credentials must not cross protocol boundaries")
+	_, switched, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+	require.NoError(t, err)
+	key, err := service.DecryptSelfTestKey(1, group.BaseURL+":anthropic", string(switched[0].Secret))
+	require.NoError(t, err)
+	assert.Equal(t, "private-key", key)
+	_, err = service.DecryptSelfTestKey(1, group.BaseURL+":chat", string(switched[0].Secret))
+	assert.Error(t, err, "new ciphertext remains bound to the selected protocol")
 	group.Protocol = "chat"
 	_, _, err = prepareSelfTestGroups(2, []selfTestGroupInput{group}, true)
 	assert.Error(t, err)
@@ -395,7 +421,7 @@ func TestSelfTestAnthropicMessages(t *testing.T) {
 		require.Equal(t, 200, response.Code, response.Body.String())
 		assert.Equal(t, "claude-sonnet-4-5", gjson.Get(response.Body.String(), "data.0").String())
 		group.Effort = "high"
-		assert.Equal(t, 400, selfTestAPI(t, FetchSelfTestModels, 1, 0, group).Code)
+		assert.Equal(t, 200, selfTestAPI(t, FetchSelfTestModels, 1, 0, group).Code)
 	})
 }
 
@@ -631,4 +657,45 @@ func TestSelfTestOutputLimitValidation(t *testing.T) {
 		assert.Equal(t, &limit, profiles[0].MaxOutputTokens)
 		assert.Equal(t, &limit, attempts[0].MaxOutputTokens)
 	}
+}
+
+func TestSelfTestAnthropicEffort(t *testing.T) {
+	db := selfTestDB(t, "sqlite")
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	for _, effort := range []string{"", "low", "medium", "high", "xhigh", "max", "none", "minimal", "unknown"} {
+		t.Run("effort-"+effort, func(t *testing.T) {
+			group := selfTestGroupInput{Name: "effort", BaseURL: "https://example.com/v1", Model: "claude-opus-5-5", Protocol: "anthropic", Effort: effort, APIKey: "fixture-key"}
+			profiles, attempts, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+			if effort == "none" || effort == "minimal" || effort == "unknown" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			round := model.SelfTestRound{UserID: 1, Prompt: "draw", Concurrency: 1, TimeoutSeconds: 1200}
+			require.NoError(t, model.CreateSelfTestRound(&round, attempts, profiles))
+			var attempt model.SelfTestAttempt
+			require.NoError(t, db.Where("round_id = ?", round.ID).First(&attempt).Error)
+			assert.Equal(t, effort, attempt.Effort)
+			require.NoError(t, db.Model(&attempt).Updates(map[string]any{"status": "running", "runner": "effort-test"}).Error)
+			called := false
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				called = true
+				body, err := io.ReadAll(req.Body)
+				require.NoError(t, err)
+				assert.Equal(t, effort, gjson.GetBytes(body, "output_config.effort").String())
+				assert.Equal(t, effort != "", gjson.GetBytes(body, "output_config").Exists())
+				assert.False(t, gjson.GetBytes(body, "reasoning_effort").Exists())
+				assert.False(t, gjson.GetBytes(body, "reasoning").Exists())
+				assert.False(t, gjson.GetBytes(body, "thinking").Exists(), "preserve model-default thinking")
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}`))}, nil
+			})}
+			runSelfTestAttempt(context.Background(), round, attempt, "effort-test")
+			assert.True(t, called)
+			require.NoError(t, model.FinishSelfTestRound(round.ID))
+		})
+	}
+	group := selfTestGroupInput{Name: "effort", BaseURL: "https://example.com/v1", Model: "model", Protocol: "responses", Effort: "max", APIKey: "fixture-key"}
+	_, _, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+	assert.Error(t, err, "Anthropic-only effort must not leak into OpenAI protocols")
 }

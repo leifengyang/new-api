@@ -534,6 +534,7 @@
     "Answer": "Ответ",
     "Answers for common access and billing questions": "Ответы на частые вопросы о доступе и оплате",
     "Anthropic": "Anthropic",
+    "Anthropic effort support depends on the model and channel. Select Default to use model defaults.": "Поддержка уровней рассуждения Anthropic зависит от модели и канала. Выберите «По умолчанию», чтобы использовать настройки модели.",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages в OpenAI Chat",
     "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic использует настройки мышления модели по умолчанию с лимитом вывода 8 192 токена.",
     "Anthropic uses model-default thinking.": "Anthropic использует настройки мышления модели по умолчанию.",

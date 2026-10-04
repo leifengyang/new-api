@@ -534,6 +534,7 @@
     "Answer": "答案",
     "Answers for common access and billing questions": "访问与计费常见问题解答",
     "Anthropic": "Anthropic",
+    "Anthropic effort support depends on the model and channel. Select Default to use model defaults.": "Anthropic 推理强度的支持情况取决于模型和渠道。选择“默认”可使用模型默认设置。",
     "Anthropic Messages to OpenAI Chat": "Anthropic Messages 到 OpenAI Chat",
     "Anthropic uses model-default thinking and an 8,192-token output limit.": "Anthropic 使用模型默认思考设置，输出上限为 8,192 Token。",
     "Anthropic uses model-default thinking.": "Anthropic 使用模型默认思考设置。",
