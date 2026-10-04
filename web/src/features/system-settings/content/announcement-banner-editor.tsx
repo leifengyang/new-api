@@ -16,15 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState, type ChangeEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { AnnouncementBanner } from '@/features/dashboard/types'
+
+import { ImageFileInput } from '../components/image-file-input'
 
 export function AnnouncementBannerEditor({
   banner,
@@ -47,31 +48,6 @@ export function AnnouncementBannerEditor({
   }, [banner])
   const dirty = imageUrl !== banner.imageUrl || linkUrl !== banner.linkUrl
   const pending = disabled || reading
-  const upload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    if (
-      file.size > 1024 * 1024 ||
-      !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(
-        file.type
-      )
-    ) {
-      toast.error(t('Choose a PNG, JPEG, WebP or GIF image up to 1 MB'))
-      return
-    }
-    setReading(true)
-    const reader = new FileReader()
-    reader.addEventListener('load', () => {
-      if (typeof reader.result === 'string') setImageUrl(reader.result)
-      setReading(false)
-    })
-    reader.addEventListener('error', () => {
-      setReading(false)
-      toast.error(t('Failed to read image'))
-    })
-    reader.readAsDataURL(file)
-  }
   return (
     <div className='bg-muted/20 space-y-4 rounded-xl border p-4'>
       <div className='flex flex-wrap items-center gap-2'>
@@ -101,12 +77,11 @@ export function AnnouncementBannerEditor({
         </div>
         <div className='space-y-2'>
           <Label htmlFor='announcement-image-file'>{t('Upload image')}</Label>
-          <Input
+          <ImageFileInput
             id='announcement-image-file'
-            type='file'
-            accept='image/png,image/jpeg,image/webp,image/gif'
             disabled={pending}
-            onChange={upload}
+            onImageRead={setImageUrl}
+            onReadingChange={setReading}
           />
         </div>
         <div className='space-y-2 sm:col-span-2'>
