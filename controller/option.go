@@ -201,6 +201,11 @@ func UpdateOption(c *gin.Context) {
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
 	switch option.Key {
+	case "Logo":
+		if err := validateLogoImage(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	case "QuotaForInviter", "QuotaForInvitee":
 		// 这两个字段是旧的「注册即送邀请奖励」，已被邀请返现（按充值金额抽成）
 		// 取代。保留字段是为了兼容仍然会提交它们的旧前端，但只接受 0：非 0 会
@@ -552,7 +557,12 @@ func UpdateOption(c *gin.Context) {
 		common.ApiSuccess(c, change)
 		return
 	}
-	err = model.UpdateOption(option.Key, option.Value.(string))
+	if option.Key == "Logo" {
+		// Publish the new logo only after its image has been persisted successfully.
+		err = model.UpdateOptionsBulk(map[string]string{"Logo": option.Value.(string)})
+	} else {
+		err = model.UpdateOption(option.Key, option.Value.(string))
+	}
 	if err != nil {
 		if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
 			writeSecurityOperationError(c, err)

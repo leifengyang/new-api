@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useId, useState } from 'react'
 import type { Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -31,10 +33,12 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
+import { ImageFileInput } from '../components/image-file-input'
 import {
   SettingsForm,
   SettingsFormGrid,
@@ -77,6 +81,8 @@ function normalizeValue(value: unknown): string {
 export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const logoInputId = useId()
+  const [logoReading, setLogoReading] = useState(false)
 
   const normalizedDefaults: SystemInfoFormValues = {
     SystemName: normalizeValue(defaultValues.SystemName),
@@ -147,12 +153,21 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
 
       <SettingsSection title={t('System Information')}>
         <Form {...form}>
-          <SettingsForm onSubmit={handleSubmit}>
+          <SettingsForm
+            onSubmit={(event) => {
+              if (logoReading) {
+                event.preventDefault()
+                return
+              }
+              void handleSubmit(event)
+            }}
+          >
             <SettingsPageFormActions
               onSave={handleSubmit}
               onReset={handleReset}
               isSaving={isSubmitting || updateOption.isPending}
-              isResetDisabled={!isDirty}
+              isSaveDisabled={logoReading}
+              isResetDisabled={!isDirty || logoReading}
             />
             <FormDirtyIndicator isDirty={isDirty} />
             <SettingsFormGrid>
@@ -224,10 +239,47 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                       <Input
                         placeholder={t('https://example.com/logo.png')}
                         {...field}
+                        value={
+                          field.value?.startsWith('data:') ? '' : field.value
+                        }
+                        disabled={logoReading || isSubmitting}
                       />
                     </FormControl>
+                    <div className='space-y-2'>
+                      <Label htmlFor={logoInputId}>{t('Upload image')}</Label>
+                      <ImageFileInput
+                        id={logoInputId}
+                        maxBytes={256 * 1024}
+                        invalidFileMessage={t(
+                          'Choose a PNG, JPEG, WebP or GIF logo up to 256 KB'
+                        )}
+                        disabled={isSubmitting}
+                        onImageRead={field.onChange}
+                        onReadingChange={setLogoReading}
+                      />
+                    </div>
+                    {field.value && (
+                      <div className='flex items-center gap-3'>
+                        <img
+                          src={field.value}
+                          alt={t('Logo')}
+                          className='bg-background size-20 rounded-lg border object-contain p-2'
+                        />
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='ghost'
+                          disabled={logoReading || isSubmitting}
+                          onClick={() => field.onChange('')}
+                        >
+                          {t('Remove image')}
+                        </Button>
+                      </div>
+                    )}
                     <FormDescription>
-                      {t('URL to your logo image (optional)')}
+                      {t(
+                        'Upload a logo up to 256 KB, or enter an image URL. Save changes to apply it.'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
