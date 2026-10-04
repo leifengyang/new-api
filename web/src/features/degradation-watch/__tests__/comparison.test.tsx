@@ -137,9 +137,11 @@ test.each(['chat', 'responses', 'anthropic'] as const)(
       base_url: 'https://example.com/v1',
       model: 'test-model',
       protocol,
-      ...(protocol === 'anthropic'
-        ? { output_config: { effort } }
-        : { reasoning_effort: effort }),
+      ...{
+        anthropic: { output_config: { effort } },
+        responses: { reasoning: { effort } },
+        chat: { reasoning_effort: effort },
+      }[protocol],
       prompt,
       [{
         chat: 'max_completion_tokens',
@@ -536,7 +538,7 @@ test('switching a saved group to Anthropic keeps model discovery and native effo
   fireEvent.change(screen.getByLabelText('Protocol'), {
     target: { value: 'responses' },
   })
-  expect(effort).toHaveValue('')
+  expect(effort).toHaveValue('max')
   expect(fetch).toBeEnabled()
   fireEvent.change(effort, { target: { value: 'minimal' } })
   fireEvent.change(screen.getByLabelText('Protocol'), {
@@ -552,3 +554,85 @@ test('switching a saved group to Anthropic keeps model discovery and native effo
   })
   expect(fetch).toBeEnabled()
 })
+
+test.each(['chat', 'responses'])(
+  'validates known model effort and submits max in %s',
+  async (protocol) => {
+    vi.mocked(comparisonRequest).mockImplementation(async (path, method) => {
+      if (path === '/rounds' && method === 'post') return { id: 12 }
+      if (path === '/rounds/12') {
+        return {
+          round: { id: 12, status: 'completed', prompt: 'Draw' },
+          attempts: [],
+        }
+      }
+      return []
+    })
+    renderPanel()
+    await screen.findByLabelText('Group name')
+    await waitFor(() =>
+      expect(screen.getByLabelText('Shared prompt')).toHaveValue(
+        'Draw an SVG bird'
+      )
+    )
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://example.com/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('API key'), {
+      target: { value: 'fixture-key' },
+    })
+    fireEvent.change(screen.getByLabelText('Protocol'), {
+      target: { value: protocol },
+    })
+    const effort = screen.getByLabelText('Reasoning effort')
+    fireEvent.change(effort, { target: { value: 'none' } })
+    fireEvent.change(screen.getByLabelText('Model'), {
+      target: { value: 'gpt-6.1-sol' },
+    })
+    expect(within(effort).getByRole('option', { name: 'none' })).toBeDisabled()
+    expect(
+      within(effort).getByRole('option', { name: 'minimal' })
+    ).toBeDisabled()
+    fireEvent.click(screen.getByText('Start comparison'))
+    await screen.findByText(
+      'Choose a supported reasoning effort for this model.'
+    )
+    expect(comparisonRequest).not.toHaveBeenCalledWith(
+      '/rounds',
+      'post',
+      expect.anything()
+    )
+    fireEvent.change(effort, { target: { value: 'max' } })
+    fireEvent.click(screen.getByText('Start comparison'))
+    await waitFor(() =>
+      expect(comparisonRequest).toHaveBeenCalledWith(
+        '/rounds',
+        'post',
+        expect.objectContaining({
+          groups: [expect.objectContaining({ protocol, effort: 'max' })],
+        })
+      )
+    )
+  }
+)
+
+test.each(['chat', 'responses', 'anthropic'] as const)(
+  'omits default effort from copied %s settings',
+  async (protocol) => {
+    const user = userEvent.setup()
+    const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    renderResult({ protocol, effort: '' })
+    await user.click(screen.getByRole('button', { name: 'View input details' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Input details' })
+    await user.click(
+      within(dialog).getByRole('tab', { name: 'Request parameters' })
+    )
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Copy request parameters' })
+    )
+    const settings = JSON.parse(copy.mock.calls.at(-1)?.[0] ?? '{}')
+    expect(settings).not.toHaveProperty('reasoning_effort')
+    expect(settings).not.toHaveProperty('reasoning')
+    expect(settings).not.toHaveProperty('output_config')
+  }
+)

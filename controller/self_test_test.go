@@ -114,7 +114,7 @@ func TestSelfTestDatabaseMatrix(t *testing.T) {
 			}
 			require.NoError(t, db.Raw(query).Scan(&version).Error)
 			t.Log(dialect, version)
-			group := selfTestGroupInput{Name: "saved", BaseURL: "https://example.com/v1", Model: "claude-opus-5-5", Protocol: "chat", APIKey: "discovery-key", RememberKey: true}
+			group := selfTestGroupInput{Name: "saved", BaseURL: "https://example.com/v1", Model: "claude-opus-5-5", Protocol: "chat", Effort: "max", APIKey: "discovery-key", RememberKey: true}
 			saved := selfTestAPI(t, SaveSelfTestProfiles, 1, 0, selfTestInput{Groups: []selfTestGroupInput{group}})
 			require.Equal(t, 200, saved.Code, saved.Body.String())
 			group.ID = int(gjson.Get(saved.Body.String(), "data.0.id").Int())
@@ -697,5 +697,60 @@ func TestSelfTestAnthropicEffort(t *testing.T) {
 	}
 	group := selfTestGroupInput{Name: "effort", BaseURL: "https://example.com/v1", Model: "model", Protocol: "responses", Effort: "max", APIKey: "fixture-key"}
 	_, _, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
-	assert.Error(t, err, "Anthropic-only effort must not leak into OpenAI protocols")
+	assert.NoError(t, err, "OpenAI also supports max effort")
+}
+
+func TestSelfTestOpenAIEffort(t *testing.T) {
+	db := selfTestDB(t, "sqlite")
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	for _, protocol := range []string{"chat", "responses"} {
+		for _, effort := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
+			t.Run(protocol+"/"+effort, func(t *testing.T) {
+				group := selfTestGroupInput{Name: "effort", BaseURL: "https://example.com/v1", Model: "custom-model", Protocol: protocol, Effort: effort, APIKey: "fixture-key"}
+				profiles, attempts, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+				require.NoError(t, err)
+				round := model.SelfTestRound{UserID: 1, Prompt: "draw", Concurrency: 1, TimeoutSeconds: 1200}
+				require.NoError(t, model.CreateSelfTestRound(&round, attempts, profiles))
+				var attempt model.SelfTestAttempt
+				require.NoError(t, db.Where("round_id = ?", round.ID).First(&attempt).Error)
+				assert.Equal(t, effort, attempt.Effort)
+				require.NoError(t, db.Model(&attempt).Updates(map[string]any{"status": "running", "runner": "effort-test"}).Error)
+				called := false
+				selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+					called = true
+					body, err := io.ReadAll(req.Body)
+					require.NoError(t, err)
+					field, other := "reasoning_effort", "reasoning"
+					response := `{"choices":[{"message":{"content":"done"},"finish_reason":"stop"}]}`
+					if protocol == "responses" {
+						field, other = "reasoning.effort", "reasoning_effort"
+						response = `{"object":"response","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"done"}]}]}`
+					}
+					assert.Equal(t, effort, gjson.GetBytes(body, field).String())
+					assert.Equal(t, effort != "", gjson.GetBytes(body, field).Exists())
+					assert.False(t, gjson.GetBytes(body, other).Exists())
+					assert.False(t, gjson.GetBytes(body, "output_config").Exists())
+					if effort == "" {
+						assert.False(t, gjson.GetBytes(body, "reasoning").Exists())
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
+				})}
+				runSelfTestAttempt(context.Background(), round, attempt, "effort-test")
+				assert.True(t, called)
+				require.NoError(t, model.FinishSelfTestRound(round.ID))
+			})
+		}
+		for _, name := range []string{"gpt-6.1-sol", "gpt-6-astra"} {
+			for _, effort := range []string{"none", "minimal", "max", ""} {
+				group := selfTestGroupInput{Name: "effort", BaseURL: "https://example.com/v1", Model: name, Protocol: protocol, Effort: effort, APIKey: "fixture-key"}
+				_, _, err := prepareSelfTestGroups(1, []selfTestGroupInput{group}, true)
+				if effort == "none" || effort == "minimal" {
+					assert.Error(t, err, "%s %s %s", protocol, name, effort)
+				} else {
+					assert.NoError(t, err)
+				}
+			}
+		}
+	}
 }
