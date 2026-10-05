@@ -17,20 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Plus, Trash2, Play, RefreshCw } from 'lucide-react'
+import { Play, Settings2, Activity, FileText, Layers } from 'lucide-react'
 import { useState } from 'react'
-import { useFieldArray, useForm, type Resolver } from 'react-hook-form'
+import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ProbeWall } from '@/features/degradation-watch/components/probe-wall'
 import {
   useDegradationWatchChannels,
@@ -45,11 +44,14 @@ import {
   probePlanSchema,
   type ProbePlan,
 } from '@/features/degradation-watch/lib/probes'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { ProbeRuntimeDialog } from './probe-runtime-dialog'
 import { ProbeTargetsEditor } from './probe-targets-editor'
+import { ProbeTemplatesEditor } from './probe-templates-editor'
 
 export function ProbeSettingsSection() {
   const { t } = useTranslation()
@@ -88,18 +90,15 @@ function ProbeSettingsForm(props: {
     defaultValues: props.initial,
     resolver: zodResolver(probePlanSchema) as Resolver<ProbePlan>,
   })
-  const probes = useFieldArray({
-    control: form.control,
-    name: 'probes',
-    keyName: 'fieldKey',
-  })
   const plan = form.watch()
   const save = useSaveProbePlan()
   const run = useRunProbes()
-  const activity = useDegradationWatchActivity()
   const [configured, setConfigured] = useState(
     props.initial.configured !== false
   )
+  const [tab, setTab] = useState('targets')
+  const [runtime, setRuntime] = useState(false)
+  const [revision, setRevision] = useState(0)
   const dirty = form.formState.isDirty || !configured
   const busy = save.isPending || form.formState.isSubmitting
   const submit = form.handleSubmit(
@@ -115,220 +114,172 @@ function ProbeSettingsForm(props: {
     },
     () => toast.error(t('Check the probe fields before saving'))
   )
+  const reset = () => {
+    form.reset()
+    setRevision((value) => value + 1)
+  }
   return (
     <SettingsSection title={t('Degradation Watch')}>
-      <p className='text-muted-foreground text-sm'>
+      <SettingsPageFormActions
+        onSave={submit}
+        onReset={reset}
+        isSaving={busy}
+        isSaveDisabled={!dirty}
+        isResetDisabled={!form.formState.isDirty}
+        saveLabel='Save degradation watch settings'
+      />
+      <div className='bg-muted/20 flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4'>
+        <div className='space-y-2'>
+          <Label className='flex items-center gap-3'>
+            <Switch
+              disabled={busy}
+              checked={plan.enabled}
+              onCheckedChange={(value) =>
+                form.setValue('enabled', value, { shouldDirty: true })
+              }
+            />
+            {t('Enable degradation watch')}
+          </Label>
+          <p className='text-muted-foreground text-xs'>
+            {t('Concurrency {{concurrency}} / timeout {{seconds}} s', {
+              concurrency: formatNumber(plan.concurrency),
+              seconds: formatNumber(plan.timeout_seconds),
+            })}
+          </p>
+        </div>
+        <div className='flex flex-wrap items-center gap-2'>
+          {dirty && (
+            <Badge
+              variant='secondary'
+              className='bg-amber-500/10 text-amber-700 dark:text-amber-300'
+            >
+              {t('Unsaved changes')}
+            </Badge>
+          )}
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={busy}
+            onClick={() => setRuntime(true)}
+          >
+            <Settings2 />
+            {t('Runtime settings')}
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={dirty || busy || run.isPending}
+            onClick={() =>
+              run.mutate(
+                {},
+                {
+                  onSuccess: () => {
+                    toast.success(
+                      t(
+                        'Check queued. Follow live progress here or on the wall.'
+                      )
+                    )
+                    setTab('records')
+                  },
+                  onError: (error) => handleServerError(error),
+                }
+              )
+            }
+          >
+            <Play />
+            {t('Run all checks')}
+          </Button>
+        </div>
+      </div>
+      <p className='text-muted-foreground text-xs'>
         {t(
           'Text probes match configured answers. Drawing checks validate HTML and SVG, not artistic quality. Upstream requests may incur charges.'
         )}
       </p>
-      <form onSubmit={submit} className='flex min-w-0 flex-col gap-5'>
-        <SettingsPageFormActions
-          onSave={submit}
-          isSaving={busy}
-          isSaveDisabled={!dirty}
-          saveLabel='Save degradation watch settings'
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(String(value))}
+        className='min-w-0 gap-5'
+      >
+        <TabsList variant='line' className='h-10 w-full justify-start border-b'>
+          <TabsTrigger value='targets' className='flex-none px-3'>
+            <Layers />
+            {t('Detection targets')}
+          </TabsTrigger>
+          <TabsTrigger value='templates' className='flex-none px-3'>
+            <FileText />
+            {t('Probe templates')}
+          </TabsTrigger>
+          <TabsTrigger value='records' className='flex-none px-3'>
+            <Activity />
+            {t('Run history')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value='targets'>
+          <fieldset disabled={busy} className='min-w-0'>
+            <ProbeTargetsEditor
+              key={revision}
+              form={form}
+              channels={props.channels}
+              dirty={dirty}
+              onRefresh={props.onRefresh}
+            />
+          </fieldset>
+        </TabsContent>
+        <TabsContent value='templates'>
+          <fieldset disabled={busy} className='min-w-0'>
+            <ProbeTemplatesEditor key={revision} form={form} />
+          </fieldset>
+        </TabsContent>
+        <TabsContent value='records'>
+          {tab === 'records' && <ProbeRunHistory />}
+        </TabsContent>
+      </Tabs>
+      <p className='text-muted-foreground border-t pt-4 text-xs'>
+        {t(
+          'Detection records and their content are automatically deleted after 7 days. Errors and timeouts are excluded from the pass rate.'
+        )}
+      </p>
+      {runtime && (
+        <ProbeRuntimeDialog
+          plan={plan}
+          onClose={() => setRuntime(false)}
+          onApply={(values) => {
+            form.setValue('concurrency', values.concurrency, {
+              shouldDirty: true,
+            })
+            form.setValue('timeout_seconds', values.timeout_seconds, {
+              shouldDirty: true,
+            })
+            setRuntime(false)
+          }}
         />
-        <fieldset disabled={busy} className='flex min-w-0 flex-col gap-5'>
-          <div className='flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4'>
-            <Label className='flex items-center gap-3'>
-              {t('Enable degradation watch')}
-              <Switch
-                checked={plan.enabled}
-                onCheckedChange={(value) =>
-                  form.setValue('enabled', value, { shouldDirty: true })
-                }
-              />
-            </Label>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={dirty || run.isPending}
-              onClick={() =>
-                run.mutate(
-                  {},
-                  {
-                    onSuccess: () =>
-                      toast.success(
-                        t(
-                          'Check queued. Follow live progress here or on the wall.'
-                        )
-                      ),
-                    onError: (error) => handleServerError(error),
-                  }
-                )
-              }
-            >
-              <Play />
-              {t('Run all checks')}
-            </Button>
-          </div>
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <Label className='grid gap-2'>
-              {t('Concurrent requests per test type')}
-              <Input
-                type='number'
-                min={1}
-                max={32}
-                {...form.register('concurrency')}
-              />
-            </Label>
-            <Label className='grid gap-2'>
-              {t('Request timeout (seconds)')}
-              <Input
-                type='number'
-                min={30}
-                max={3600}
-                {...form.register('timeout_seconds')}
-              />
-            </Label>
-          </div>
-          <div className='flex items-center justify-between gap-2'>
-            <h3 className='font-semibold'>{t('Probe templates')}</h3>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={probes.fields.length >= 20}
-              onClick={() =>
-                probes.append({
-                  id: crypto.randomUUID(),
-                  name: '',
-                  kind: 'text',
-                  prompt: '',
-                  expected: '',
-                  match: 'exact',
-                  interval_minutes: 5,
-                })
-              }
-            >
-              <Plus />
-              {t('Add probe')}
-            </Button>
-          </div>
-          {probes.fields.map((probe, index) => (
-            <section
-              key={probe.fieldKey}
-              className='bg-muted/20 grid min-w-0 gap-4 rounded-xl border p-4'
-              aria-label={probe.name || t('New probe')}
-            >
-              <div className='grid gap-3 sm:grid-cols-[1fr_10rem_10rem_auto]'>
-                <Label className='grid gap-2'>
-                  {t('Name')}
-                  <Input {...form.register(`probes.${index}.name`)} />
-                </Label>
-                <Label className='grid gap-2'>
-                  {t('Test type')}
-                  <NativeSelect {...form.register(`probes.${index}.kind`)}>
-                    <NativeSelectOption value='text'>
-                      {t('Text probe')}
-                    </NativeSelectOption>
-                    <NativeSelectOption value='drawing'>
-                      {t('Drawing check')}
-                    </NativeSelectOption>
-                  </NativeSelect>
-                </Label>
-                <Label className='grid gap-2'>
-                  {t('Interval (minutes)')}
-                  <Input
-                    type='number'
-                    min={1}
-                    max={1440}
-                    {...form.register(`probes.${index}.interval_minutes`)}
-                  />
-                </Label>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon'
-                  aria-label={t('Remove')}
-                  onClick={() => {
-                    const id = plan.probes[index].id
-                    probes.remove(index)
-                    form.setValue(
-                      'targets',
-                      plan.targets.map((target) => ({
-                        ...target,
-                        probes: target.probes.filter((p) => p.probe_id !== id),
-                      })),
-                      { shouldDirty: true }
-                    )
-                  }}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-              <Label className='grid gap-2'>
-                {t('Prompt')}
-                <Textarea
-                  className='min-h-24'
-                  {...form.register(`probes.${index}.prompt`)}
-                />
-              </Label>
-              {plan.probes[index].kind === 'text' && (
-                <div className='grid gap-3 sm:grid-cols-[1fr_12rem]'>
-                  <Label className='grid gap-2'>
-                    {t('Expected answer')}
-                    <Input {...form.register(`probes.${index}.expected`)} />
-                  </Label>
-                  <Label className='grid gap-2'>
-                    {t('Answer matching')}
-                    <NativeSelect {...form.register(`probes.${index}.match`)}>
-                      <NativeSelectOption value='exact'>
-                        {t('Exact match (trim whitespace)')}
-                      </NativeSelectOption>
-                      <NativeSelectOption value='contains'>
-                        {t('Contains answer')}
-                      </NativeSelectOption>
-                    </NativeSelect>
-                  </Label>
-                </div>
-              )}
-              {form.formState.errors.probes?.[index] && (
-                <p role='alert' className='text-destructive text-sm'>
-                  {t('Check the probe fields before saving')}
-                </p>
-              )}
-            </section>
-          ))}
-          <div className='flex items-center justify-between gap-2'>
-            <h3 className='font-semibold'>
-              {t('Groups, channels and models')}
-            </h3>
-            <Button type='button' variant='ghost' onClick={props.onRefresh}>
-              <RefreshCw />
-              {t('Refresh')}
-            </Button>
-          </div>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Only one channel per group and model is public. Users see the group and model only. Save changes before running checks.'
-            )}
-          </p>
-          <ProbeTargetsEditor
-            form={form}
-            channels={props.channels}
-            dirty={dirty}
-          />
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Detection records and their content are automatically deleted after 7 days. Errors and timeouts are excluded from the pass rate.'
-            )}
-          </p>
-        </fieldset>
-      </form>
+      )}
+    </SettingsSection>
+  )
+}
+
+function ProbeRunHistory() {
+  const { t } = useTranslation()
+  const activity = useDegradationWatchActivity()
+  let status = t('Completed')
+  if (activity.data?.task?.status === 'pending') status = t('Queued')
+  if (activity.data?.task?.status === 'running') status = t('Running')
+  if (activity.data?.task?.error) status = t('Failed')
+  return (
+    <div className='space-y-4'>
+      {activity.isError && (
+        <ErrorState onRetry={() => void activity.refetch()} />
+      )}
       {activity.data?.task && (
         <div
           className='bg-muted/30 rounded-xl border p-3 text-sm'
           aria-live='polite'
         >
           <span>{t('Latest detection tasks')}: </span>
-          {activity.data.task.status === 'pending'
-            ? t('Queued')
-            : t(
-                activity.data.task.status === 'running'
-                  ? 'Running'
-                  : 'Completed'
-              )}
+          {status}
           {activity.data.task.error && (
             <pre className='mt-2 max-h-40 overflow-auto text-xs whitespace-pre-wrap'>
               {activity.data.task.error}
@@ -337,6 +288,6 @@ function ProbeSettingsForm(props: {
         </div>
       )}
       <ProbeWall />
-    </SettingsSection>
+    </div>
   )
 }

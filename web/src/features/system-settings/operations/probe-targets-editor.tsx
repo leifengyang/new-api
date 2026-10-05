@@ -16,321 +16,386 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus, Trash2, Play } from 'lucide-react'
-import { useFieldArray, useWatch, type UseFormReturn } from 'react-hook-form'
+import { Plus, Play, RefreshCw, Layers, ChevronDown } from 'lucide-react'
+import { useState } from 'react'
+import { useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { StaticDataTable } from '@/components/data-table'
+import { EmptyState } from '@/components/empty-state'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { useRunProbes } from '@/features/degradation-watch/hooks/use-probes'
-import type { ProbePlan } from '@/features/degradation-watch/lib/probes'
-import { REASONING_EFFORTS } from '@/features/degradation-watch/lib/self-test'
+import type {
+  ProbePlan,
+  ProbeTarget,
+} from '@/features/degradation-watch/lib/probes'
 import type { DegradationWatchAvailableChannel } from '@/features/degradation-watch/types'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
+
+import { ProbeTargetDrawer } from './probe-target-drawer'
 
 export function ProbeTargetsEditor(props: {
   form: UseFormReturn<ProbePlan>
   channels: DegradationWatchAvailableChannel[]
   dirty: boolean
+  onRefresh: () => void
 }) {
   const { t } = useTranslation()
-  const form = props.form
-  const targets = useFieldArray({ control: form.control, name: 'targets' })
-  const values = useWatch({ control: form.control }) as ProbePlan
+  const { form } = props
+  const plan = useWatch({ control: form.control }) as ProbePlan
   const run = useRunProbes()
-  const groups = [...new Set(props.channels.flatMap((c) => c.groups))].sort()
+  const [group, setGroup] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<{
+    index: number
+    target: ProbeTarget
+  } | null>(null)
+  const groups = [
+    ...new Set([
+      ...props.channels.flatMap((c) => c.groups),
+      ...plan.targets.map((target) => target.group),
+    ]),
+  ].sort()
+  const selected = group && groups.includes(group) ? group : groups[0]
+  const rows = plan.targets
+    .map((target, index) => ({ target, index }))
+    .filter(({ target }) => target.group === selected)
+  const models = [...new Set(rows.map(({ target }) => target.model))].sort()
   return (
-    <div className='flex min-w-0 flex-col gap-4'>
-      {targets.fields.map((field, index) => {
-        const target = values.targets[index]
-        const channels = props.channels.filter((c) =>
-          c.groups.includes(target.group)
-        )
-        const models =
-          channels.find((c) => c.id === Number(target.channel_id))?.models ?? []
-        return (
-          <section
-            key={field.id}
-            className='min-w-0 rounded-xl border p-4'
-            aria-label={`${target.group} / ${target.model || t('New target')}`}
+    <div className='grid min-w-0 gap-5 lg:grid-cols-[13rem_minmax(0,1fr)]'>
+      <aside className='bg-muted/20 min-w-0 self-start rounded-xl border p-3'>
+        <p className='mb-3 flex items-center gap-2 px-1 text-sm font-semibold'>
+          <Layers className='size-4' />
+          {t('Group')}
+        </p>
+        <Input
+          aria-label={t('Search groups')}
+          placeholder={t('Search groups')}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <div
+          className='mt-3 flex max-h-80 gap-1 overflow-auto lg:flex-col'
+          aria-label={t('Group')}
+        >
+          {groups
+            .filter((name) => name.toLowerCase().includes(search.toLowerCase()))
+            .map((name) => (
+              <Button
+                key={name}
+                type='button'
+                variant={name === selected ? 'secondary' : 'ghost'}
+                aria-pressed={name === selected}
+                className='h-auto min-h-9 justify-between gap-3 lg:w-full'
+                onClick={() => setGroup(name)}
+              >
+                <span className='truncate'>{name}</span>
+                <span className='text-muted-foreground text-xs'>
+                  {formatNumber(
+                    plan.targets.filter((target) => target.group === name)
+                      .length
+                  )}
+                </span>
+              </Button>
+            ))}
+          {!groups.some((name) =>
+            name.toLowerCase().includes(search.toLowerCase())
+          ) && (
+            <p className='text-muted-foreground p-2 text-sm'>
+              {t('No results found')}
+            </p>
+          )}
+        </div>
+      </aside>
+      <div className='min-w-0 space-y-4'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <h3 className='font-semibold break-all'>
+              {selected || t('Detection targets')}
+            </h3>
+            <p className='text-muted-foreground mt-1 text-xs'>
+              {t(
+                'Only one channel per group and model is public. Users see the group and model only. Save changes before running checks.'
+              )}
+            </p>
+          </div>
+          <div className='flex shrink-0 gap-2'>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              onClick={props.onRefresh}
+            >
+              <RefreshCw />
+              {t('Refresh')}
+            </Button>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              disabled={plan.targets.length >= 200}
+              onClick={() =>
+                setEditing({
+                  index: -1,
+                  target: {
+                    group: selected ?? '',
+                    channel_id: 0,
+                    model: '',
+                    reasoning_effort: '',
+                    enabled: true,
+                    public: false,
+                    probes: [],
+                  },
+                })
+              }
+            >
+              <Plus />
+              {t('Add target')}
+            </Button>
+          </div>
+        </div>
+        {models.length === 0 && (
+          <EmptyState
+            icon={Layers}
+            title={t('No detection targets')}
+            description={t(
+              'Add a channel and model, then choose the probes to run.'
+            )}
+          />
+        )}
+        {models.map((model) => (
+          <Collapsible
+            key={model}
+            defaultOpen
+            className='overflow-hidden rounded-xl border'
           >
-            <div className='mb-4 flex flex-wrap items-center justify-between gap-3'>
-              <Label className='flex items-center gap-2'>
-                <Switch
-                  checked={target.enabled}
-                  onCheckedChange={(value) =>
-                    form.setValue(`targets.${index}.enabled`, value, {
-                      shouldDirty: true,
-                    })
-                  }
-                />
-                {t('Enable detection')}
-              </Label>
-              <Label className='flex items-center gap-2'>
-                <Switch
-                  checked={target.public}
-                  onCheckedChange={(value) => {
-                    values.targets.forEach((item, i) => {
-                      if (
-                        i === index ||
-                        (value &&
-                          item.group === target.group &&
-                          item.model === target.model)
-                      ) {
-                        form.setValue(
-                          `targets.${i}.public`,
-                          i === index && value,
-                          { shouldDirty: true }
-                        )
-                      }
-                    })
-                  }}
-                />
-                {t('Show on public wall')}
-              </Label>
-              <div className='flex gap-2'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  disabled={props.dirty || !target.enabled || run.isPending}
-                  onClick={() =>
-                    run.mutate(
-                      {
-                        group: target.group,
-                        model: target.model,
-                        channel_id: Number(target.channel_id),
-                      },
-                      {
-                        onSuccess: () =>
-                          toast.success(
-                            t(
-                              'Check queued. Follow live progress here or on the wall.'
-                            )
-                          ),
-                        onError: (error) => handleServerError(error),
-                      }
-                    )
-                  }
-                >
-                  <Play />
-                  {t('Run now')}
-                </Button>
-                <Button
-                  type='button'
-                  size='icon-sm'
-                  variant='ghost'
-                  aria-label={t('Remove target')}
-                  onClick={() => targets.remove(index)}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            </div>
-            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-              <Label className='grid gap-2'>
-                {t('Group')}
-                <NativeSelect
-                  className='w-full'
-                  value={target.group}
-                  onChange={(event) => {
-                    form.setValue(
-                      `targets.${index}`,
-                      {
-                        ...target,
-                        group: event.target.value,
-                        channel_id: 0,
-                        model: '',
-                        public: false,
-                      },
-                      { shouldDirty: true }
-                    )
-                  }}
-                >
-                  <NativeSelectOption value=''>
-                    {t('Select a group')}
-                  </NativeSelectOption>
-                  {[...new Set([...groups, target.group])]
-                    .filter(Boolean)
-                    .map((group) => (
-                      <NativeSelectOption key={group} value={group}>
-                        {group}
-                      </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-              </Label>
-              <Label className='grid gap-2'>
-                {t('Channel')}
-                <NativeSelect
-                  className='w-full'
-                  value={target.channel_id}
-                  onChange={(event) => {
-                    form.setValue(
-                      `targets.${index}`,
-                      {
-                        ...target,
-                        channel_id: Number(event.target.value),
-                        model: '',
-                        public: false,
-                      },
-                      { shouldDirty: true }
-                    )
-                  }}
-                >
-                  <NativeSelectOption value={0}>
-                    {t('Select a channel')}
-                  </NativeSelectOption>
-                  {channels.map((channel) => (
-                    <NativeSelectOption key={channel.id} value={channel.id}>
-                      {channel.name}
-                      {channel.status !== 1 ? ` (${t('Disabled')})` : ''}
-                    </NativeSelectOption>
-                  ))}
-                  {target.channel_id > 0 &&
-                    !channels.some(
-                      (c) => c.id === Number(target.channel_id)
-                    ) && (
-                      <NativeSelectOption value={target.channel_id}>
-                        {t('Unavailable')} #{target.channel_id}
-                      </NativeSelectOption>
-                    )}
-                </NativeSelect>
-              </Label>
-              <Label className='grid gap-2'>
-                {t('Model')}
-                <NativeSelect
-                  className='w-full'
-                  value={target.model}
-                  onChange={(event) =>
-                    form.setValue(
-                      `targets.${index}`,
-                      { ...target, model: event.target.value, public: false },
-                      { shouldDirty: true }
-                    )
-                  }
-                >
-                  <NativeSelectOption value=''>
-                    {t('Select a model')}
-                  </NativeSelectOption>
-                  {[...new Set([...models, target.model])]
-                    .filter(Boolean)
-                    .map((name) => (
-                      <NativeSelectOption key={name} value={name}>
-                        {name}
-                      </NativeSelectOption>
-                    ))}
-                </NativeSelect>
-              </Label>
-              <Label className='grid gap-2'>
-                {t('Reasoning effort')}
-                <NativeSelect
-                  className='w-full'
-                  {...form.register(`targets.${index}.reasoning_effort`)}
-                >
-                  <NativeSelectOption value=''>
-                    {t('Default')}
-                  </NativeSelectOption>
-                  {REASONING_EFFORTS.map((effort) => (
-                    <NativeSelectOption key={effort} value={effort}>
-                      {effort}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </Label>
-            </div>
-            <div className='mt-4 grid gap-2 md:grid-cols-2'>
-              {values.probes.map((probe) => {
-                const bindingIndex = target.probes.findIndex(
-                  (p) => p.probe_id === probe.id
-                )
-                const binding = target.probes[bindingIndex]
-                return (
-                  <div
-                    key={probe.id}
-                    className='bg-muted/40 flex flex-wrap items-center justify-between gap-2 rounded-lg p-3'
-                  >
-                    <Label className='flex items-center gap-2'>
+            <CollapsibleTrigger className='bg-muted/25 flex w-full items-center gap-2 p-3 text-left text-sm font-semibold'>
+              <ChevronDown className='size-4' />
+              <span className='min-w-0 break-all'>{model}</span>
+              <Badge variant='secondary' className='ml-auto'>
+                {formatNumber(
+                  rows.filter((row) => row.target.model === model).length
+                )}
+              </Badge>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <StaticDataTable
+                className='overflow-x-auto rounded-none border-0'
+                tableProps={{ withContainer: false }}
+                tableClassName='min-w-[860px] table-fixed [&_td]:px-3 [&_td]:py-3 [&_th]:px-3'
+                containerProps={{
+                  role: 'region',
+                  'aria-label': model,
+                  tabIndex: 0,
+                }}
+                data={rows.filter((row) => row.target.model === model)}
+                getRowKey={({ target }) =>
+                  `${target.channel_id}:${target.model}`
+                }
+                columns={[
+                  {
+                    id: 'channel',
+                    header: t('Channel'),
+                    className: 'w-[18%]',
+                    cell: ({ target }) => {
+                      const channel = props.channels.find(
+                        (c) => c.id === target.channel_id
+                      )
+                      return (
+                        <div className='max-w-48'>
+                          <p className='truncate font-medium'>
+                            {channel?.name || t('Unavailable')}
+                          </p>
+                          <p className='text-muted-foreground text-xs'>
+                            #{target.channel_id}
+                            {channel?.status !== 1 && ` · ${t('Disabled')}`}
+                          </p>
+                        </div>
+                      )
+                    },
+                  },
+                  {
+                    id: 'enabled',
+                    header: t('Enable detection'),
+                    className: 'w-[12%]',
+                    cell: ({ target, index }) => (
                       <Switch
-                        checked={binding?.enabled ?? false}
-                        onCheckedChange={(value) => {
-                          if (bindingIndex < 0) {
-                            form.setValue(
-                              `targets.${index}.probes`,
-                              [
-                                ...target.probes,
-                                {
-                                  probe_id: probe.id,
-                                  enabled: value,
-                                  interval_minutes: 0,
-                                },
-                              ],
-                              { shouldDirty: true }
+                        aria-label={t('Enable detection')}
+                        checked={target.enabled}
+                        onCheckedChange={(value) =>
+                          form.setValue(`targets.${index}.enabled`, value, {
+                            shouldDirty: true,
+                          })
+                        }
+                      />
+                    ),
+                  },
+                  ...(['text', 'drawing'] as const).map((kind) => ({
+                    id: kind,
+                    className: 'w-[22%]',
+                    header:
+                      kind === 'text' ? t('Text probe') : t('Drawing check'),
+                    cell: ({ target }: { target: ProbeTarget }) => (
+                      <div className='flex max-w-60 flex-wrap gap-1.5'>
+                        {plan.probes
+                          .filter(
+                            (probe) =>
+                              probe.kind === kind &&
+                              target.probes.some(
+                                (binding) =>
+                                  binding.probe_id === probe.id &&
+                                  binding.enabled
+                              )
+                          )
+                          .map((probe) => (
+                            <span
+                              key={probe.id}
+                              className={
+                                kind === 'text'
+                                  ? 'rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300'
+                                  : 'rounded-md bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300'
+                              }
+                            >
+                              {probe.name} ·{' '}
+                              {t('Every {{minutes}} min', {
+                                minutes: formatNumber(
+                                  target.probes.find(
+                                    (binding) => binding.probe_id === probe.id
+                                  )?.interval_minutes || probe.interval_minutes
+                                ),
+                              })}
+                            </span>
+                          ))}
+                        {!plan.probes.some(
+                          (probe) =>
+                            probe.kind === kind &&
+                            target.probes.some(
+                              (binding) =>
+                                binding.probe_id === probe.id && binding.enabled
                             )
-                          } else {
-                            form.setValue(
-                              `targets.${index}.probes.${bindingIndex}.enabled`,
-                              value,
-                              { shouldDirty: true }
+                        ) && (
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Disabled')}
+                          </span>
+                        )}
+                      </div>
+                    ),
+                  })),
+                  {
+                    id: 'public',
+                    header: t('Show on public wall'),
+                    className: 'w-[14%]',
+                    cell: ({ target, index }) => (
+                      <Switch
+                        aria-label={t('Show on public wall')}
+                        checked={target.public}
+                        onCheckedChange={(value) =>
+                          form.setValue(
+                            'targets',
+                            plan.targets.map((item, i) => {
+                              if (i === index) return { ...item, public: value }
+                              if (
+                                value &&
+                                item.group === target.group &&
+                                item.model === target.model
+                              ) {
+                                return { ...item, public: false }
+                              }
+                              return item
+                            }),
+                            { shouldDirty: true }
+                          )
+                        }
+                      />
+                    ),
+                  },
+                  {
+                    id: 'actions',
+                    header: t('Actions'),
+                    className: 'w-[12%]',
+                    cell: ({ target, index }) => (
+                      <div className='flex items-center gap-1'>
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant='ghost'
+                          onClick={() => setEditing({ index, target })}
+                        >
+                          {t('Configure')}
+                        </Button>
+                        <Button
+                          type='button'
+                          size='icon-sm'
+                          variant='ghost'
+                          aria-label={t('Run now')}
+                          disabled={
+                            props.dirty || !target.enabled || run.isPending
+                          }
+                          onClick={() =>
+                            run.mutate(
+                              {
+                                group: target.group,
+                                model: target.model,
+                                channel_id: target.channel_id,
+                              },
+                              {
+                                onSuccess: () =>
+                                  toast.success(
+                                    t(
+                                      'Check queued. Follow live progress here or on the wall.'
+                                    )
+                                  ),
+                                onError: (error) => handleServerError(error),
+                              }
                             )
                           }
-                        }}
-                      />
-                      {probe.name || t('New probe')}
-                    </Label>
-                    {binding && (
-                      <Label className='text-muted-foreground flex items-center gap-2 text-xs'>
-                        {t('Override interval (0 = default)')}
-                        <Input
-                          className='w-20'
-                          type='number'
-                          min={0}
-                          max={1440}
-                          {...form.register(
-                            `targets.${index}.probes.${bindingIndex}.interval_minutes`
-                          )}
-                        />
-                      </Label>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-            {form.formState.errors.targets?.[index] && (
-              <p role='alert' className='text-destructive mt-2 text-sm'>
-                {t('Check the target selection and public channel')}
-              </p>
-            )}
-          </section>
-        )
-      })}
-      <Button
-        type='button'
-        variant='outline'
-        className='self-start'
-        disabled={targets.fields.length >= 200}
-        onClick={() =>
-          targets.append({
-            group: groups[0] ?? '',
-            channel_id: 0,
-            model: '',
-            reasoning_effort: '',
-            enabled: true,
-            public: false,
-            probes: values.probes.map((p) => ({
-              probe_id: p.id,
-              enabled: false,
-              interval_minutes: 0,
-            })),
-          })
-        }
-      >
-        <Plus />
-        {t('Add target')}
-      </Button>
+                        >
+                          <Play />
+                        </Button>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </CollapsibleContent>
+          </Collapsible>
+        ))}
+      </div>
+      {editing && (
+        <ProbeTargetDrawer
+          plan={plan}
+          index={editing.index}
+          initial={editing.target}
+          channels={props.channels}
+          onClose={() => setEditing(null)}
+          onApply={(targets) => {
+            form.setValue('targets', targets, { shouldDirty: true })
+            setGroup(
+              targets[editing.index < 0 ? targets.length - 1 : editing.index]
+                .group
+            )
+            setEditing(null)
+          }}
+          onRemove={() => {
+            form.setValue(
+              'targets',
+              plan.targets.filter((_, index) => index !== editing.index),
+              { shouldDirty: true }
+            )
+            setEditing(null)
+          }}
+        />
+      )}
     </div>
   )
 }
