@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { Play, Settings2, Activity, FileText, Layers } from 'lucide-react'
 import { useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
@@ -44,8 +45,10 @@ import {
   probePlanSchema,
   type ProbePlan,
 } from '@/features/degradation-watch/lib/probes'
+import { getGroups } from '@/features/users/api'
 import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
@@ -54,17 +57,23 @@ import { ProbeTargetsEditor } from './probe-targets-editor'
 import { ProbeTemplatesEditor } from './probe-templates-editor'
 
 export function ProbeSettingsSection() {
-  const { t } = useTranslation()
   const plan = useProbePlan()
   const channels = useDegradationWatchChannels()
-  if (plan.isPending || channels.isPending) return <LoadingState />
-  if (!plan.data || !channels.data) {
+  const groups = useQuery({
+    queryKey: ['groups'],
+    queryFn: async () => requireServerSuccess(await getGroups()),
+    refetchInterval: 15_000,
+  })
+  if (plan.isPending || channels.isPending || groups.isPending) {
+    return <LoadingState />
+  }
+  if (!plan.data || !channels.data || !groups.data) {
     return (
       <ErrorState
-        title={t('Failed to load channels')}
         onRetry={() => {
           void plan.refetch()
           void channels.refetch()
+          void groups.refetch()
         }}
       />
     )
@@ -73,13 +82,18 @@ export function ProbeSettingsSection() {
     <ProbeSettingsForm
       initial={plan.data}
       channels={channels.data.available_channels}
-      onRefresh={() => void channels.refetch()}
+      groups={groups.data.data ?? []}
+      onRefresh={() => {
+        void channels.refetch()
+        void groups.refetch()
+      }}
     />
   )
 }
 
 function ProbeSettingsForm(props: {
   initial: ProbePlan & { configured?: boolean }
+  groups: string[]
   channels: NonNullable<
     ReturnType<typeof useDegradationWatchChannels>['data']
   >['available_channels']
@@ -223,6 +237,7 @@ function ProbeSettingsForm(props: {
               key={revision}
               form={form}
               channels={props.channels}
+              groups={props.groups}
               dirty={dirty}
               onRefresh={props.onRefresh}
             />

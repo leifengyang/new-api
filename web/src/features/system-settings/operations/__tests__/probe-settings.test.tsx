@@ -64,6 +64,8 @@ const channels = [
   },
 ]
 let configured = true
+let currentGroups = ['alpha', 'beta']
+let groupsFailed = false
 
 function Fixture() {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
@@ -79,8 +81,14 @@ function Fixture() {
 
 beforeEach(() => {
   configured = true
+  currentGroups = ['alpha', 'beta']
+  groupsFailed = false
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/group/' && groupsFailed) {
+      return { data: { success: false, message: 'Groups unavailable' } }
+    }
     const data: Record<string, unknown> = {
+      '/api/group/': currentGroups,
       '/api/degradation_watch/probe-plan': {
         ...structuredClone(plan),
         configured,
@@ -99,6 +107,58 @@ beforeEach(() => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
+test('deleted groups from channel bindings and old targets do not appear, while valid empty groups remain selectable', async () => {
+  currentGroups = ['beta', 'empty']
+  const { view, client, user } = setup()
+  await screen.findByRole('button', { name: 'Add target' })
+  expect(
+    screen.queryByRole('button', { name: /^alpha/ })
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /^beta/ })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /^empty/ })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Add target' }))
+  const group = screen.getByRole('combobox', { name: 'Group' })
+  expect(
+    within(group).queryByRole('option', { name: 'alpha' })
+  ).not.toBeInTheDocument()
+  expect(
+    within(group).getByRole('option', { name: 'empty' })
+  ).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('refresh removes a deleted selected group without discarding unsaved target edits', async () => {
+  const { view, client, user } = setup()
+  await user.click(
+    (await screen.findAllByRole('switch', { name: 'Show on public wall' }))[0]
+  )
+  currentGroups = ['beta']
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: /^alpha/ })
+    ).not.toBeInTheDocument()
+  )
+  expect(screen.getByRole('button', { name: /^beta/ })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        targets: [{ ...plan.targets[0], public: false }, plan.targets[1]],
+      })
+    )
+  )
+  view.unmount()
+  client.clear()
+})
+
 test('a migrated legacy plan can be saved without edits and cannot run until saved', async () => {
   configured = false
   const { view, client, user } = setup()
@@ -115,6 +175,40 @@ test('a migrated legacy plan can be saved without edits and cannot run until sav
     '/api/degradation_watch/probe-plan',
     plan
   )
+  view.unmount()
+  client.clear()
+})
+
+test('an empty current group catalog disables adding targets even if channels retain old bindings', async () => {
+  currentGroups = []
+  const { view, client } = setup()
+  expect(
+    await screen.findByRole('button', { name: 'Add target' })
+  ).toBeDisabled()
+  expect(
+    screen.queryByRole('button', { name: /^alpha/ })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: /^beta/ })
+  ).not.toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('a group catalog failure offers retry without falling back to stale channel groups', async () => {
+  groupsFailed = true
+  const { view, client, user } = setup()
+  await screen.findByRole('button', { name: 'Retry' })
+  expect(
+    screen.queryByRole('button', { name: 'Add target' })
+  ).not.toBeInTheDocument()
+  groupsFailed = false
+  currentGroups = ['beta']
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByRole('button', { name: /^beta/ })
+  expect(
+    screen.queryByRole('button', { name: /^alpha/ })
+  ).not.toBeInTheDocument()
   view.unmount()
   client.clear()
 })
