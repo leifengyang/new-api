@@ -70,13 +70,15 @@ function StatusBlocks(props: {
           variant='ghost'
           size='icon'
           className={cn(
-            'h-7 min-w-2 max-w-8 flex-1 rounded-sm border-0 p-0 transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+            'h-7 min-w-6 max-w-8 flex-1 rounded-sm border-0 p-0 text-xs font-semibold text-slate-950 transition-transform hover:-translate-y-0.5 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
             verdictClasses[probeVerdict(record)]
           )}
-          aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
-          title={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
+          aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}${record.answer_last_character ? ` · ${record.answer_last_character}` : ''}`}
+          title={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}${record.answer_last_character ? ` · ${record.answer_last_character}` : ''}`}
           onClick={() => props.onOpen(record)}
-        />
+        >
+          {record.answer_last_character}
+        </Button>
       ))}
     </>
   )

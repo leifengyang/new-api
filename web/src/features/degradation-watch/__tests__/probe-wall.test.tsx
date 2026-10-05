@@ -186,6 +186,42 @@ function setup() {
   return { client, view }
 }
 
+test('probe blocks show answer characters without loading full replies and still open details', async () => {
+  records = [
+    { ...record, id: 7, answer_last_character: '苗' },
+    {
+      ...record,
+      id: 6,
+      success: false,
+      status: 'failed',
+      verdict: 'mismatch',
+      answer_last_character: 'n',
+    },
+    { ...record, id: 5, answer_last_character: '𠮷' },
+    { ...record, id: 4, success: false, status: 'failed', verdict: 'error' },
+  ]
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  const answer = await section.findByRole('button', { name: /· Passed · 苗/ })
+  expect(answer).toHaveTextContent('苗')
+  expect(
+    section.getByRole('button', { name: /· Answer or drawing mismatch · n/ })
+  ).toHaveTextContent('n')
+  expect(
+    section.getByRole('button', { name: /· Passed · 𠮷/ })
+  ).toHaveTextContent('𠮷')
+  expect(
+    section.getByRole('button', { name: /· Request error/ })
+  ).toBeEmptyDOMElement()
+  expect(api.get).not.toHaveBeenCalledWith('/api/degradation_watch/records/7')
+  fireEvent.click(answer)
+  expect(await screen.findByText('full model response')).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
 test('wall excludes errors from pass rate, shows live tokens and fetches details only when selected', async () => {
   const { view, client } = setup()
   const lane = within(

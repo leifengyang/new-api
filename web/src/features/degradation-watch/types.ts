@@ -29,6 +29,7 @@ export interface DegradationWatchRecord {
   probe_name?: string
   probe_kind?: string
   verdict?: string
+  answer_last_character?: string
   status?:
     | 'queued'
     | 'running'
