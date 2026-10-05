@@ -54,15 +54,6 @@ export function ProbeTargetFields(props: {
           />
           {t('Enable detection')}
         </Label>
-        <Label>
-          <Switch
-            checked={target.public}
-            onCheckedChange={(value) =>
-              form.setValue('targets.0.public', value, { shouldDirty: true })
-            }
-          />
-          {t('Show on public wall')}
-        </Label>
       </div>
       <div className='grid gap-3 sm:grid-cols-2'>
         <Label className='grid gap-2'>
@@ -79,6 +70,10 @@ export function ProbeTargetFields(props: {
                   channel_id: 0,
                   model: '',
                   public: false,
+                  probes: target.probes.map((binding) => ({
+                    ...binding,
+                    public: false,
+                  })),
                 },
                 { shouldDirty: true }
               )
@@ -107,6 +102,10 @@ export function ProbeTargetFields(props: {
                   channel_id: Number(event.target.value),
                   model: '',
                   public: false,
+                  probes: target.probes.map((binding) => ({
+                    ...binding,
+                    public: false,
+                  })),
                 },
                 { shouldDirty: true }
               )
@@ -137,7 +136,15 @@ export function ProbeTargetFields(props: {
             onChange={(event) =>
               form.setValue(
                 `targets.${index}`,
-                { ...target, model: event.target.value, public: false },
+                {
+                  ...target,
+                  model: event.target.value,
+                  public: false,
+                  probes: target.probes.map((binding) => ({
+                    ...binding,
+                    public: false,
+                  })),
+                },
                 { shouldDirty: true }
               )
             }
@@ -178,7 +185,8 @@ export function ProbeTargetFields(props: {
           return (
             <div
               key={probe.id}
-              className='bg-muted/30 flex flex-col gap-3 rounded-lg border p-3'
+              data-public={binding?.public ?? target.public}
+              className='bg-muted/30 flex flex-col gap-3 rounded-lg border p-3 transition-opacity data-[public=false]:opacity-50'
             >
               <div className='flex flex-wrap items-center justify-between gap-2'>
                 <Badge
@@ -210,6 +218,7 @@ export function ProbeTargetFields(props: {
                           {
                             probe_id: probe.id,
                             enabled: value,
+                            public: false,
                             interval_minutes: 0,
                           },
                         ],
@@ -227,6 +236,25 @@ export function ProbeTargetFields(props: {
                 {probe.name || t('New probe')}
               </Label>
               {binding && (
+                <Label className='flex items-center gap-2 text-xs'>
+                  <Switch
+                    size='sm'
+                    aria-label={t('Show {{probe}} on public wall', {
+                      probe: probe.name,
+                    })}
+                    checked={binding.public ?? target.public}
+                    onCheckedChange={(value) =>
+                      form.setValue(
+                        `targets.${index}.probes.${bindingIndex}.public`,
+                        value,
+                        { shouldDirty: true }
+                      )
+                    }
+                  />
+                  <span aria-hidden='true'>{t('Show on public wall')}</span>
+                </Label>
+              )}
+              {binding && (
                 <Label className='text-muted-foreground flex items-center gap-2 text-xs'>
                   {t('Override interval (0 = default)')}
                   <Input
@@ -240,13 +268,44 @@ export function ProbeTargetFields(props: {
                   />
                 </Label>
               )}
+              {binding && probe.kind === 'text' && (
+                <Label className='grid gap-2 text-xs'>
+                  {t('Probe reasoning effort')}
+                  <NativeSelect
+                    value={binding.reasoning_effort ?? 'inherit'}
+                    onChange={(event) =>
+                      form.setValue(
+                        `targets.${index}.probes.${bindingIndex}.reasoning_effort`,
+                        event.target.value === 'inherit'
+                          ? undefined
+                          : (event.target.value as NonNullable<
+                              typeof binding.reasoning_effort
+                            >),
+                        { shouldDirty: true }
+                      )
+                    }
+                  >
+                    <NativeSelectOption value='inherit'>
+                      {t('Use target setting')}
+                    </NativeSelectOption>
+                    <NativeSelectOption value=''>
+                      {t('Default')}
+                    </NativeSelectOption>
+                    {REASONING_EFFORTS.filter(Boolean).map((effort) => (
+                      <NativeSelectOption key={effort} value={effort}>
+                        {effort}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </Label>
+              )}
             </div>
           )
         })}
       </div>
       <p className='text-muted-foreground text-xs'>
         {t(
-          'Only one channel per group and model is public. Users see the group and model only. Save changes before running checks.'
+          'Choose public visibility for each probe independently. Multiple channels can be shown together; users see only the group and model. Save changes before running checks.'
         )}
       </p>
     </div>

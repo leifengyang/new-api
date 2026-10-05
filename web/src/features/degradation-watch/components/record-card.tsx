@@ -347,6 +347,16 @@ export function RecordCard(props: RecordCardProps) {
           aria-label={t('View artwork')}
         >
           <ArtworkPreview record={record} localHtml={props.localHtml} />
+          {(record.hidden || record.public_visible === false) && (
+            <span
+              className='bg-background/90 text-muted-foreground absolute top-2 right-2 flex size-7 items-center justify-center rounded-full border shadow-sm'
+              role='img'
+              aria-label={t('Hidden')}
+              title={t('Hidden')}
+            >
+              <EyeOff className='size-4' aria-hidden='true' />
+            </span>
+          )}
         </Button>
       )}
       {active && (
@@ -387,7 +397,7 @@ export function RecordCard(props: RecordCardProps) {
         <div className='text-muted-foreground flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-[11px]'>
           <span>{formatTimestampToDate(record.created_at)}</span>
           <span>{record.reasoning_effort || '-'}</span>
-          {record.hidden && (
+          {(record.hidden || record.public_visible === false) && (
             <span className='flex items-center gap-1'>
               <EyeOff className='size-3' />
               {t('Hidden')}

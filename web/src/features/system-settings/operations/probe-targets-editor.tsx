@@ -39,6 +39,7 @@ import {
   CollapsibleContent,
 } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
@@ -150,7 +151,7 @@ export function ProbeTargetsEditor(props: {
             </h3>
             <p className='text-muted-foreground mt-1 text-xs'>
               {t(
-                'Only one channel per group and model is public. Users see the group and model only. Save changes before running checks.'
+                'Choose public visibility for each probe independently. Multiple channels can be shown together; users see only the group and model. Save changes before running checks.'
               )}
             </p>
           </div>
@@ -267,10 +268,16 @@ export function ProbeTargetsEditor(props: {
                   },
                   ...(['text', 'drawing'] as const).map((kind) => ({
                     id: kind,
-                    className: 'w-[22%]',
+                    className: 'w-[29%]',
                     header:
                       kind === 'text' ? t('Text probe') : t('Drawing check'),
-                    cell: ({ target }: { target: ProbeTarget }) => (
+                    cell: ({
+                      target,
+                      index,
+                    }: {
+                      target: ProbeTarget
+                      index: number
+                    }) => (
                       <div className='flex max-w-60 flex-wrap gap-1.5'>
                         {plan.probes
                           .filter(
@@ -285,7 +292,12 @@ export function ProbeTargetsEditor(props: {
                           .map((probe) => (
                             <div
                               key={probe.id}
-                              className='inline-flex max-w-full items-center gap-1'
+                              data-public={
+                                target.probes.find(
+                                  (binding) => binding.probe_id === probe.id
+                                )?.public ?? target.public
+                              }
+                              className='flex max-w-full flex-wrap items-center gap-1 transition-opacity data-[public=false]:opacity-50'
                             >
                               <span
                                 className={
@@ -342,6 +354,35 @@ export function ProbeTargetsEditor(props: {
                                   })}
                                 </TooltipContent>
                               </Tooltip>
+                              <Label className='text-muted-foreground flex basis-full items-center gap-2 py-1 text-[11px] font-normal'>
+                                <Switch
+                                  size='sm'
+                                  aria-label={t(
+                                    'Show {{probe}} on public wall',
+                                    { probe: probe.name }
+                                  )}
+                                  checked={
+                                    target.probes.find(
+                                      (binding) => binding.probe_id === probe.id
+                                    )?.public ?? target.public
+                                  }
+                                  onCheckedChange={(value) => {
+                                    const bindingIndex =
+                                      target.probes.findIndex(
+                                        (binding) =>
+                                          binding.probe_id === probe.id
+                                      )
+                                    form.setValue(
+                                      `targets.${index}.probes.${bindingIndex}.public`,
+                                      value,
+                                      { shouldDirty: true }
+                                    )
+                                  }}
+                                />
+                                <span aria-hidden='true'>
+                                  {t('Show on public wall')}
+                                </span>
+                              </Label>
                             </div>
                           ))}
                         {!plan.probes.some(
@@ -359,34 +400,6 @@ export function ProbeTargetsEditor(props: {
                       </div>
                     ),
                   })),
-                  {
-                    id: 'public',
-                    header: t('Show on public wall'),
-                    className: 'w-[14%]',
-                    cell: ({ target, index }) => (
-                      <Switch
-                        aria-label={t('Show on public wall')}
-                        checked={target.public}
-                        onCheckedChange={(value) =>
-                          form.setValue(
-                            'targets',
-                            plan.targets.map((item, i) => {
-                              if (i === index) return { ...item, public: value }
-                              if (
-                                value &&
-                                item.group === target.group &&
-                                item.model === target.model
-                              ) {
-                                return { ...item, public: false }
-                              }
-                              return item
-                            }),
-                            { shouldDirty: true }
-                          )
-                        }
-                      />
-                    ),
-                  },
                   {
                     id: 'actions',
                     header: t('Actions'),

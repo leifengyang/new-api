@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,6 +20,7 @@ type degradationProbeLane struct {
 }
 
 type degradationProbeHistory struct {
+	Public          *bool                        `json:"public,omitempty"`
 	ID              string                       `json:"id"`
 	Name            string                       `json:"name"`
 	Kind            string                       `json:"kind"`
@@ -56,20 +58,27 @@ func GetDegradationProbeWall(c *gin.Context) {
 	}
 	channelID, _ := strconv.Atoi(c.Query("channel_id"))
 	lanes := []degradationProbeLane{}
-	var selected *operation_setting.DegradationProbeTarget
+	selected := []operation_setting.DegradationProbeTarget{}
+	seen := map[[2]string]int{}
 	for _, target := range plan.Targets {
-		if !admin && !target.Public {
+		visible := slices.ContainsFunc(target.Probes, func(binding operation_setting.DegradationProbeBinding) bool { return binding.IsPublic(target) })
+		if !admin && !visible {
 			continue
 		}
 		lane := degradationProbeLane{Group: target.Group, Model: target.Model, Enabled: plan.Enabled && target.Enabled}
 		if admin {
-			lane.ChannelID, lane.Public = target.ChannelID, target.Public
+			lane.ChannelID, lane.Public = target.ChannelID, visible
 			lane.ChannelName = titles[target.ChannelID]
 		}
-		lanes = append(lanes, lane)
+		key := [2]string{target.Group, target.Model}
+		if index, exists := seen[key]; !admin && exists {
+			lanes[index].Enabled = lanes[index].Enabled || lane.Enabled
+		} else {
+			seen[key] = len(lanes)
+			lanes = append(lanes, lane)
+		}
 		if c.Query("group") == target.Group && c.Query("model") == target.Model && (!admin || channelID == target.ChannelID) {
-			copy := target
-			selected = &copy
+			selected = append(selected, target)
 		}
 	}
 	since := common.GetTimestamp() - 24*60*60
@@ -80,12 +89,12 @@ func GetDegradationProbeWall(c *gin.Context) {
 		common.ApiSuccess(c, gin.H{"enabled": plan.Enabled, "lanes": lanes, "since": since})
 		return
 	}
-	if selected == nil {
+	if len(selected) == 0 {
 		c.JSON(404, gin.H{"success": false, "message": "record not found"})
 		return
 	}
 	if admin {
-		if channel, err := model.GetChannelById(selected.ChannelID, false); err == nil {
+		if channel, err := model.GetChannelById(selected[0].ChannelID, false); err == nil {
 			titles[channel.Id] = channel.Name
 		}
 	}
@@ -93,35 +102,65 @@ func GetDegradationProbeWall(c *gin.Context) {
 	rows := []degradationProbeHistory{}
 	const pageSize = 300
 	for _, probe := range plan.Probes {
-		for _, binding := range selected.Probes {
-			if binding.ProbeID != probe.ID || (c.Query("probe_id") != "" && c.Query("probe_id") != probe.ID) {
-				continue
-			}
-			records, stats, art, err := model.GetDegradationProbeHistory(probeSeries(*selected, probe), since, max(before, 0), pageSize+1, admin)
-			if err != nil {
-				common.ApiError(c, err)
-				return
-			}
-			row := degradationProbeHistory{ID: probe.ID, Name: probe.Name, Kind: probe.Kind, Enabled: plan.Enabled && selected.Enabled && binding.Enabled, IntervalMinutes: probe.IntervalMinutes, Stats: stats, Records: []degradationWatchRecordItem{}}
-			if binding.IntervalMinutes > 0 {
-				row.IntervalMinutes = binding.IntervalMinutes
-			}
-			if len(records) > pageSize {
-				records = records[:pageSize]
-				row.NextBefore = records[len(records)-1].Id
-			}
-			for _, record := range records {
-				item := toDegradationWatchRecordItem(record, admin, nil, titles)
-				item.GroupName, item.ProbeID, item.ProbeName, item.ProbeKind = selected.Group, probe.ID, probe.Name, probe.Kind
-				row.Records = append(row.Records, item)
-			}
-			if art != nil {
-				item := toDegradationWatchRecordItem(art, admin, nil, titles)
-				item.GroupName, item.ProbeKind = selected.Group, "drawing"
-				row.Artwork = &item
-			}
-			rows = append(rows, row)
+		if c.Query("probe_id") != "" && c.Query("probe_id") != probe.ID {
+			continue
 		}
+		series := []model.DegradationProbeSeries{}
+		interval := 0
+		enabled := false
+		public := false
+		for _, target := range selected {
+			for _, binding := range target.Probes {
+				if binding.ProbeID != probe.ID || (!admin && !binding.IsPublic(target)) {
+					continue
+				}
+				series = append(series, probeSeries(target, probe))
+				public = public || binding.IsPublic(target)
+				minutes := probe.IntervalMinutes
+				if binding.IntervalMinutes > 0 {
+					minutes = binding.IntervalMinutes
+				}
+				if interval == 0 || minutes < interval {
+					interval = minutes
+				}
+				enabled = enabled || (plan.Enabled && target.Enabled && binding.Enabled)
+			}
+		}
+		if len(series) == 0 {
+			continue
+		}
+		records, stats, art, err := model.GetDegradationProbeHistoryForSeries(series, since, max(before, 0), pageSize+1, admin)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		row := degradationProbeHistory{ID: probe.ID, Name: probe.Name, Kind: probe.Kind, Enabled: enabled, IntervalMinutes: interval, Stats: stats, Records: []degradationWatchRecordItem{}}
+		if admin {
+			row.Public = &public
+		}
+		if len(records) > pageSize {
+			records = records[:pageSize]
+			row.NextBefore = records[len(records)-1].Id
+		}
+		for _, record := range records {
+			item := toDegradationWatchRecordItem(record, admin, nil, titles)
+			if admin {
+				visible := public && !record.Hidden
+				item.PublicVisible = &visible
+			}
+			item.GroupName, item.ProbeID, item.ProbeName, item.ProbeKind = selected[0].Group, probe.ID, probe.Name, probe.Kind
+			row.Records = append(row.Records, item)
+		}
+		if art != nil {
+			item := toDegradationWatchRecordItem(art, admin, nil, titles)
+			if admin {
+				visible := public && !art.Hidden
+				item.PublicVisible = &visible
+			}
+			item.GroupName, item.ProbeKind = selected[0].Group, "drawing"
+			row.Artwork = &item
+		}
+		rows = append(rows, row)
 	}
 	common.ApiSuccess(c, gin.H{"probes": rows, "since": since})
 }

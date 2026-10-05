@@ -387,7 +387,7 @@ func TestDegradationProbeRulesAndPlanValidation(t *testing.T) {
 	raw, err = common.Marshal(plan)
 	require.NoError(t, err)
 	_, err = operation_setting.ParseDegradationProbePlan(string(raw))
-	assert.ErrorContains(t, err, "one public channel")
+	require.NoError(t, err, "multiple public channels are allowed")
 	plan.Targets[1].Public = false
 	plan.Targets[0].Probes[0].IntervalMinutes = -1
 	raw, err = common.Marshal(plan)
@@ -472,6 +472,83 @@ func TestDegradationProbeIndependentSchedulesAndPublicSelection(t *testing.T) {
 	assert.NotContains(t, redacted, "channel_id")
 	assert.Contains(t, redacted, "try later")
 
+	// Visibility belongs to each binding; legacy target visibility is only a fallback.
+	yes, no := true, false
+	plan.Targets[0].Probes[0].Public = &no
+	plan.Targets[2].Probes[0].Public = &yes
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	assert.False(t, canViewDegradationProbeRecord(first))
+	assert.True(t, canViewDegradationProbeRecord(private))
+	plan.Targets[0].Probes[0].Public = &yes
+	plan.Targets[0].Probes[1].Public = &no
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	assert.True(t, canViewDegradationProbeRecord(first))
+	drawing := &model.DegradationWatchRecord{ChannelId: 1, GroupName: "a", ModelName: "sol", ProbeID: "drawing", CreatedAt: now, Status: "succeeded", Success: true, Html: "<html><svg/></html>"}
+	require.NoError(t, model.CreateDegradationWatchRecord(drawing))
+	assert.False(t, canViewDegradationProbeRecord(drawing))
+	for _, path := range []string{"/monitor?group=a&model=sol", "/monitor?group=a&model=sol&channel_id=999"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", path, nil)
+		GetDegradationProbeWall(c)
+		var response struct {
+			Data struct {
+				Probes []degradationProbeHistory `json:"probes"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+		require.Len(t, response.Data.Probes, 1)
+		assert.Equal(t, "sanae", response.Data.Probes[0].ID)
+		require.Len(t, response.Data.Probes[0].Records, 2)
+		assert.Equal(t, private.Id, response.Data.Probes[0].Records[0].Id)
+		assert.Equal(t, first.Id, response.Data.Probes[0].Records[1].Id)
+		assert.NotContains(t, w.Body.String(), "channel_id")
+		assert.NotContains(t, w.Body.String(), "private-one")
+	}
+	for _, html := range []bool{false, true} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(drawing.Id)}}
+		if html {
+			GetDegradationWatchRecordHtml(c)
+		} else {
+			GetDegradationWatchRecord(c)
+		}
+		assert.Equal(t, 404, w.Code)
+	}
+	wCatalog := httptest.NewRecorder()
+	cCatalog, _ := gin.CreateTestContext(wCatalog)
+	cCatalog.Request = httptest.NewRequest("GET", "/monitor", nil)
+	GetDegradationProbeWall(cCatalog)
+	var catalog struct {
+		Data struct {
+			Lanes []degradationProbeLane `json:"lanes"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(wCatalog.Body.Bytes(), &catalog))
+	assert.Len(t, catalog.Data.Lanes, 2, "one lane per group and model, without duplicate public channels")
+	wAdmin := httptest.NewRecorder()
+	cAdmin, _ := gin.CreateTestContext(wAdmin)
+	cAdmin.Set("role", common.RoleAdminUser)
+	cAdmin.Request = httptest.NewRequest("GET", "/monitor?group=a&model=sol&channel_id=1", nil)
+	GetDegradationProbeWall(cAdmin)
+	var adminHistory struct {
+		Data struct {
+			Probes []degradationProbeHistory `json:"probes"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(wAdmin.Body.Bytes(), &adminHistory))
+	require.Len(t, adminHistory.Data.Probes, 2)
+	require.NotNil(t, adminHistory.Data.Probes[1].Public)
+	assert.False(t, *adminHistory.Data.Probes[1].Public)
+	require.Len(t, adminHistory.Data.Probes[1].Records, 1)
+	require.NotNil(t, adminHistory.Data.Probes[1].Records[0].PublicVisible)
+	assert.False(t, *adminHistory.Data.Probes[1].Records[0].PublicVisible)
+
 	// A drawing task already in progress must not silently drop a manual run,
 	// or enqueue the text half before reporting the conflict.
 	_, err = model.CreateSystemTask(model.SystemTaskTypeDegradationWatch, degradationWatchTaskPayload{}, nil)
@@ -508,8 +585,9 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	require.NoError(t, db.Create(&model.User{Username: "probe-test", Role: common.RoleRootUser, Group: "default", Quota: 10000, Status: 1}).Error)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			Model    string `json:"model"`
-			Messages []struct {
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoning_effort"`
+			Messages        []struct {
 				Content string `json:"content"`
 			} `json:"messages"`
 		}
@@ -522,6 +600,10 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 			return
 		}
 		output := "高市早苗"
+		if len(request.Messages) > 0 {
+			expectedEffort := map[string]string{"who": "low", "draw": "high", "another": ""}[request.Messages[0].Content]
+			assert.Equal(t, expectedEffort, request.ReasoningEffort, "probe override reaches the actual upstream request")
+		}
 		if len(request.Messages) > 0 && request.Messages[0].Content == "draw" {
 			output = "<html><svg/></html>"
 		}
@@ -545,6 +627,11 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 		{Group: "b", Model: "sol", ChannelID: 1, Enabled: true, Public: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "other", Enabled: true}}},
 		{Group: "a", Model: "broken", ChannelID: 1, Enabled: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "sanae", Enabled: true}}},
 	}}
+	low, defaultEffort := "low", ""
+	plan.Targets[0].ReasoningEffort = "high"
+	plan.Targets[0].Probes[0].ReasoningEffort = &low
+	plan.Targets[1].ReasoningEffort = "high"
+	plan.Targets[1].Probes[0].ReasoningEffort = &defaultEffort
 	raw, err := common.Marshal(plan)
 	require.NoError(t, err)
 	setting.ProbePlan = string(raw)
@@ -567,6 +654,7 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	assert.Equal(t, "passed", rows[0].Verdict)
 	assert.Equal(t, "a", rows[0].GroupName)
 	assert.Equal(t, "who", string(rows[0].PromptSnapshot))
+	assert.Equal(t, "low", rows[0].ReasoningEffort)
 	assert.Equal(t, "高市早苗", string(rows[0].ExpectedSnapshot))
 	assert.Equal(t, 12, rows[0].PromptTokens)
 	assert.Equal(t, 4, rows[0].CompletionTokens)
@@ -574,11 +662,13 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	assert.Equal(t, "mismatch", rows[1].Verdict)
 	assert.Equal(t, "b", rows[1].GroupName)
 	assert.Equal(t, "another", string(rows[1].PromptSnapshot))
+	assert.Empty(t, rows[1].ReasoningEffort)
 	assert.Equal(t, "error", rows[2].Verdict)
 	assert.Contains(t, string(rows[2].ErrorDetails), "final-error-line")
 	assert.NotContains(t, string(rows[2].ErrorDetails), "secret-probe-key")
 	assert.Equal(t, "passed", rows[3].Verdict)
 	assert.Equal(t, "<html><svg/></html>", string(rows[3].Html))
+	assert.Equal(t, "high", rows[3].ReasoningEffort)
 	_, activity, err := model.GetDegradationWatchActivity()
 	require.NoError(t, err)
 	assert.Len(t, activity, 4)

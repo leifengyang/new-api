@@ -590,6 +590,7 @@ type degradationWatchRecordItem struct {
 	ProbeKind           string `json:"probe_kind"`
 	Verdict             string `json:"verdict"`
 	AnswerLastCharacter string `json:"answer_last_character,omitempty"`
+	PublicVisible       *bool  `json:"public_visible,omitempty"`
 	Id                  int    `json:"id"`
 	ModelName           string `json:"model_name"`
 	ReasoningEffort     string `json:"reasoning_effort"`
