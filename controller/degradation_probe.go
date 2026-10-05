@@ -337,7 +337,7 @@ func RunDegradationProbes(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	tasks := []gin.H{}
+	taskTypes := []string{}
 	for _, kind := range []string{"text", "drawing"} {
 		jobs, err := selectDegradationProbeJobs(plan, channels, payload, kind, common.GetTimestamp())
 		if err != nil {
@@ -351,9 +351,26 @@ func RunDegradationProbes(c *gin.Context) {
 		if kind == "text" {
 			taskType = "degradation_probe_text"
 		}
+		active, err := model.GetActiveSystemTask(taskType)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if active != nil {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "已有一轮降智检测正在运行或等待中"})
+			return
+		}
+		taskTypes = append(taskTypes, taskType)
+	}
+	tasks := []gin.H{}
+	for _, taskType := range taskTypes {
 		task, created, err := service.EnqueueSystemTask(taskType, payload)
 		if err != nil {
 			common.ApiError(c, err)
+			return
+		}
+		if !created {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "已有一轮降智检测正在运行或等待中", "data": gin.H{"queued_tasks": tasks}})
 			return
 		}
 		tasks = append(tasks, gin.H{"task_id": task.TaskID, "status": task.Status, "created": created})

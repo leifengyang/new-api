@@ -471,6 +471,19 @@ func TestDegradationProbeIndependentSchedulesAndPublicSelection(t *testing.T) {
 	assert.NotContains(t, redacted, "2001:db8")
 	assert.NotContains(t, redacted, "channel_id")
 	assert.Contains(t, redacted, "try later")
+
+	// A drawing task already in progress must not silently drop a manual run,
+	// or enqueue the text half before reporting the conflict.
+	_, err = model.CreateSystemTask(model.SystemTaskTypeDegradationWatch, degradationWatchTaskPayload{}, nil)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/probe-run", strings.NewReader(`{}`))
+	RunDegradationProbes(c)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var taskCount int64
+	require.NoError(t, db.Model(&model.SystemTask{}).Count(&taskCount).Error)
+	assert.Equal(t, int64(1), taskCount)
 }
 
 func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing.T) {
