@@ -28,6 +28,7 @@ import { toast } from 'sonner'
 
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   getDegradationWatchChannels,
@@ -122,8 +123,9 @@ export function useDegradationWatchActivity() {
 }
 
 export function useDegradationWatchRecord(id: number | undefined) {
+  const user = useAuthStore((state) => state.auth.user)
   return useQuery({
-    queryKey: ['degradation-watch', 'record', id],
+    queryKey: ['degradation-watch', 'record', id, user?.id, user?.role],
     enabled: id !== undefined,
     queryFn: async () => {
       const result = await getDegradationWatchRecord(id ?? 0)
@@ -141,8 +143,9 @@ export function useDegradationWatchRecord(id: number | undefined) {
 
 /** Artwork is immutable once recorded, so it is cached for the whole session. */
 export function useRecordHtml(id: number, enabled: boolean) {
+  const user = useAuthStore((state) => state.auth.user)
   return useQuery({
-    queryKey: degradationWatchKeys.html(id),
+    queryKey: [...degradationWatchKeys.html(id), user?.id, user?.role],
     enabled,
     staleTime: Infinity,
     gcTime: 10 * 60_000,

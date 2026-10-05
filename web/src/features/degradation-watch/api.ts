@@ -56,9 +56,15 @@ export async function getDegradationWatchHistory(
   return res.data
 }
 
-export async function getDegradationWatchRecord(
-  id: number
-): Promise<ApiResponse<{ record: DegradationWatchRecord; output: string }>> {
+export async function getDegradationWatchRecord(id: number): Promise<
+  ApiResponse<{
+    record: DegradationWatchRecord
+    output: string
+    prompt?: string
+    expected?: string
+    match?: string
+  }>
+> {
   const res = await api.get(`/api/degradation_watch/records/${id}`)
   return res.data
 }

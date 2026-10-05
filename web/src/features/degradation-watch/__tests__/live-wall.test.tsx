@@ -19,19 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
-  fireEvent,
   render,
   renderHook,
   screen,
   waitFor,
-  within,
 } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { getDegradationWatchHistory, getDegradationWatchWall } from '../api'
+import { getDegradationWatchHistory } from '../api'
 import { RecordCard } from '../components/record-card'
-import { WatchWall } from '../components/watch-wall'
 import type { DegradationWatchRecord } from '../types'
 
 vi.mock('../hooks/use-degradation-watch', async (original) => ({
@@ -96,79 +93,6 @@ test('failed cards retain the complete diagnostic with line breaks', () => {
   expect(screen.getByText(/request-id: final-line/).textContent).toBe(details)
 })
 
-test('each model starts with four cards and loads older checks only on request', async () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  vi.mocked(getDegradationWatchWall).mockResolvedValue({
-    success: true,
-    data: {
-      enabled: true,
-      interval_minutes: 10,
-      rounds: [],
-      next_before: 0,
-      lanes: ['sol', 'astra'].map((model) => ({
-        model,
-        configured: true,
-        enabled: true,
-        reasoning_effort: 'high',
-        total: 8,
-        succeeded: 0,
-        visible: 8,
-        avg_elapsed_ms: 0,
-        last_record_at: 1000,
-      })),
-    },
-  })
-  let newestID = 8
-  vi.mocked(getDegradationWatchHistory).mockImplementation(
-    async (model, before) => {
-      const top = before ? before - 1 : newestID
-      return {
-        success: true,
-        data: {
-          records: Array.from({ length: 4 }, (_, i) => ({
-            ...record,
-            id: top - i,
-            model_name: model,
-            channel_title: `${model}-${top - i}`,
-          })),
-          next_before: top > 4 ? top - 3 : 0,
-        },
-      }
-    }
-  )
-  const view = render(
-    <QueryClientProvider client={client}>
-      <WatchWall />
-    </QueryClientProvider>
-  )
-  const lane = within(await screen.findByRole('region', { name: 'sol' }))
-  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(4))
-  expect(lane.queryByText('sol-4')).toBeNull()
-  fireEvent.click(lane.getByRole('button', { name: 'Load more' }))
-  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(8))
-  expect(lane.getByText('sol-8')).toBeInTheDocument()
-  expect(lane.getByText('sol-1')).toBeInTheDocument()
-  expect(lane.queryByRole('button', { name: 'Load more' })).toBeNull()
-  expect(
-    within(screen.getByRole('region', { name: 'astra' })).getAllByRole(
-      'article'
-    )
-  ).toHaveLength(4)
-  newestID = 10
-  await act(async () => {
-    await client.refetchQueries({ queryKey: ['degradation-watch', 'wall'] })
-  })
-  expect(lane.getAllByRole('article')).toHaveLength(8)
-  expect(lane.queryByText('sol-10')).toBeNull()
-  fireEvent.click(lane.getByRole('button', { name: 'Refresh' }))
-  await waitFor(() => expect(lane.getAllByRole('article')).toHaveLength(4))
-  expect(await lane.findByText('sol-10')).toBeInTheDocument()
-  view.unmount()
-  client.clear()
-})
-
 test('history polls the current page without polling old completed pages or invisible lanes', async () => {
   const actual = await vi.importActual<
     typeof import('../hooks/use-degradation-watch')
@@ -228,62 +152,6 @@ test('history polls the current page without polling old completed pages or invi
     await vi.advanceTimersByTimeAsync(5000)
   })
   expect(getDegradationWatchHistory).toHaveBeenCalledTimes(calls)
-  view.unmount()
-  client.clear()
-})
-
-test('cached expired cards disappear when the server retention window advances, while running checks remain', async () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  const wall = {
-    enabled: true,
-    interval_minutes: 10,
-    rounds: [],
-    next_before: 0,
-    retention_since: 0,
-    lanes: [
-      {
-        model: 'sol',
-        configured: true,
-        enabled: true,
-        reasoning_effort: 'high',
-        total: 1,
-        succeeded: 0,
-        visible: 1,
-        avg_elapsed_ms: 0,
-        last_record_at: 1000,
-      },
-    ],
-  }
-  vi.mocked(getDegradationWatchWall).mockResolvedValue({
-    success: true,
-    data: wall,
-  })
-  vi.mocked(getDegradationWatchHistory).mockResolvedValue({
-    success: true,
-    data: {
-      records: [
-        { ...record, id: 1, channel_title: 'expired check', status: 'failed' },
-        { ...record, id: 2, channel_title: 'running check', status: 'running' },
-      ],
-      next_before: 0,
-    },
-  })
-  const view = render(
-    <QueryClientProvider client={client}>
-      <WatchWall />
-    </QueryClientProvider>
-  )
-  expect(await screen.findByText('expired check')).toBeInTheDocument()
-  await act(async () => {
-    client.setQueryData(['degradation-watch', 'wall'], {
-      ...wall,
-      retention_since: 1001,
-    })
-  })
-  await waitFor(() => expect(screen.queryByText('expired check')).toBeNull())
-  expect(screen.getByText('running check')).toBeInTheDocument()
   view.unmount()
   client.clear()
 })

@@ -245,6 +245,11 @@ func UpdateOption(c *gin.Context) {
 				operation_setting.MinDegradationWatchRetentionPerChan, operation_setting.MaxDegradationWatchRetentionPerChan))
 			return
 		}
+	case operation_setting.DegradationProbePlanKey:
+		if _, err := operation_setting.ParseDegradationProbePlan(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	case operation_setting.DegradationWatchTargetsKey:
 		// 与别名一样，坏 JSON 会被配置加载器静默跳过，必须在保存时拦下。
 		if err := operation_setting.ValidateDegradationWatchTargets(option.Value.(string)); err != nil {

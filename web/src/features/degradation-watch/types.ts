@@ -24,6 +24,11 @@ export interface ApiResponse<T = unknown> {
 
 /** One attempt as the wall lists it. The artwork itself is fetched separately. */
 export interface DegradationWatchRecord {
+  group_name?: string
+  probe_id?: string
+  probe_name?: string
+  probe_kind?: string
+  verdict?: string
   status?:
     | 'queued'
     | 'running'

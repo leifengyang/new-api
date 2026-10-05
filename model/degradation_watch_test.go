@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,7 +223,14 @@ func TestDegradationWatchLiveDatabaseMatrix(t *testing.T) {
 			pending.CompletionTokens = 37
 			pending.TokensEstimated = true
 			require.NoError(t, UpdateDegradationWatchProgress(pending))
+			textTask := &SystemTask{TaskID: "text-probe-live", Type: "degradation_probe_text", Status: SystemTaskStatusRunning}
+			require.NoError(t, db.Create(textTask).Error)
+			textRecord := &DegradationWatchRecord{ChannelId: 41, ModelName: "sol", GroupName: "alpha", ProbeID: "sanae", RunId: textTask.TaskID, Status: "running"}
+			require.NoError(t, CreateDegradationWatchRecord(textRecord))
 			require.NoError(t, FailInterruptedDegradationWatchRecords())
+			textActive, err := GetDegradationWatchRecordMeta(textRecord.Id)
+			require.NoError(t, err)
+			assert.Equal(t, "running", textActive.Status)
 			active, err := GetDegradationWatchRecordMeta(pending.Id)
 			require.NoError(t, err)
 			assert.Equal(t, "running", active.Status)
@@ -301,6 +309,112 @@ func TestDegradationWatchSevenDayRetentionMatrix(t *testing.T) {
 			deleted, err = PruneExpiredDegradationWatchRecords(now)
 			require.NoError(t, err)
 			assert.EqualValues(t, 1, deleted, "an expired task is removed after finishing")
+		})
+	}
+}
+
+// Exact record schema from custom-v1.0.0-rc.39.26.
+type degradationProbeReleasedRecord struct {
+	Id        int `json:"id"`
+	ChannelId int `json:"channel_id" gorm:"index;not null"`
+	// RunId ties each model/channel attempt to its background batch. Legacy records may be empty.
+	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:'';index"`
+	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
+	ReasoningEffort string `json:"reasoning_effort" gorm:"type:varchar(32);not null;default:''"`
+	Success         bool   `json:"success" gorm:"not null;default:false"`
+	// FailureReason 截断到 maxDegradationWatchFailureReasonRunes，上游偶尔把整页
+	// HTML 错误页塞进报错里。
+	FailureReason string `json:"failure_reason" gorm:"type:varchar(512);not null;default:''"`
+	// Empty status denotes a completed legacy record.
+	Status          string   `json:"status" gorm:"type:varchar(16);not null;default:'';index"`
+	ErrorDetails    LongText `json:"error_details"`
+	OutputText      LongText `json:"-"`
+	TokensEstimated bool     `json:"tokens_estimated" gorm:"not null;default:false"`
+	// Html 是抽出来的作品本体，动辄几十 KB，所以用 LongText；列表接口不查这一列。
+	Html             LongText `json:"-"`
+	ElapsedMs        int64    `json:"elapsed_ms" gorm:"not null;default:0"`
+	PromptTokens     int      `json:"prompt_tokens" gorm:"not null;default:0"`
+	CompletionTokens int      `json:"completion_tokens" gorm:"not null;default:0"`
+	ReasoningTokens  int      `json:"reasoning_tokens" gorm:"not null;default:0"`
+	// Hidden 只影响展示：被管理员藏起来的作品照样计入成功率。
+	Hidden    bool  `json:"hidden" gorm:"not null;default:false"`
+	CreatedAt int64 `json:"created_at" gorm:"bigint;index"`
+}
+
+func (degradationProbeReleasedRecord) TableName() string { return "degradation_watch_records" }
+
+func TestDegradationProbeDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := useDegradationWatchMatrixDB(t, dialect)
+			for _, upgrade := range []bool{false, true} {
+				t.Run(fmt.Sprint("upgrade=", upgrade), func(t *testing.T) {
+					require.NoError(t, db.Migrator().DropTable(&DegradationWatchRecord{}))
+					var legacy degradationProbeReleasedRecord
+					if upgrade {
+						require.NoError(t, db.AutoMigrate(&degradationProbeReleasedRecord{}))
+						legacy = degradationProbeReleasedRecord{ChannelId: 80, ModelName: "sol", Html: "<html><svg/></html>", OutputText: "original output", ErrorDetails: "old diagnostics", CreatedAt: 1000, Success: true}
+						require.NoError(t, db.Create(&legacy).Error)
+					}
+					require.NoError(t, db.AutoMigrate(&DegradationWatchRecord{}))
+					logger := &migrationSQLRecorder{}
+					require.NoError(t, db.Session(&gorm.Session{Logger: logger}).AutoMigrate(&DegradationWatchRecord{}))
+					assert.Empty(t, logger.schemaMutations())
+					if upgrade {
+						var restored DegradationWatchRecord
+						require.NoError(t, db.First(&restored, legacy.Id).Error)
+						assert.Equal(t, legacy.Html, restored.Html)
+						assert.Equal(t, legacy.OutputText, restored.OutputText)
+						assert.Equal(t, legacy.ErrorDetails, restored.ErrorDetails)
+						assert.Empty(t, restored.GroupName)
+						assert.Empty(t, restored.ProbeID)
+					}
+					series := DegradationProbeSeries{GroupName: "alpha", ChannelID: 81, Model: "sol", ProbeID: "sanae"}
+					fixtures := []DegradationWatchRecord{
+						{Success: true, Verdict: "passed", Status: "succeeded", ElapsedMs: 1000},
+						{Success: true, Verdict: "passed", Status: "succeeded", ElapsedMs: 1001},
+						{Verdict: "mismatch", Status: "failed", FailureReason: "answer_mismatch"},
+						{Verdict: "error", Status: "failed", FailureReason: "timeout", ErrorDetails: "full diagnostics"},
+						{Status: "running", PromptTokens: 20, CompletionTokens: 10},
+					}
+					for i := range fixtures {
+						r := &fixtures[i]
+						r.ChannelId, r.GroupName, r.ModelName, r.ProbeID, r.ProbeKind, r.CreatedAt = 81, "alpha", "sol", "sanae", "text", int64(2000+i)
+						r.PromptSnapshot, r.ExpectedSnapshot, r.OutputText = "historic prompt", "expected", "answer"
+						require.NoError(t, CreateDegradationWatchRecord(r))
+					}
+					other := fixtures[0]
+					other.Id, other.GroupName = 0, "beta"
+					require.NoError(t, CreateDegradationWatchRecord(&other))
+					other = fixtures[0]
+					other.Id, other.ProbeID = 0, "other"
+					require.NoError(t, CreateDegradationWatchRecord(&other))
+					rows, stats, art, err := GetDegradationProbeHistory(series, 2000, 0, 3, false)
+					require.NoError(t, err)
+					assert.Len(t, rows, 3)
+					assert.Nil(t, art)
+					assert.EqualValues(t, 2, stats.Passed)
+					assert.EqualValues(t, 1, stats.Mismatched)
+					assert.EqualValues(t, 1, stats.Errors)
+					assert.Equal(t, 1000.5, stats.AvgElapsedMs)
+					assert.Equal(t, "running", rows[0].Status)
+					assert.Equal(t, 10, rows[0].CompletionTokens)
+					for _, row := range rows {
+						assert.Empty(t, row.ErrorDetails)
+						assert.Empty(t, row.PromptSnapshot)
+						assert.Empty(t, row.OutputText)
+					}
+					older, _, _, err := GetDegradationProbeHistory(series, 2000, rows[2].Id, 3, false)
+					require.NoError(t, err)
+					assert.Len(t, older, 2)
+					last, err := LastDegradationProbeAttempt(series)
+					require.NoError(t, err)
+					assert.EqualValues(t, 2004, last)
+					content, err := GetDegradationProbeContent(fixtures[0].Id)
+					require.NoError(t, err)
+					assert.Equal(t, LongText("historic prompt"), content.PromptSnapshot)
+				})
+			}
 		})
 	}
 }
