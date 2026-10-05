@@ -156,7 +156,11 @@ func selectDegradationProbeJobs(plan *operation_setting.DegradationProbePlan, ch
 						continue
 					}
 				}
-				jobs = append(jobs, degradationProbeJob{target: target, probe: probe, channel: channel})
+				probeTarget := target
+				if binding.ReasoningEffort != nil {
+					probeTarget.ReasoningEffort = *binding.ReasoningEffort
+				}
+				jobs = append(jobs, degradationProbeJob{target: probeTarget, probe: probe, channel: channel})
 			}
 		}
 	}
@@ -405,10 +409,13 @@ func canViewDegradationProbeRecord(record *model.DegradationWatchRecord) bool {
 		return false
 	}
 	for _, target := range plan.Targets {
-		if !target.Public || target.ChannelID != record.ChannelId || target.Model != record.ModelName {
+		if target.ChannelID != record.ChannelId || target.Model != record.ModelName {
 			continue
 		}
 		for _, binding := range target.Probes {
+			if !binding.IsPublic(target) {
+				continue
+			}
 			for _, probe := range plan.Probes {
 				if probe.ID != binding.ProbeID {
 					continue
@@ -461,7 +468,7 @@ func getDegradationProbePrompt(c *gin.Context) {
 	targets := []degradationWatchPromptTarget{}
 	seen := map[string]bool{}
 	for _, target := range plan.Targets {
-		if target.Public && !seen[target.Model] {
+		if slices.ContainsFunc(target.Probes, func(binding operation_setting.DegradationProbeBinding) bool { return binding.IsPublic(target) }) && !seen[target.Model] {
 			targets = append(targets, degradationWatchPromptTarget{Model: target.Model, ReasoningEffort: target.ReasoningEffort})
 			seen[target.Model] = true
 		}

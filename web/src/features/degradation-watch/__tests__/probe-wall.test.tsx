@@ -222,6 +222,63 @@ test('probe blocks show answer characters without loading full replies and still
   client.clear()
 })
 
+test('records in the same interval stack together across history pages with a capped scrollable height', async () => {
+  records = [
+    { ...record, id: 12, created_at: 1300, answer_last_character: 'n' },
+    ...[11, 10, 9, 8, 7].map((id) => ({
+      ...record,
+      id,
+      answer_last_character: '苗',
+    })),
+  ]
+  const { view, client } = setup()
+  const history = within(await screen.findByLabelText('Detection history'))
+  const slots = history.getAllByRole('group')
+  expect(slots).toHaveLength(2)
+  expect(within(slots[0]).getAllByRole('button')).toHaveLength(5)
+  expect(slots[0]).toHaveClass('max-h-21', 'overflow-y-auto')
+  expect(slots[0]).toHaveAttribute('tabindex', '0')
+  expect(within(slots[1]).getByRole('button')).toHaveTextContent('n')
+  fireEvent.click(history.getByRole('button', { name: 'Load more' }))
+  await waitFor(() =>
+    expect(
+      within(history.getAllByRole('group')[0]).getAllByRole('button')
+    ).toHaveLength(6)
+  )
+  expect(history.getAllByRole('group')).toHaveLength(2)
+  view.unmount()
+  client.clear()
+})
+
+test('admin-only probe blocks are translucent and hidden drawings have an accessible closed-eye marker', async () => {
+  records = [{ ...record, public_visible: false, answer_last_character: '苗' }]
+  drawings = [
+    {
+      ...record,
+      id: 100,
+      probe_kind: 'drawing',
+      probe_id: 'drawing',
+      public_visible: false,
+    },
+  ]
+  const { view, client } = setup()
+  const text = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  const button = await text.findByRole('button', { name: /· Passed · 苗/ })
+  expect(button).toHaveClass('opacity-50')
+  expect(button).toBeEnabled()
+  const drawing = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  expect(
+    await drawing.findByRole('img', { name: 'Hidden' })
+  ).toBeInTheDocument()
+  expect(drawing.getByRole('button', { name: 'View artwork' })).toBeEnabled()
+  view.unmount()
+  client.clear()
+})
+
 test('wall excludes errors from pass rate, shows live tokens and fetches details only when selected', async () => {
   const { view, client } = setup()
   const lane = within(

@@ -173,7 +173,7 @@ test('individual probe buttons prevent duplicate submissions and stay disabled f
   finish()
   await waitFor(() => expect(buttons[0]).toBeEnabled())
   await user.click(
-    screen.getAllByRole('switch', { name: 'Show on public wall' })[0]
+    screen.getAllByRole('switch', { name: /Show .+ on public wall/ })[0]
   )
   expect(buttons[0]).toBeDisabled()
   expect(buttons[1]).toBeDisabled()
@@ -205,7 +205,9 @@ test('deleted groups from channel bindings and old targets do not appear, while 
 test('refresh removes a deleted selected group without discarding unsaved target edits', async () => {
   const { view, client, user } = setup()
   await user.click(
-    (await screen.findAllByRole('switch', { name: 'Show on public wall' }))[0]
+    (
+      await screen.findAllByRole('switch', { name: /Show .+ on public wall/ })
+    )[0]
   )
   currentGroups = ['beta']
   await user.click(screen.getByRole('button', { name: 'Refresh' }))
@@ -225,7 +227,13 @@ test('refresh removes a deleted selected group without discarding unsaved target
     expect(api.put).toHaveBeenCalledWith(
       '/api/degradation_watch/probe-plan',
       expect.objectContaining({
-        targets: [{ ...plan.targets[0], public: false }, plan.targets[1]],
+        targets: [
+          {
+            ...plan.targets[0],
+            probes: [{ ...plan.targets[0].probes[0], public: false }],
+          },
+          plan.targets[1],
+        ],
       })
     )
   )
@@ -299,14 +307,14 @@ function setup() {
   return { view, client, user: userEvent.setup() }
 }
 
-test('selecting a public channel replaces the previous selection and saves one complete plan', async () => {
+test('showing another channel preserves existing public probes and saves independent visibility', async () => {
   const { view, client, user } = setup()
   const publicSwitches = await screen.findAllByRole('switch', {
-    name: 'Show on public wall',
+    name: /Show .+ on public wall/,
   })
   expect(publicSwitches[0]).toBeChecked()
   await user.click(publicSwitches[1])
-  expect(publicSwitches[0]).not.toBeChecked()
+  expect(publicSwitches[0]).toBeChecked()
   expect(publicSwitches[1]).toBeChecked()
   expect(screen.getByRole('button', { name: 'Run all checks' })).toBeDisabled()
   await user.click(
@@ -317,8 +325,96 @@ test('selecting a public channel replaces the previous selection and saves one c
       '/api/degradation_watch/probe-plan',
       expect.objectContaining({
         targets: [
-          expect.objectContaining({ public: false }),
-          expect.objectContaining({ public: true }),
+          plan.targets[0],
+          expect.objectContaining({
+            probes: [expect.objectContaining({ public: true })],
+          }),
+        ],
+      })
+    )
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('text probe visibility and reasoning can change without changing the drawing or another channel', async () => {
+  testPlan = structuredClone(plan)
+  testPlan.targets[0].reasoning_effort = 'high'
+  testPlan.probes.push({
+    ...plan.probes[0],
+    id: 'drawing',
+    name: 'Drawing',
+    kind: 'drawing',
+  })
+  testPlan.targets[0].probes.push({
+    probe_id: 'drawing',
+    enabled: true,
+    interval_minutes: 0,
+  })
+  const { view, client, user } = setup()
+  await user.click(
+    (await screen.findAllByRole('button', { name: 'Configure' }))[0]
+  )
+  const dialog = within(screen.getByRole('dialog'))
+  await user.click(
+    dialog.getByRole('switch', { name: 'Show Sanae on public wall' })
+  )
+  expect(
+    dialog.getByRole('switch', { name: 'Show Drawing on public wall' })
+  ).toBeChecked()
+  const effort = dialog.getByRole('combobox', {
+    name: 'Probe reasoning effort',
+  })
+  expect(effort).toHaveValue('inherit')
+  await user.selectOptions(effort, 'low')
+  expect(
+    dialog.getByRole('combobox', { name: 'Reasoning effort' })
+  ).toHaveValue('high')
+  await user.click(dialog.getByRole('button', { name: 'Apply to form' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({
+            reasoning_effort: 'high',
+            probes: [
+              expect.objectContaining({
+                public: false,
+                reasoning_effort: 'low',
+              }),
+              testPlan.targets[0].probes[1],
+            ],
+          }),
+          testPlan.targets[1],
+        ],
+      })
+    )
+  )
+  await user.click(screen.getAllByRole('button', { name: 'Configure' })[0])
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Probe reasoning effort' }),
+    ''
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenLastCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({
+            probes: [
+              expect.objectContaining({ reasoning_effort: '' }),
+              testPlan.targets[0].probes[1],
+            ],
+          }),
+          testPlan.targets[1],
         ],
       })
     )
@@ -347,7 +443,7 @@ test('changing group immediately updates channel and model choices and clears pu
     )
   ).toBeInTheDocument()
   expect(
-    screen.getAllByRole('switch', { name: 'Show on public wall' })[0]
+    screen.getAllByRole('switch', { name: /Show .+ on public wall/ })[0]
   ).not.toBeChecked()
   view.unmount()
   client.clear()
@@ -531,7 +627,9 @@ test('a failed save retains the draft for retry', async () => {
   const { view, client, user } = setup()
   vi.mocked(api.put).mockRejectedValueOnce(new Error('Save failed'))
   await user.click(
-    (await screen.findAllByRole('switch', { name: 'Show on public wall' }))[1]
+    (
+      await screen.findAllByRole('switch', { name: /Show .+ on public wall/ })
+    )[1]
   )
   await user.click(
     screen.getByRole('button', { name: 'Save degradation watch settings' })
@@ -542,7 +640,7 @@ test('a failed save retains the draft for retry', async () => {
     ).toBeEnabled()
   )
   expect(
-    screen.getAllByRole('switch', { name: 'Show on public wall' })[1]
+    screen.getAllByRole('switch', { name: /Show .+ on public wall/ })[1]
   ).toBeChecked()
   expect(screen.getByRole('button', { name: 'Run all checks' })).toBeDisabled()
   await user.click(

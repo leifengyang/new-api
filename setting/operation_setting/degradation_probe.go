@@ -24,8 +24,19 @@ type DegradationProbe struct {
 type DegradationProbeBinding struct {
 	ProbeID string `json:"probe_id"`
 	Enabled bool   `json:"enabled"`
+	// Nil preserves the legacy target-wide visibility setting.
+	Public *bool `json:"public,omitempty"`
+	// Nil inherits the target; an explicit empty string requests provider default.
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 	// Zero inherits the probe's default interval.
 	IntervalMinutes int `json:"interval_minutes"`
+}
+
+func (binding DegradationProbeBinding) IsPublic(target DegradationProbeTarget) bool {
+	if binding.Public != nil {
+		return *binding.Public
+	}
+	return target.Public
 }
 
 type DegradationProbeTarget struct {
@@ -84,7 +95,7 @@ func ParseDegradationProbePlan(raw string) (*DegradationProbePlan, error) {
 			return nil, fmt.Errorf("invalid answer matching rule")
 		}
 	}
-	targets, public := map[string]bool{}, map[string]bool{}
+	targets := map[string]bool{}
 	for _, target := range plan.Targets {
 		key := fmt.Sprintf("%s\x00%s", target.Group, target.Model)
 		identity := fmt.Sprintf("%s\x00%d", key, target.ChannelID)
@@ -92,12 +103,15 @@ func ParseDegradationProbePlan(raw string) (*DegradationProbePlan, error) {
 			return nil, fmt.Errorf("invalid or duplicate target")
 		}
 		targets[identity] = true
-		if target.Public && public[key] {
-			return nil, fmt.Errorf("only one public channel per group and model is allowed")
-		}
-		public[key] = public[key] || target.Public
 		seen := map[string]bool{}
 		for _, binding := range target.Probes {
+			if binding.ReasoningEffort != nil {
+				switch *binding.ReasoningEffort {
+				case "", "minimal", "low", "medium", "high", "xhigh":
+				default:
+					return nil, fmt.Errorf("invalid probe reasoning effort")
+				}
+			}
 			if !probes[binding.ProbeID] || seen[binding.ProbeID] || (binding.IntervalMinutes != 0 && !IsValidDegradationWatchIntervalMinutes(binding.IntervalMinutes)) {
 				return nil, fmt.Errorf("invalid probe binding")
 			}

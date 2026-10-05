@@ -59,7 +59,17 @@ type DegradationProbeStats struct {
 }
 
 func GetDegradationProbeHistory(series DegradationProbeSeries, since int64, before, limit int, admin bool) ([]*DegradationWatchRecord, DegradationProbeStats, *DegradationWatchRecord, error) {
-	query := degradationProbeQuery(series).Where("(created_at >= ? OR status IN ?)", since, []string{"queued", "running"})
+	return GetDegradationProbeHistoryForSeries([]DegradationProbeSeries{series}, since, before, limit, admin)
+}
+
+// GetDegradationProbeHistoryForSeries aggregates only explicitly selected
+// channel/group/model/probe combinations, with one shared pagination cursor.
+func GetDegradationProbeHistoryForSeries(series []DegradationProbeSeries, since int64, before, limit int, admin bool) ([]*DegradationWatchRecord, DegradationProbeStats, *DegradationWatchRecord, error) {
+	scope := DB.Where("1 = 0")
+	for _, item := range series {
+		scope = scope.Or(degradationProbeQuery(item))
+	}
+	query := DB.Model(&DegradationWatchRecord{}).Where(scope).Where("(created_at >= ? OR status IN ?)", since, []string{"queued", "running"})
 	if !admin {
 		query = query.Where("hidden = ?", false)
 	}

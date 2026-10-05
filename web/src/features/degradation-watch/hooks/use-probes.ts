@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -34,6 +39,7 @@ export interface ProbeLane {
   public?: boolean
 }
 export interface ProbeHistory {
+  public?: boolean
   id: string
   name: string
   kind: string
@@ -152,5 +158,41 @@ export function useProbeHistory(
         ? 1000
         : 5000
     },
+  })
+}
+
+export function useOlderProbeHistory(
+  lane: ProbeLane,
+  days: number,
+  probe: string,
+  before: number
+) {
+  const user = useAuthStore((state) => state.auth.user)
+  return useInfiniteQuery({
+    queryKey: [
+      'degradation-watch',
+      'older-probes',
+      user?.id,
+      user?.role,
+      lane.group,
+      lane.model,
+      lane.channel_id,
+      days,
+      probe,
+      before,
+    ],
+    initialPageParam: before,
+    gcTime: 120_000,
+    queryFn: ({ pageParam }) =>
+      getProbeData<{ probes: ProbeHistory[]; since: number }>('monitor', {
+        group: lane.group,
+        model: lane.model,
+        channel_id: lane.channel_id,
+        days,
+        probe_id: probe,
+        before: pageParam,
+      }),
+    getNextPageParam: (page) => page.probes[0]?.next_before || undefined,
+    refetchOnWindowFocus: false,
   })
 }

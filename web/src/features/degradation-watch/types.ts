@@ -30,6 +30,8 @@ export interface DegradationWatchRecord {
   probe_kind?: string
   verdict?: string
   answer_last_character?: string
+  /** Admin-only visibility of this probe binding and record. */
+  public_visible?: boolean
   status?:
     | 'queued'
     | 'running'

@@ -67,13 +67,6 @@ export function ProbeTargetDrawer(props: {
     }
     const targets = props.plan.targets.map((item, index) => {
       if (index === props.index) return target
-      if (
-        target.public &&
-        item.group === target.group &&
-        item.model === target.model
-      ) {
-        return { ...item, public: false }
-      }
       return item
     })
     if (props.index < 0) targets.push(target)

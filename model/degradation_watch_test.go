@@ -458,6 +458,24 @@ func TestDegradationProbeAnswerCharacterDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "苗", older[len(older)-1].AnswerLastCharacter)
 			assert.False(t, db.Migrator().HasColumn(&DegradationWatchRecord{}, "answer_last_character"), "summary needs no schema migration")
+			second := series
+			second.ChannelID = 82
+			other := &DegradationWatchRecord{ChannelId: 82, GroupName: "alpha", ModelName: "sol", ProbeID: "sanae", ProbeKind: "text", Success: true, Status: "succeeded", OutputText: "second", CreatedAt: 2001}
+			require.NoError(t, CreateDegradationWatchRecord(other))
+			combined, combinedStats, _, err := GetDegradationProbeHistoryForSeries([]DegradationProbeSeries{series, second}, 2000, 0, 2, false)
+			require.NoError(t, err)
+			require.Len(t, combined, 2)
+			assert.Equal(t, other.Id, combined[0].Id)
+			assert.Equal(t, "d", combined[0].AnswerLastCharacter)
+			assert.EqualValues(t, 4, combinedStats.Passed)
+			page, _, _, err := GetDegradationProbeHistoryForSeries([]DegradationProbeSeries{series, second}, 2000, combined[1].Id, 20, false)
+			require.NoError(t, err)
+			assert.Len(t, page, 7)
+			assert.Equal(t, "苗", page[len(page)-1].AnswerLastCharacter)
+			empty, emptyStats, _, err := GetDegradationProbeHistoryForSeries(nil, 2000, 0, 20, false)
+			require.NoError(t, err)
+			assert.Empty(t, empty)
+			assert.Zero(t, emptyStats.Passed)
 		})
 	}
 }

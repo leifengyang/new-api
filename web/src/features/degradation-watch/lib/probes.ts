@@ -57,6 +57,10 @@ export const probePlanSchema = z
             z.object({
               probe_id: z.string(),
               enabled: z.boolean(),
+              public: z.boolean().optional(),
+              reasoning_effort: z
+                .enum(['', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+                .optional(),
               interval_minutes: z.coerce.number().int().min(0).max(1440),
             })
           ),
@@ -66,15 +70,13 @@ export const probePlanSchema = z
   })
   .superRefine((plan, ctx) => {
     const targets = new Set<string>()
-    const visible = new Set<string>()
     plan.targets.forEach((target, index) => {
-      const pair = JSON.stringify([target.group, target.model])
       const key = JSON.stringify([
         target.group,
         target.model,
         target.channel_id,
       ])
-      if (targets.has(key) || (target.public && visible.has(pair))) {
+      if (targets.has(key)) {
         ctx.addIssue({
           code: 'custom',
           path: ['targets', index, 'model'],
@@ -82,7 +84,6 @@ export const probePlanSchema = z
         })
       }
       targets.add(key)
-      if (target.public) visible.add(pair)
     })
   })
 
