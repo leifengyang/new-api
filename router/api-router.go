@@ -372,6 +372,10 @@ func SetApiRouter(router *gin.Engine) {
 		selfTestRoute.POST("/models", middleware.UserCriticalRateLimit("self-test"), controller.FetchSelfTestModels)
 		{
 			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)
+			degradationWatchRoute.GET("/monitor", controller.GetDegradationProbeWall)
+			degradationWatchRoute.GET("/probe-plan", middleware.RootAuth(), controller.GetDegradationProbePlan)
+			degradationWatchRoute.PUT("/probe-plan", middleware.RootAuth(), controller.SaveDegradationProbePlan)
+			degradationWatchRoute.POST("/probe-run", middleware.RootAuth(), controller.RunDegradationProbes)
 			degradationWatchRoute.GET("/records/:id/html", controller.GetDegradationWatchRecordHtml)
 			degradationWatchRoute.GET("/records/:id", controller.GetDegradationWatchRecord)
 			degradationWatchRoute.GET("/activity", middleware.RootAuth(), controller.GetDegradationWatchActivity)

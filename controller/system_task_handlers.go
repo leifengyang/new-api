@@ -23,6 +23,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 	service.RegisterSystemTaskHandler(degradationWatchHandler{})
+	service.RegisterSystemTaskHandler(degradationTextProbeHandler{})
 	service.RegisterSystemTaskHandler(selfTestHandler{})
 }
 

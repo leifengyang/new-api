@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
 
@@ -11,8 +12,16 @@ import (
 // 跑一遍，把画出来的 HTML、耗时和用量原样存下来。失败也落一条，失败本身就是
 // 要看的信号之一。这张表只做展示，不参与计费，也不写使用日志。
 type DegradationWatchRecord struct {
-	Id        int `json:"id"`
-	ChannelId int `json:"channel_id" gorm:"index;not null"`
+	GroupName        string   `json:"group_name" gorm:"type:varchar(128);not null;default:'';index"`
+	ProbeID          string   `json:"probe_id" gorm:"type:varchar(64);not null;default:'';index"`
+	ProbeName        string   `json:"probe_name" gorm:"type:varchar(100);not null;default:''"`
+	ProbeKind        string   `json:"probe_kind" gorm:"type:varchar(16);not null;default:''"`
+	Verdict          string   `json:"verdict" gorm:"type:varchar(16);not null;default:''"`
+	PromptSnapshot   LongText `json:"-"`
+	ExpectedSnapshot LongText `json:"-"`
+	MatchSnapshot    string   `json:"match" gorm:"type:varchar(16);not null;default:''"`
+	Id               int      `json:"id"`
+	ChannelId        int      `json:"channel_id" gorm:"index;not null"`
 	// RunId ties each model/channel attempt to its background batch. Legacy records may be empty.
 	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:'';index"`
 	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
@@ -62,6 +71,7 @@ func PruneExpiredDegradationWatchRecords(now int64) (int64, error) {
 
 // degradationWatchListColumns 是列表查询要的列，刻意不含 html。
 var degradationWatchListColumns = []string{
+	"group_name", "probe_id", "probe_name", "probe_kind", "verdict", "match_snapshot",
 	"id", "channel_id", "run_id", "model_name", "reasoning_effort", "success", "failure_reason",
 	"elapsed_ms", "prompt_tokens", "completion_tokens", "reasoning_tokens", "hidden", "created_at",
 	"status", "error_details", "tokens_estimated",
@@ -115,7 +125,8 @@ func FinishDegradationWatchRecord(record *DegradationWatchRecord) error {
 		record.FailureReason = string(runes[:maxDegradationWatchFailureReasonRunes])
 	}
 	return DB.Model(&DegradationWatchRecord{}).Where("id = ? AND status IN ?", record.Id, []string{"queued", "running"}).Updates(map[string]any{
-		"status": record.Status, "success": record.Success, "failure_reason": record.FailureReason, "error_details": record.ErrorDetails,
+		"verdict": record.Verdict,
+		"status":  record.Status, "success": record.Success, "failure_reason": record.FailureReason, "error_details": record.ErrorDetails,
 		"html": record.Html, "output_text": record.OutputText, "elapsed_ms": record.ElapsedMs,
 		"prompt_tokens": record.PromptTokens, "completion_tokens": record.CompletionTokens, "reasoning_tokens": record.ReasoningTokens, "tokens_estimated": record.TokensEstimated,
 	}).Error
@@ -128,6 +139,9 @@ func GetDegradationWatchOutput(id int) (string, error) {
 }
 
 func GetDegradationWatchActivity() (*SystemTask, []*DegradationWatchRecord, error) {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" {
+		return getDegradationProbeActivity()
+	}
 	var task SystemTask
 	if err := DB.Where("type = ?", SystemTaskTypeDegradationWatch).Order("id desc").First(&task).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -142,7 +156,7 @@ func GetDegradationWatchActivity() (*SystemTask, []*DegradationWatchRecord, erro
 
 // Recover records left behind by a crashed or cancelled system-task runner.
 func FailInterruptedDegradationWatchRecords() error {
-	activeRuns := DB.Model(&SystemTask{}).Select("task_id").Where("type = ? AND status IN ?", SystemTaskTypeDegradationWatch, activeSystemTaskStatuses())
+	activeRuns := DB.Model(&SystemTask{}).Select("task_id").Where("type IN ? AND status IN ?", []string{SystemTaskTypeDegradationWatch, "degradation_probe_text"}, activeSystemTaskStatuses())
 	return DB.Model(&DegradationWatchRecord{}).Where("status IN ? AND run_id NOT IN (?)", []string{"queued", "running"}, activeRuns).Updates(map[string]any{
 		"status": "failed", "failure_reason": "interrupted", "error_details": "Detection interrupted: its background task stopped or lost its execution lease.",
 	}).Error

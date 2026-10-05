@@ -45,6 +45,7 @@ const (
 )
 
 var degradationWatchReasonCodes = []string{
+	"answer_mismatch",
 	degradationWatchReasonTimeout,
 	degradationWatchReasonEmpty,
 	degradationWatchReasonNoHtml,
@@ -69,18 +70,28 @@ type degradationWatchHandler struct{}
 func (degradationWatchHandler) Type() string { return model.SystemTaskTypeDegradationWatch }
 
 func (degradationWatchHandler) Enabled() bool {
+	if raw := operation_setting.GetDegradationWatchSetting().ProbePlan; raw != "" {
+		plan, err := operation_setting.ParseDegradationProbePlan(raw)
+		return err == nil && plan.Enabled
+	}
 	return operation_setting.GetDegradationWatchSetting().Enabled
 }
 
 func (degradationWatchHandler) Interval() time.Duration {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" {
+		return time.Minute
+	}
 	return time.Duration(operation_setting.ResolveDegradationWatchParams().IntervalMinutes) * time.Minute
 }
 
-func (degradationWatchHandler) NewPayload() any { return nil }
+func (degradationWatchHandler) NewPayload() any { return degradationWatchTaskPayload{Scheduled: true} }
 
 // degradationWatchTaskPayload 为空表示检测所有启用的目标。后台「立即检测」可以
 // 用 Model 只测一个目标（停用的也可以），用 ChannelId 只测一个渠道。
 type degradationWatchTaskPayload struct {
+	Scheduled bool   `json:"scheduled"`
+	Group     string `json:"group,omitempty"`
+	ProbeID   string `json:"probe_id,omitempty"`
 	ChannelId int    `json:"channel_id,omitempty"`
 	Model     string `json:"model,omitempty"`
 }
@@ -93,6 +104,10 @@ type degradationWatchSummary struct {
 }
 
 func (degradationWatchHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" {
+		runDegradationProbeTask(ctx, task, runnerID, "drawing")
+		return
+	}
 	payload := degradationWatchTaskPayload{}
 	if err := task.DecodePayload(&payload); err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
@@ -320,6 +335,10 @@ func drawDegradationWatch(ctx context.Context, channel *model.Channel, testUserI
 }
 
 func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, progress ...func(*model.DegradationWatchRecord)) (string, *dto.Usage, error) {
+	return requestDegradationProbe(ctx, channel, testUserID, modelName, effort, prompt, "", progress...)
+}
+
+func requestDegradationProbe(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, group string, progress ...func(*model.DegradationWatchRecord)) (string, *dto.Usage, error) {
 	useResponses := normalizeChannelTestEndpoint(channel, "") == string(constant.EndpointTypeOpenAIResponse)
 	requestPath := "/v1/chat/completions"
 	relayFormat := types.RelayFormatOpenAI
@@ -342,6 +361,9 @@ func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel,
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	c.Set("group", userCache.Group)
+	if group != "" {
+		c.Set("group", group)
+	}
 
 	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
 		return "", nil, apiErr
@@ -562,12 +584,17 @@ func isDegradationWatchAdmin(c *gin.Context) bool {
 }
 
 type degradationWatchRecordItem struct {
+	GroupName       string `json:"group_name"`
+	ProbeID         string `json:"probe_id"`
+	ProbeName       string `json:"probe_name"`
+	ProbeKind       string `json:"probe_kind"`
+	Verdict         string `json:"verdict"`
 	Id              int    `json:"id"`
 	ModelName       string `json:"model_name"`
 	ReasoningEffort string `json:"reasoning_effort"`
-	// ChannelTitle 对普通用户是别名；管理员看没配别名的渠道时是渠道名。
-	ChannelTitle string `json:"channel_title"`
-	Aliased      bool   `json:"aliased"`
+	// ChannelTitle and aliases are administrator-only metadata.
+	ChannelTitle string `json:"channel_title,omitempty"`
+	Aliased      bool   `json:"aliased,omitempty"`
 	// ChannelId 只回给管理员。
 	ChannelId        int    `json:"channel_id,omitempty"`
 	Success          bool   `json:"success"`
@@ -583,13 +610,14 @@ type degradationWatchRecordItem struct {
 	CreatedAt        int64  `json:"created_at"`
 }
 
-func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bool, aliases map[string]string) degradationWatchRecordItem {
+func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bool, aliases map[string]string, titles ...map[int]string) degradationWatchRecordItem {
 	reason := record.FailureReason
 	if !admin && reason != "" && !slices.Contains(degradationWatchReasonCodes, reason) {
 		reason = degradationWatchReasonUpstream
 	}
 	alias, aliased := aliases[strconv.Itoa(record.ChannelId)]
 	item := degradationWatchRecordItem{
+		GroupName: record.GroupName, ProbeID: record.ProbeID, ProbeName: record.ProbeName, ProbeKind: record.ProbeKind, Verdict: record.Verdict,
 		Id:               record.Id,
 		ModelName:        record.ModelName,
 		ReasoningEffort:  record.ReasoningEffort,
@@ -611,10 +639,18 @@ func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bo
 		item.ChannelId = record.ChannelId
 		if !aliased {
 			item.ChannelTitle = fmt.Sprintf("#%d", record.ChannelId)
-			if channel, err := model.CacheGetChannel(record.ChannelId); err == nil && channel != nil && channel.Name != "" {
+			if len(titles) > 0 {
+				if name := titles[0][record.ChannelId]; name != "" {
+					item.ChannelTitle = name
+				}
+			} else if channel, err := model.CacheGetChannel(record.ChannelId); err == nil && channel != nil && channel.Name != "" {
 				item.ChannelTitle = channel.Name
 			}
 		}
+	}
+	if !admin {
+		item.ChannelTitle, item.Aliased = "", false
+		item.ErrorDetails = publicDegradationProbeError(string(record.ErrorDetails), record.ChannelId)
 	}
 	if item.Status == "" {
 		item.Status = "failed"
@@ -714,15 +750,16 @@ func (v degradationWatchVisibility) filter() model.DegradationWatchRecordFilter 
 }
 
 func (v degradationWatchVisibility) canView(record *model.DegradationWatchRecord) bool {
+	if record == nil {
+		return false
+	}
+	if record.Status != "queued" && record.Status != "running" && record.CreatedAt < common.GetTimestamp()-model.DegradationWatchRetentionSeconds {
+		return false
+	}
 	if v.admin {
 		return true
 	}
-	if _, ok := v.aliases[strconv.Itoa(record.ChannelId)]; !ok || record.Hidden {
-		return false
-	}
-	return slices.ContainsFunc(v.targets, func(target operation_setting.DegradationWatchTarget) bool {
-		return target.Model == record.ModelName
-	})
+	return canViewDegradationProbeRecord(record)
 }
 
 // buildDegradationWatchLanes 按配置顺序列出泳道；管理员额外看到表里还有记录、
@@ -805,6 +842,10 @@ func parseDegradationWatchRounds(c *gin.Context) int {
 // GetDegradationWatchWall 返回检测墙的一页轮次。before 是上一页返回的
 // next_before，普通用户全程拿不到渠道 id。泳道只在第一页返回。
 func GetDegradationWatchWall(c *gin.Context) {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" || !isDegradationWatchAdmin(c) {
+		GetDegradationProbeWall(c)
+		return
+	}
 	if c.Query("model") == "" {
 		if err := model.FailInterruptedDegradationWatchRecords(); err != nil {
 			common.ApiError(c, err)
@@ -922,7 +963,15 @@ func GetDegradationWatchRecord(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output})
+	content, err := model.GetDegradationProbeContent(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !visibility.admin {
+		output = publicDegradationProbeError(output, record.ChannelId)
+	}
+	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output, "prompt": string(content.PromptSnapshot), "expected": string(content.ExpectedSnapshot), "match": content.MatchSnapshot})
 }
 
 func GetDegradationWatchActivity(c *gin.Context) {
@@ -955,6 +1004,10 @@ type degradationWatchPromptTarget struct {
 // GetDegradationWatchPrompt 给「自测」用：提示词固定为后台这份，保证自测结果
 // 和检测墙可比；模型下拉框的选项是启用中的目标。
 func GetDegradationWatchPrompt(c *gin.Context) {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" {
+		getDegradationProbePrompt(c)
+		return
+	}
 	targets := make([]degradationWatchPromptTarget, 0)
 	for _, target := range operation_setting.ResolveDegradationWatchTargets() {
 		if target.Enabled {
@@ -1077,6 +1130,10 @@ type degradationWatchRunRequest struct {
 // RunDegradationWatch 手动触发一轮：全部目标、单个目标，或单个目标的单个渠道。
 // 已有一轮在跑时拒绝，免得管理员把正在跑的定时任务当成自己这次。
 func RunDegradationWatch(c *gin.Context) {
+	if operation_setting.GetDegradationWatchSetting().ProbePlan != "" {
+		RunDegradationProbes(c)
+		return
+	}
 	var req degradationWatchRunRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiErrorMsg(c, "invalid request body")

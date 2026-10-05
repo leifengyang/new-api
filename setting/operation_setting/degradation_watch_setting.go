@@ -14,7 +14,9 @@ import (
 // 同一个思考强度，同一代模型在不同渠道上的输出质量差异肉眼可见——这就是要
 // 看的东西，所以这里不做任何评分，只负责把作品和用量记下来。
 type DegradationWatchSetting struct {
-	Enabled bool `json:"enabled"`
+	// ProbePlan is saved atomically; empty retains the legacy drawing configuration.
+	ProbePlan string `json:"probe_plan"`
+	Enabled   bool   `json:"enabled"`
 	// Targets 是被测模型列表，每个模型一条泳道。顺序即前台泳道顺序。
 	Targets []DegradationWatchTarget `json:"targets"`
 	// Group / Model / ReasoningEffort 是只支持单模型时的旧配置。Targets 为空时

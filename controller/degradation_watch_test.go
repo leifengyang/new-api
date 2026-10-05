@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -117,8 +118,8 @@ func TestDegradationWatchRecordItemHidesChannelIdFromUsers(t *testing.T) {
 	record := &model.DegradationWatchRecord{ChannelId: 7}
 
 	user := toDegradationWatchRecordItem(record, false, aliases)
-	assert.Equal(t, "Alpha", user.ChannelTitle)
-	assert.True(t, user.Aliased)
+	assert.Empty(t, user.ChannelTitle)
+	assert.False(t, user.Aliased)
 	assert.Zero(t, user.ChannelId, "users must never receive channel ids")
 
 	admin := toDegradationWatchRecordItem(record, true, aliases)
@@ -314,7 +315,8 @@ func TestDegradationWatchModelHistoryAndDetailVisibility(t *testing.T) {
 	t.Cleanup(func() { model.DB = previousDB; *setting = previousSetting; _ = sqlDB.Close() })
 	setting.Targets = []operation_setting.DegradationWatchTarget{{Model: "slow", Group: "default", Enabled: true}, {Model: "fast", Group: "default", Enabled: true}}
 	setting.ChannelAliases = map[string]string{"1": "Public alias"}
-	require.NoError(t, db.AutoMigrate(&model.DegradationWatchRecord{}, &model.SystemTask{}))
+	require.NoError(t, db.AutoMigrate(&model.DegradationWatchRecord{}, &model.SystemTask{}, &model.Channel{}))
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "private", Models: "slow,fast", Group: "default", Status: 1, Key: "secret"}).Error)
 	slow := &model.DegradationWatchRecord{ChannelId: 1, ModelName: "slow", FailureReason: "upstream_error", ErrorDetails: "full private upstream diagnostic", OutputText: "partial output"}
 	require.NoError(t, model.CreateDegradationWatchRecord(slow))
 	for range 12 {
@@ -323,26 +325,26 @@ func TestDegradationWatchModelHistoryAndDetailVisibility(t *testing.T) {
 	for _, admin := range []bool{false, true} {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest("GET", "/api/degradation_watch/wall?model=slow", nil)
+		c.Request = httptest.NewRequest("GET", "/api/degradation_watch/monitor?model=slow&group=default&channel_id=1", nil)
 		if admin {
 			c.Set("role", common.RoleAdminUser)
 		}
-		GetDegradationWatchWall(c)
+		GetDegradationProbeWall(c)
 		var result struct {
 			Success bool
 			Data    struct {
-				Records []degradationWatchRecordItem `json:"records"`
+				Probes []degradationProbeHistory `json:"probes"`
 			}
 		}
 		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &result))
 		require.True(t, result.Success, w.Body.String())
-		require.Len(t, result.Data.Records, 1)
-		assert.Equal(t, slow.Id, result.Data.Records[0].Id)
+		require.Len(t, result.Data.Probes[1].Records, 1)
+		assert.Equal(t, slow.Id, result.Data.Probes[1].Records[0].Id)
 		if admin {
-			assert.Equal(t, string(slow.ErrorDetails), result.Data.Records[0].ErrorDetails)
+			assert.Empty(t, result.Data.Probes[1].Records[0].ErrorDetails)
 		} else {
-			assert.Empty(t, result.Data.Records[0].ErrorDetails)
-			assert.Zero(t, result.Data.Records[0].ChannelId)
+			assert.Empty(t, result.Data.Probes[1].Records[0].ErrorDetails)
+			assert.Zero(t, result.Data.Probes[1].Records[0].ChannelId)
 		}
 	}
 	require.NoError(t, model.SetDegradationWatchRecordHidden(slow.Id, true))
@@ -352,4 +354,265 @@ func TestDegradationWatchModelHistoryAndDetailVisibility(t *testing.T) {
 	GetDegradationWatchRecord(c)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.NotContains(t, w.Body.String(), "partial output")
+}
+
+func TestDegradationProbeRulesAndPlanValidation(t *testing.T) {
+	probe := operation_setting.DegradationProbe{ID: "sanae", Name: "Sanae", Kind: "text", Prompt: operation_setting.SanaeProbePrompt, Expected: "高市早苗", Match: "exact", IntervalMinutes: 5}
+	for _, tc := range []struct {
+		output string
+		passed bool
+	}{{"<html><svg/></html>", true}, {"<html><svg viewBox=\"0 0 10 10\"><circle/></svg></html>", true}, {"<html><svg></html>", false}, {"<html><svgfake/></html>", false}} {
+		record := &model.DegradationWatchRecord{}
+		evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: "drawing"}, tc.output)
+		assert.Equal(t, tc.passed, record.Success, tc.output)
+	}
+	for _, tc := range []struct {
+		output string
+		passed bool
+	}{{"高市早苗", true}, {" \n高市早苗\t", true}, {"高市早苗。", false}, {"uncertain", false}, {"", false}, {"答案是高市早苗", false}} {
+		record := &model.DegradationWatchRecord{}
+		evaluateDegradationProbe(record, probe, tc.output)
+		assert.Equal(t, tc.passed, record.Success, tc.output)
+		assert.NotEqual(t, "error", record.Verdict)
+	}
+	plan := operation_setting.DegradationProbePlan{Concurrency: 2, TimeoutSeconds: 1200, Probes: []operation_setting.DegradationProbe{probe}, Targets: []operation_setting.DegradationProbeTarget{
+		{Group: "a", Model: "sol", ChannelID: 1, Public: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "sanae", Enabled: true}}},
+		{Group: "b", Model: "sol", ChannelID: 1, Public: true},
+	}}
+	raw, err := common.Marshal(plan)
+	require.NoError(t, err)
+	_, err = operation_setting.ParseDegradationProbePlan(string(raw))
+	require.NoError(t, err)
+	plan.Targets[1].Group, plan.Targets[1].ChannelID = "a", 2
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	_, err = operation_setting.ParseDegradationProbePlan(string(raw))
+	assert.ErrorContains(t, err, "one public channel")
+	plan.Targets[1].Public = false
+	plan.Targets[0].Probes[0].IntervalMinutes = -1
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	_, err = operation_setting.ParseDegradationProbePlan(string(raw))
+	assert.ErrorContains(t, err, "invalid probe binding")
+}
+
+func TestDegradationProbeIndependentSchedulesAndPublicSelection(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previous := model.DB
+	model.DB = db
+	setting := operation_setting.GetDegradationWatchSetting()
+	saved := *setting
+	t.Cleanup(func() { model.DB = previous; *setting = saved; _ = sqlDB.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}))
+	channels := []*model.Channel{{Id: 1, Name: "private-one", Status: 1, Group: "a,b", Models: "sol", Key: "sk-private-secret"}, {Id: 2, Name: "private-two", Status: 1, Group: "a", Models: "sol", Key: "sk-second-secret"}}
+	for _, channel := range channels {
+		require.NoError(t, db.Create(channel).Error)
+	}
+	textProbe := operation_setting.DegradationProbe{ID: "sanae", Name: "Sanae", Kind: "text", Prompt: "prompt", Expected: "高市早苗", Match: "exact", IntervalMinutes: 5}
+	plan := operation_setting.DegradationProbePlan{Enabled: true, Concurrency: 2, TimeoutSeconds: 1200, Probes: []operation_setting.DegradationProbe{textProbe, {ID: "drawing", Name: "Drawing", Kind: "drawing", Prompt: "draw", IntervalMinutes: 60}}}
+	for _, target := range []operation_setting.DegradationProbeTarget{{Group: "a", Model: "sol", ChannelID: 1, Enabled: true, Public: true}, {Group: "b", Model: "sol", ChannelID: 1, Enabled: true, Public: true}, {Group: "a", Model: "sol", ChannelID: 2, Enabled: true}} {
+		target.Probes = []operation_setting.DegradationProbeBinding{{ProbeID: "sanae", Enabled: true}, {ProbeID: "drawing", Enabled: true}}
+		plan.Targets = append(plan.Targets, target)
+	}
+	raw, err := common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	now := common.GetTimestamp()
+	first := &model.DegradationWatchRecord{ChannelId: 1, GroupName: "a", ModelName: "sol", ProbeID: "sanae", CreatedAt: now, Status: "succeeded", Success: true, OutputText: "高市早苗", PromptSnapshot: "old prompt", ExpectedSnapshot: "old answer"}
+	require.NoError(t, model.CreateDegradationWatchRecord(first))
+	jobs, err := selectDegradationProbeJobs(&plan, channels, degradationWatchTaskPayload{Scheduled: true}, "text", now+299)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, "b", jobs[0].target.Group)
+	assert.Equal(t, 2, jobs[1].target.ChannelID)
+	jobs, err = selectDegradationProbeJobs(&plan, channels, degradationWatchTaskPayload{Scheduled: true}, "text", now+300)
+	require.NoError(t, err)
+	assert.Len(t, jobs, 3)
+	jobs, err = selectDegradationProbeJobs(&plan, channels, degradationWatchTaskPayload{Scheduled: true}, "drawing", now)
+	require.NoError(t, err)
+	assert.Len(t, jobs, 3)
+	private := &model.DegradationWatchRecord{ChannelId: 2, GroupName: "a", ModelName: "sol", ProbeID: "sanae", CreatedAt: now, Status: "failed", OutputText: "private response"}
+	require.NoError(t, model.CreateDegradationWatchRecord(private))
+	for _, query := range []string{"", "?group=a&model=sol&channel_id=2"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/monitor"+query, nil)
+		GetDegradationProbeWall(c)
+		assert.NotContains(t, w.Body.String(), "channel_id")
+		assert.NotContains(t, w.Body.String(), "channel_name")
+		assert.NotContains(t, w.Body.String(), "private-")
+		assert.NotContains(t, w.Body.String(), "private response")
+		assert.Contains(t, w.Body.String(), `"success":true`)
+	}
+	for _, record := range []*model.DegradationWatchRecord{first, private} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(record.Id)}}
+		GetDegradationWatchRecord(c)
+		if record == first {
+			assert.Contains(t, w.Body.String(), "old prompt")
+			assert.Contains(t, w.Body.String(), "old answer")
+		} else {
+			assert.Equal(t, 404, w.Code)
+		}
+	}
+	redacted := publicDegradationProbeError("HTTP 429 private-one https://provider.example/v1 sk-private-secret channel_id=1\nrequest-id: final-line", 1)
+	for _, secret := range []string{"private-one", "provider.example", "sk-private-secret", "channel_id=1"} {
+		assert.NotContains(t, redacted, secret)
+	}
+	assert.Contains(t, redacted, "HTTP 429")
+	assert.Contains(t, redacted, "final-line")
+	redacted = publicDegradationProbeError(`dial tcp 10.0.0.8:443 [2001:db8::1]:443 {"channel_id":1,"message":"try later"}`, 1)
+	assert.NotContains(t, redacted, "10.0.0.8")
+	assert.NotContains(t, redacted, "2001:db8")
+	assert.NotContains(t, redacted, "channel_id")
+	assert.Contains(t, redacted, "try later")
+}
+
+func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previous, redis, cache := model.DB, common.RedisEnabled, common.MemoryCacheEnabled
+	model.DB, common.RedisEnabled, common.MemoryCacheEnabled = db, false, false
+	setting := operation_setting.GetDegradationWatchSetting()
+	saved := *setting
+	streamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		model.DB, common.RedisEnabled, common.MemoryCacheEnabled = previous, redis, cache
+		*setting = saved
+		constant.StreamingTimeout = streamingTimeout
+		_ = sqlDB.Close()
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}))
+	require.NoError(t, db.Create(&model.User{Username: "probe-test", Role: common.RoleRootUser, Group: "default", Quota: 10000, Status: 1}).Error)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := common.DecodeJson(r.Body, &request); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if request.Model == "broken" {
+			http.Error(w, "HTTP detail\nsecret-probe-key\nfinal-error-line", 429)
+			return
+		}
+		output := "高市早苗"
+		if len(request.Messages) > 0 && request.Messages[0].Content == "draw" {
+			output = "<html><svg/></html>"
+		}
+		delta, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]string{"content": output}, "finish_reason": "stop"}}})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16}}\n\ndata: [DONE]\n\n", delta)
+	}))
+	defer upstream.Close()
+	base := upstream.URL
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "private provider", Type: constant.ChannelTypeOpenAI, Key: "secret-probe-key", BaseURL: &base, Group: "a,b", Models: "sol,broken", Status: 1}).Error)
+	plan := operation_setting.DegradationProbePlan{Enabled: true, Concurrency: 2, TimeoutSeconds: 30, Probes: []operation_setting.DegradationProbe{
+		{ID: "sanae", Name: "Sanae", Kind: "text", Prompt: "who", Expected: "高市早苗", Match: "exact", IntervalMinutes: 5},
+		{ID: "other", Name: "Other", Kind: "text", Prompt: "another", Expected: "uncertain", Match: "exact", IntervalMinutes: 5},
+		{ID: "drawing", Name: "Drawing", Kind: "drawing", Prompt: "draw", IntervalMinutes: 60},
+	}, Targets: []operation_setting.DegradationProbeTarget{
+		{Group: "a", Model: "sol", ChannelID: 1, Enabled: true, Public: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "sanae", Enabled: true}, {ProbeID: "drawing", Enabled: true}}},
+		{Group: "b", Model: "sol", ChannelID: 1, Enabled: true, Public: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "other", Enabled: true}}},
+		{Group: "a", Model: "broken", ChannelID: 1, Enabled: true, Probes: []operation_setting.DegradationProbeBinding{{ProbeID: "sanae", Enabled: true}}},
+	}}
+	raw, err := common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	service.InitHttpClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, kind := range []string{"text", "drawing"} {
+		task := &model.SystemTask{TaskID: "probe-" + kind, Type: "degradation_probe_text", Payload: "{}", Status: model.SystemTaskStatusRunning}
+		if kind == "drawing" {
+			task.Type = model.SystemTaskTypeDegradationWatch
+		}
+		require.NoError(t, db.Create(task).Error)
+		summary, err := executeDegradationProbes(ctx, task, "test", kind)
+		require.NoError(t, err)
+		assert.Equal(t, 1, summary.Succeeded)
+	}
+	var rows []model.DegradationWatchRecord
+	require.NoError(t, db.Order("id asc").Find(&rows).Error)
+	require.Len(t, rows, 4)
+	assert.Equal(t, "passed", rows[0].Verdict)
+	assert.Equal(t, "a", rows[0].GroupName)
+	assert.Equal(t, "who", string(rows[0].PromptSnapshot))
+	assert.Equal(t, "高市早苗", string(rows[0].ExpectedSnapshot))
+	assert.Equal(t, 12, rows[0].PromptTokens)
+	assert.Equal(t, 4, rows[0].CompletionTokens)
+	assert.False(t, rows[0].TokensEstimated)
+	assert.Equal(t, "mismatch", rows[1].Verdict)
+	assert.Equal(t, "b", rows[1].GroupName)
+	assert.Equal(t, "another", string(rows[1].PromptSnapshot))
+	assert.Equal(t, "error", rows[2].Verdict)
+	assert.Contains(t, string(rows[2].ErrorDetails), "final-error-line")
+	assert.NotContains(t, string(rows[2].ErrorDetails), "secret-probe-key")
+	assert.Equal(t, "passed", rows[3].Verdict)
+	assert.Equal(t, "<html><svg/></html>", string(rows[3].Html))
+	_, activity, err := model.GetDegradationWatchActivity()
+	require.NoError(t, err)
+	assert.Len(t, activity, 4)
+}
+
+func TestSaveDegradationProbePlanRejectsInvalidTargetsAndDatabaseFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	previous := model.DB
+	model.DB = db
+	setting := operation_setting.GetDegradationWatchSetting()
+	saved := *setting
+	optionMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() { model.DB = previous; *setting = saved; common.OptionMap = optionMap; _ = sqlDB.Close() })
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Option{}))
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Group: "alpha", Models: "sol", Status: 1}).Error)
+	plan := operation_setting.DegradationProbePlan{Concurrency: 2, TimeoutSeconds: 1200, Targets: []operation_setting.DegradationProbeTarget{{ChannelID: 1, Group: "alpha", Model: "sol", Public: true}}}
+	raw, err := common.Marshal(plan)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("PUT", "/probe-plan", strings.NewReader(string(raw)))
+	SaveDegradationProbePlan(c)
+	require.Contains(t, w.Body.String(), `"success":true`)
+	assert.Equal(t, string(raw), setting.ProbePlan)
+	plan.Targets[0].Group = "not-a-channel-group"
+	invalid, err := common.Marshal(plan)
+	require.NoError(t, err)
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("PUT", "/probe-plan", strings.NewReader(string(invalid)))
+	SaveDegradationProbePlan(c)
+	assert.Contains(t, w.Body.String(), `"success":false`)
+	assert.Equal(t, string(raw), setting.ProbePlan)
+	require.NoError(t, db.Migrator().DropTable(&model.Option{}))
+	plan.Targets[0].Group = "alpha"
+	plan.Concurrency = 3
+	updated, err := common.Marshal(plan)
+	require.NoError(t, err)
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("PUT", "/probe-plan", strings.NewReader(string(updated)))
+	SaveDegradationProbePlan(c)
+	assert.Contains(t, w.Body.String(), `"success":false`)
+	assert.Equal(t, string(raw), setting.ProbePlan)
 }
