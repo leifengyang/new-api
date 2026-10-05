@@ -66,6 +66,7 @@ const channels = [
 let configured = true
 let currentGroups = ['alpha', 'beta']
 let groupsFailed = false
+let testPlan = plan
 
 function Fixture() {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
@@ -83,6 +84,7 @@ beforeEach(() => {
   configured = true
   currentGroups = ['alpha', 'beta']
   groupsFailed = false
+  testPlan = plan
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/group/' && groupsFailed) {
       return { data: { success: false, message: 'Groups unavailable' } }
@@ -90,7 +92,7 @@ beforeEach(() => {
     const data: Record<string, unknown> = {
       '/api/group/': currentGroups,
       '/api/degradation_watch/probe-plan': {
-        ...structuredClone(plan),
+        ...structuredClone(testPlan),
         configured,
       },
       '/api/degradation_watch/channels': {
@@ -105,6 +107,78 @@ beforeEach(() => {
     return { data: { success: true, data: data[url] } }
   })
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  vi.spyOn(api, 'post').mockResolvedValue({ data: { success: true } })
+})
+
+test('each probe button runs only its own template on the selected channel and the row action still runs all its probes', async () => {
+  testPlan = structuredClone(plan)
+  testPlan.probes.push(
+    { ...plan.probes[0], id: 'other', name: 'Other text' },
+    { ...plan.probes[0], id: 'drawing', name: 'Drawing', kind: 'drawing' }
+  )
+  testPlan.targets[1].probes.push(
+    { probe_id: 'other', enabled: true, interval_minutes: 0 },
+    { probe_id: 'drawing', enabled: true, interval_minutes: 0 }
+  )
+  const { view, client, user } = setup()
+  await screen.findByRole('button', { name: 'Run Drawing now' })
+  const row = screen.getByRole('row', { name: /Two/ })
+  for (const [name, id] of [
+    ['Sanae', 'sanae'],
+    ['Other text', 'other'],
+    ['Drawing', 'drawing'],
+  ]) {
+    const button = within(row).getByRole('button', { name: `Run ${name} now` })
+    await user.click(button)
+    await waitFor(() =>
+      expect(api.post).toHaveBeenLastCalledWith(
+        '/api/degradation_watch/probe-run',
+        { group: 'alpha', model: 'sol', channel_id: 2, probe_id: id }
+      )
+    )
+    await waitFor(() => expect(button).toBeEnabled())
+  }
+  await user.click(within(row).getByRole('button', { name: 'Run now' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenLastCalledWith(
+      '/api/degradation_watch/probe-run',
+      { group: 'alpha', model: 'sol', channel_id: 2 }
+    )
+  )
+  expect(api.post).toHaveBeenCalledTimes(4)
+  view.unmount()
+  client.clear()
+})
+
+test('individual probe buttons prevent duplicate submissions and stay disabled for disabled targets or unsaved edits', async () => {
+  testPlan = structuredClone(plan)
+  testPlan.targets[1].enabled = false
+  let finish = () => {}
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  vi.mocked(api.post).mockImplementationOnce(async () => {
+    await pending
+    return { data: { success: true } }
+  })
+  const { view, client, user } = setup()
+  const buttons = await screen.findAllByRole('button', {
+    name: 'Run Sanae now',
+  })
+  expect(buttons[1]).toBeDisabled()
+  await user.click(buttons[0])
+  await waitFor(() => expect(buttons[0]).toBeDisabled())
+  await user.click(buttons[0])
+  expect(api.post).toHaveBeenCalledTimes(1)
+  finish()
+  await waitFor(() => expect(buttons[0]).toBeEnabled())
+  await user.click(
+    screen.getAllByRole('switch', { name: 'Show on public wall' })[0]
+  )
+  expect(buttons[0]).toBeDisabled()
+  expect(buttons[1]).toBeDisabled()
+  view.unmount()
+  client.clear()
 })
 
 test('deleted groups from channel bindings and old targets do not appear, while valid empty groups remain selectable', async () => {

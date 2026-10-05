@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "Le JSON des règles doit être un tableau",
     "Rules match the original model value from the client request body.": "Les règles correspondent à la valeur model originale du corps de la requête client.",
     "Run {{model}} on this channel now": "Lancer {{model}} sur ce canal maintenant",
+    "Run {{probe}} now": "Exécuter {{probe}} maintenant",
     "Run all checks": "Tout tester",
     "Run all now": "Tout lancer maintenant",
     "Run background checks using the selected test mode": "Exécuter les contrôles en arrière-plan selon le mode choisi",

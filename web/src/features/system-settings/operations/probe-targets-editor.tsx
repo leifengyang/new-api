@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus, Play, RefreshCw, Layers, ChevronDown } from 'lucide-react'
+import {
+  Plus,
+  Play,
+  RefreshCw,
+  Layers,
+  ChevronDown,
+  LoaderCircle,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +40,11 @@ import {
 } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useRunProbes } from '@/features/degradation-watch/hooks/use-probes'
 import type {
   ProbePlan,
@@ -67,6 +79,23 @@ export function ProbeTargetsEditor(props: {
     .map((target, index) => ({ target, index }))
     .filter(({ target }) => target.group === selected)
   const models = [...new Set(rows.map(({ target }) => target.model))].sort()
+  const runTarget = (target: ProbeTarget, probeId?: string) => {
+    run.mutate(
+      {
+        group: target.group,
+        model: target.model,
+        channel_id: target.channel_id,
+        ...(probeId ? { probe_id: probeId } : {}),
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            t('Check queued. Follow live progress here or on the wall.')
+          ),
+        onError: (error) => handleServerError(error),
+      }
+    )
+  }
   return (
     <div className='grid min-w-0 gap-5 lg:grid-cols-[13rem_minmax(0,1fr)]'>
       <aside className='bg-muted/20 min-w-0 self-start rounded-xl border p-3'>
@@ -254,23 +283,66 @@ export function ProbeTargetsEditor(props: {
                               )
                           )
                           .map((probe) => (
-                            <span
+                            <div
                               key={probe.id}
-                              className={
-                                kind === 'text'
-                                  ? 'rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300'
-                                  : 'rounded-md bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300'
-                              }
+                              className='inline-flex max-w-full items-center gap-1'
                             >
-                              {probe.name} ·{' '}
-                              {t('Every {{minutes}} min', {
-                                minutes: formatNumber(
-                                  target.probes.find(
-                                    (binding) => binding.probe_id === probe.id
-                                  )?.interval_minutes || probe.interval_minutes
-                                ),
-                              })}
-                            </span>
+                              <span
+                                className={
+                                  kind === 'text'
+                                    ? 'min-w-0 rounded-md bg-emerald-500/10 px-2 py-1 text-xs break-words whitespace-normal text-emerald-700 dark:text-emerald-300'
+                                    : 'min-w-0 rounded-md bg-violet-500/10 px-2 py-1 text-xs break-words whitespace-normal text-violet-700 dark:text-violet-300'
+                                }
+                              >
+                                {probe.name} ·{' '}
+                                {t('Every {{minutes}} min', {
+                                  minutes: formatNumber(
+                                    target.probes.find(
+                                      (binding) => binding.probe_id === probe.id
+                                    )?.interval_minutes ||
+                                      probe.interval_minutes
+                                  ),
+                                })}
+                              </span>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      type='button'
+                                      variant='ghost'
+                                      size='icon-sm'
+                                      aria-label={t('Run {{probe}} now', {
+                                        probe: probe.name,
+                                      })}
+                                      disabled={
+                                        props.dirty ||
+                                        !target.enabled ||
+                                        run.isPending
+                                      }
+                                      onClick={() =>
+                                        runTarget(target, probe.id)
+                                      }
+                                    />
+                                  }
+                                >
+                                  {run.isPending &&
+                                  run.variables?.probe_id === probe.id &&
+                                  run.variables?.group === target.group &&
+                                  run.variables?.model === target.model &&
+                                  run.variables?.channel_id ===
+                                    target.channel_id ? (
+                                    <LoaderCircle className='animate-spin' />
+                                  ) : (
+                                    <Play />
+                                  )}
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t('Run {{probe}} now', {
+                                    probe: probe.name,
+                                  })}
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
                           ))}
                         {!plan.probes.some(
                           (probe) =>
@@ -337,24 +409,7 @@ export function ProbeTargetsEditor(props: {
                           disabled={
                             props.dirty || !target.enabled || run.isPending
                           }
-                          onClick={() =>
-                            run.mutate(
-                              {
-                                group: target.group,
-                                model: target.model,
-                                channel_id: target.channel_id,
-                              },
-                              {
-                                onSuccess: () =>
-                                  toast.success(
-                                    t(
-                                      'Check queued. Follow live progress here or on the wall.'
-                                    )
-                                  ),
-                                onError: (error) => handleServerError(error),
-                              }
-                            )
-                          }
+                          onClick={() => runTarget(target)}
                         >
                           <Play />
                         </Button>

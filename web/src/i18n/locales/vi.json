@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "JSON quy tắc phải là một mảng",
     "Rules match the original model value from the client request body.": "Quy tắc khớp với giá trị model gốc trong thân yêu cầu của client.",
     "Run {{model}} on this channel now": "Chạy {{model}} trên kênh này ngay",
+    "Run {{probe}} now": "Chạy {{probe}} ngay",
     "Run all checks": "Kiểm tra tất cả",
     "Run all now": "Chạy tất cả ngay",
     "Run background checks using the selected test mode": "Chạy kiểm tra nền theo chế độ đã chọn",
