@@ -161,6 +161,9 @@ test('selecting a public channel replaces the previous selection and saves one c
 
 test('changing group immediately updates channel and model choices and clears public selection', async () => {
   const { view, client, user } = setup()
+  await user.click(
+    (await screen.findAllByRole('button', { name: 'Configure' }))[0]
+  )
   const groups = await screen.findAllByRole('combobox', { name: 'Group' })
   await user.selectOptions(groups[0], 'beta')
   const channel = screen.getAllByRole('combobox', { name: 'Channel' })[0]
@@ -178,6 +181,209 @@ test('changing group immediately updates channel and model choices and clears pu
   expect(
     screen.getAllByRole('switch', { name: 'Show on public wall' })[0]
   ).not.toBeChecked()
+  view.unmount()
+  client.clear()
+})
+
+test('drawer cancellation keeps the saved plan, applying stages changes, and reset restores it', async () => {
+  const { view, client, user } = setup()
+  await user.click(
+    (await screen.findAllByRole('button', { name: 'Configure' }))[0]
+  )
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Reasoning effort' }),
+    'high'
+  )
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  ).toBeDisabled()
+  await user.click(screen.getAllByRole('button', { name: 'Configure' })[0])
+  expect(
+    screen.getByRole('combobox', { name: 'Reasoning effort' })
+  ).toHaveValue('')
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Reasoning effort' }),
+    'high'
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(api.put).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Run all checks' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Reset' }))
+  expect(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  ).toBeDisabled()
+  await user.click(screen.getAllByRole('button', { name: 'Configure' })[0])
+  expect(
+    screen.getByRole('combobox', { name: 'Reasoning effort' })
+  ).toHaveValue('')
+  view.unmount()
+  client.clear()
+})
+
+test('invalid and duplicate target edits stay in the drawer until corrected', async () => {
+  const { view, client, user } = setup()
+  await user.click(
+    (await screen.findAllByRole('button', { name: 'Configure' }))[0]
+  )
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Channel' }),
+    '2'
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Check the target selection and public channel'
+  )
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Model' }),
+    'sol'
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Model' }),
+    'astra'
+  )
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        targets: [
+          expect.objectContaining({
+            model: 'astra',
+            channel_id: 2,
+            public: false,
+          }),
+          plan.targets[1],
+        ],
+      })
+    )
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('template deletion removes bindings atomically and run history only loads when opened', async () => {
+  const { view, client, user } = setup()
+  await screen.findByRole('button', { name: 'Run all checks' })
+  expect(
+    vi
+      .mocked(api.get)
+      .mock.calls.some(
+        ([url]) => url.endsWith('/activity') || url.endsWith('/monitor')
+      )
+  ).toBe(false)
+  await user.click(screen.getByRole('tab', { name: 'Probe templates' }))
+  await user.click(screen.getByRole('button', { name: 'Remove' }))
+  const confirmation = screen.getByRole('alertdialog')
+  await user.click(within(confirmation).getByRole('button', { name: 'Remove' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        probes: [],
+        targets: plan.targets.map((target) => ({ ...target, probes: [] })),
+      })
+    )
+  )
+  await user.click(screen.getByRole('tab', { name: 'Run history' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/degradation_watch/activity')
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('template and runtime dialogs validate edits before staging and saving', async () => {
+  const { view, client, user } = setup()
+  await user.click(
+    await screen.findByRole('button', { name: 'Runtime settings' })
+  )
+  const timeout = screen.getByRole('spinbutton', {
+    name: 'Request timeout (seconds)',
+  })
+  await user.clear(timeout)
+  await user.type(timeout, '10')
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  await user.clear(timeout)
+  await user.type(timeout, '1800')
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  await user.click(screen.getByRole('tab', { name: 'Probe templates' }))
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+  const prompt = screen.getByRole('textbox', { name: 'Prompt' })
+  await user.clear(prompt)
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  await user.type(prompt, 'Updated prompt')
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(api.put).not.toHaveBeenCalled()
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/degradation_watch/probe-plan',
+      expect.objectContaining({
+        timeout_seconds: 1800,
+        probes: [{ ...plan.probes[0], prompt: 'Updated prompt' }],
+      })
+    )
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('a failed save retains the draft for retry', async () => {
+  const { view, client, user } = setup()
+  vi.mocked(api.put).mockRejectedValueOnce(new Error('Save failed'))
+  await user.click(
+    (await screen.findAllByRole('switch', { name: 'Show on public wall' }))[1]
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Save degradation watch settings' })
+    ).toBeEnabled()
+  )
+  expect(
+    screen.getAllByRole('switch', { name: 'Show on public wall' })[1]
+  ).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Run all checks' })).toBeDisabled()
+  await user.click(
+    screen.getByRole('button', { name: 'Save degradation watch settings' })
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Run all checks' })).toBeEnabled()
+  )
+  expect(api.put).toHaveBeenCalledTimes(2)
   view.unmount()
   client.clear()
 })
