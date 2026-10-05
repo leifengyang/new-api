@@ -1,6 +1,11 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"strings"
+	"unicode/utf8"
+
+	"gorm.io/gorm"
+)
 
 func getDegradationProbeActivity() (*SystemTask, []*DegradationWatchRecord, error) {
 	tasks, err := GetLatestSystemTasks([]string{SystemTaskTypeDegradationWatch, "degradation_probe_text"})
@@ -83,8 +88,20 @@ func GetDegradationProbeHistory(series DegradationProbeSeries, since int64, befo
 	}
 	// Full diagnostics and prompts are fetched only when a status block is opened.
 	columns := []string{"id", "channel_id", "group_name", "model_name", "probe_id", "probe_name", "probe_kind", "verdict", "success", "status", "failure_reason", "elapsed_ms", "created_at", "prompt_tokens", "completion_tokens", "reasoning_tokens", "tokens_estimated", "reasoning_effort", "hidden"}
+	// Read answers in the same bounded query, without fetching drawing output.
+	// CASE is supported by all three databases. Only the final character survives
+	// in the returned summary; full content remains available through details.
+	columns = append(columns, "CASE WHEN probe_kind = 'text' AND status NOT IN ('queued', 'running') AND (success = ? OR verdict = 'mismatch') THEN output_text ELSE '' END AS output_text")
 	var records []*DegradationWatchRecord
-	err = query.Select(columns).Order("id desc").Limit(limit).Find(&records).Error
+	err = query.Select(strings.Join(columns, ", "), true).Order("id desc").Limit(limit).Find(&records).Error
+	for _, record := range records {
+		answer := strings.TrimSpace(string(record.OutputText))
+		if answer != "" {
+			last, _ := utf8.DecodeLastRuneInString(answer)
+			record.AnswerLastCharacter = string(last)
+		}
+		record.OutputText = ""
+	}
 	return records, stats, latest, err
 }
 

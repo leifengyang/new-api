@@ -584,14 +584,15 @@ func isDegradationWatchAdmin(c *gin.Context) bool {
 }
 
 type degradationWatchRecordItem struct {
-	GroupName       string `json:"group_name"`
-	ProbeID         string `json:"probe_id"`
-	ProbeName       string `json:"probe_name"`
-	ProbeKind       string `json:"probe_kind"`
-	Verdict         string `json:"verdict"`
-	Id              int    `json:"id"`
-	ModelName       string `json:"model_name"`
-	ReasoningEffort string `json:"reasoning_effort"`
+	GroupName           string `json:"group_name"`
+	ProbeID             string `json:"probe_id"`
+	ProbeName           string `json:"probe_name"`
+	ProbeKind           string `json:"probe_kind"`
+	Verdict             string `json:"verdict"`
+	AnswerLastCharacter string `json:"answer_last_character,omitempty"`
+	Id                  int    `json:"id"`
+	ModelName           string `json:"model_name"`
+	ReasoningEffort     string `json:"reasoning_effort"`
 	// ChannelTitle and aliases are administrator-only metadata.
 	ChannelTitle string `json:"channel_title,omitempty"`
 	Aliased      bool   `json:"aliased,omitempty"`
@@ -618,21 +619,22 @@ func toDegradationWatchRecordItem(record *model.DegradationWatchRecord, admin bo
 	alias, aliased := aliases[strconv.Itoa(record.ChannelId)]
 	item := degradationWatchRecordItem{
 		GroupName: record.GroupName, ProbeID: record.ProbeID, ProbeName: record.ProbeName, ProbeKind: record.ProbeKind, Verdict: record.Verdict,
-		Id:               record.Id,
-		ModelName:        record.ModelName,
-		ReasoningEffort:  record.ReasoningEffort,
-		ChannelTitle:     alias,
-		Aliased:          aliased,
-		Success:          record.Success,
-		FailureReason:    reason,
-		Status:           record.Status,
-		TokensEstimated:  record.TokensEstimated,
-		ElapsedMs:        record.ElapsedMs,
-		PromptTokens:     record.PromptTokens,
-		CompletionTokens: record.CompletionTokens,
-		ReasoningTokens:  record.ReasoningTokens,
-		Hidden:           record.Hidden,
-		CreatedAt:        record.CreatedAt,
+		Id:                  record.Id,
+		AnswerLastCharacter: record.AnswerLastCharacter,
+		ModelName:           record.ModelName,
+		ReasoningEffort:     record.ReasoningEffort,
+		ChannelTitle:        alias,
+		Aliased:             aliased,
+		Success:             record.Success,
+		FailureReason:       reason,
+		Status:              record.Status,
+		TokensEstimated:     record.TokensEstimated,
+		ElapsedMs:           record.ElapsedMs,
+		PromptTokens:        record.PromptTokens,
+		CompletionTokens:    record.CompletionTokens,
+		ReasoningTokens:     record.ReasoningTokens,
+		Hidden:              record.Hidden,
+		CreatedAt:           record.CreatedAt,
 	}
 	if admin {
 		item.ErrorDetails = string(record.ErrorDetails)

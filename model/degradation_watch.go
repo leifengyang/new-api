@@ -31,10 +31,12 @@ type DegradationWatchRecord struct {
 	// HTML 错误页塞进报错里。
 	FailureReason string `json:"failure_reason" gorm:"type:varchar(512);not null;default:''"`
 	// Empty status denotes a completed legacy record.
-	Status          string   `json:"status" gorm:"type:varchar(16);not null;default:'';index"`
-	ErrorDetails    LongText `json:"error_details"`
-	OutputText      LongText `json:"-"`
-	TokensEstimated bool     `json:"tokens_estimated" gorm:"not null;default:false"`
+	Status       string   `json:"status" gorm:"type:varchar(16);not null;default:'';index"`
+	ErrorDetails LongText `json:"error_details"`
+	OutputText   LongText `json:"-"`
+	// Computed for probe history only; never persisted or used as full output.
+	AnswerLastCharacter string `json:"-" gorm:"-"`
+	TokensEstimated     bool   `json:"tokens_estimated" gorm:"not null;default:false"`
 	// Html 是抽出来的作品本体，动辄几十 KB，所以用 LongText；列表接口不查这一列。
 	Html             LongText `json:"-"`
 	ElapsedMs        int64    `json:"elapsed_ms" gorm:"not null;default:0"`

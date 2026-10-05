@@ -418,3 +418,46 @@ func TestDegradationProbeDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestDegradationProbeAnswerCharacterDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := useDegradationWatchMatrixDB(t, dialect)
+			series := DegradationProbeSeries{GroupName: "alpha", ChannelID: 81, Model: "sol", ProbeID: "sanae"}
+			cases := []struct {
+				output, status, verdict, kind, want string
+				hidden                              bool
+			}{
+				{"高市早苗 \r\n\t\u3000", "succeeded", "passed", "text", "苗", false},
+				{"uncertain", "failed", "mismatch", "text", "n", false},
+				{"答案𠮷", "succeeded", "passed", "text", "𠮷", false},
+				{" \r\n\t", "failed", "mismatch", "text", "", false},
+				{"partial", "running", "", "text", "", false},
+				{"", "queued", "", "text", "", false},
+				{"partial", "failed", "error", "text", "", false},
+				{"<html><svg/></html>", "succeeded", "passed", "drawing", "", false},
+				{"private", "succeeded", "passed", "text", "e", true},
+			}
+			for _, tc := range cases {
+				record := &DegradationWatchRecord{ChannelId: 81, GroupName: "alpha", ModelName: "sol", ProbeID: "sanae", ProbeKind: tc.kind, OutputText: LongText(tc.output), Status: tc.status, Verdict: tc.verdict, Success: tc.verdict == "passed", Hidden: tc.hidden, CreatedAt: 2000}
+				require.NoError(t, CreateDegradationWatchRecord(record))
+				rows, _, _, err := GetDegradationProbeHistory(series, 2000, 0, 1, true)
+				require.NoError(t, err)
+				require.Len(t, rows, 1)
+				assert.Equal(t, tc.want, rows[0].AnswerLastCharacter)
+				assert.Empty(t, rows[0].OutputText)
+				content, err := GetDegradationProbeContent(record.Id)
+				require.NoError(t, err)
+				assert.Equal(t, tc.output, string(content.OutputText), "summary must preserve full detail content")
+			}
+			rows, _, _, err := GetDegradationProbeHistory(series, 2000, 0, 20, false)
+			require.NoError(t, err)
+			require.Len(t, rows, len(cases)-1)
+			assert.Equal(t, "苗", rows[len(rows)-1].AnswerLastCharacter)
+			older, _, _, err := GetDegradationProbeHistory(series, 2000, rows[1].Id, 20, false)
+			require.NoError(t, err)
+			assert.Equal(t, "苗", older[len(older)-1].AnswerLastCharacter)
+			assert.False(t, db.Migrator().HasColumn(&DegradationWatchRecord{}, "answer_last_character"), "summary needs no schema migration")
+		})
+	}
+}
