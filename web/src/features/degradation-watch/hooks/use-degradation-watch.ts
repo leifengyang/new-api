@@ -189,6 +189,9 @@ export function useSetRecordHidden() {
     },
     onSuccess: (_data, input) => {
       queryClient.invalidateQueries({ queryKey: degradationWatchKeys.wall })
+      void queryClient.invalidateQueries({
+        queryKey: ['degradation-watch', 'monitor'],
+      })
       toast.success(
         input.hidden
           ? i18next.t('Artwork hidden')
