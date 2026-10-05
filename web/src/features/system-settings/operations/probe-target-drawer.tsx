@@ -49,6 +49,7 @@ export function ProbeTargetDrawer(props: {
   index: number
   initial: ProbeTarget
   channels: DegradationWatchAvailableChannel[]
+  groups: string[]
   onClose: () => void
   onApply: (targets: ProbeTarget[]) => void
   onRemove: () => void
@@ -60,6 +61,10 @@ export function ProbeTargetDrawer(props: {
   const [invalid, setInvalid] = useState(false)
   const apply = () => {
     const target = form.getValues('targets.0')
+    if (!props.groups.includes(target.group)) {
+      setInvalid(true)
+      return
+    }
     const targets = props.plan.targets.map((item, index) => {
       if (index === props.index) return target
       if (
@@ -98,7 +103,11 @@ export function ProbeTargetDrawer(props: {
           </SheetDescription>
         </SheetHeader>
         <div className={sideDrawerFormClassName()}>
-          <ProbeTargetFields form={form} channels={props.channels} />
+          <ProbeTargetFields
+            form={form}
+            channels={props.channels}
+            groups={props.groups}
+          />
           {invalid && (
             <p role='alert' className='text-destructive text-sm'>
               {t('Check the target selection and public channel')}

@@ -32,13 +32,13 @@ import { formatNumber } from '@/lib/format'
 export function ProbeTargetFields(props: {
   form: UseFormReturn<ProbePlan>
   channels: DegradationWatchAvailableChannel[]
+  groups: string[]
 }) {
   const { t } = useTranslation()
   const form = props.form
   const values = useWatch({ control: form.control }) as ProbePlan
   const index = 0
   const target = values.targets[0]
-  const groups = [...new Set(props.channels.flatMap((c) => c.groups))].sort()
   const channels = props.channels.filter((c) => c.groups.includes(target.group))
   const models =
     channels.find((c) => c.id === Number(target.channel_id))?.models ?? []
@@ -69,7 +69,7 @@ export function ProbeTargetFields(props: {
           {t('Group')}
           <NativeSelect
             className='w-full'
-            value={target.group}
+            value={props.groups.includes(target.group) ? target.group : ''}
             onChange={(event) => {
               form.setValue(
                 `targets.${index}`,
@@ -87,13 +87,11 @@ export function ProbeTargetFields(props: {
             <NativeSelectOption value=''>
               {t('Select a group')}
             </NativeSelectOption>
-            {[...new Set([...groups, target.group])]
-              .filter(Boolean)
-              .map((group) => (
-                <NativeSelectOption key={group} value={group}>
-                  {group}
-                </NativeSelectOption>
-              ))}
+            {props.groups.map((group) => (
+              <NativeSelectOption key={group} value={group}>
+                {group}
+              </NativeSelectOption>
+            ))}
           </NativeSelect>
         </Label>
         <Label className='grid gap-2'>

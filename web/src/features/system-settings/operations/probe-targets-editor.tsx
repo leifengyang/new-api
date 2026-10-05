@@ -47,6 +47,7 @@ import { ProbeTargetDrawer } from './probe-target-drawer'
 export function ProbeTargetsEditor(props: {
   form: UseFormReturn<ProbePlan>
   channels: DegradationWatchAvailableChannel[]
+  groups: string[]
   dirty: boolean
   onRefresh: () => void
 }) {
@@ -60,12 +61,7 @@ export function ProbeTargetsEditor(props: {
     index: number
     target: ProbeTarget
   } | null>(null)
-  const groups = [
-    ...new Set([
-      ...props.channels.flatMap((c) => c.groups),
-      ...plan.targets.map((target) => target.group),
-    ]),
-  ].sort()
+  const groups = [...new Set(props.groups)].sort()
   const selected = group && groups.includes(group) ? group : groups[0]
   const rows = plan.targets
     .map((target, index) => ({ target, index }))
@@ -143,7 +139,7 @@ export function ProbeTargetsEditor(props: {
               type='button'
               size='sm'
               variant='outline'
-              disabled={plan.targets.length >= 200}
+              disabled={plan.targets.length >= 200 || groups.length === 0}
               onClick={() =>
                 setEditing({
                   index: -1,
@@ -377,6 +373,7 @@ export function ProbeTargetsEditor(props: {
           index={editing.index}
           initial={editing.target}
           channels={props.channels}
+          groups={groups}
           onClose={() => setEditing(null)}
           onApply={(targets) => {
             form.setValue('targets', targets, { shouldDirty: true })
