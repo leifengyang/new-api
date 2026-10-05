@@ -16,10 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { cleanup, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { TopupInfo } from '../../types'
 import { RechargeFormCard } from '../recharge-form-card'
@@ -34,7 +39,58 @@ await i18n.init({
 
 const CHANNEL_URL = 'https://catfk.com/shop/DLAZ9MW9'
 
-afterEach(cleanup)
+it('isolates reminder state when the account changes during a save', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { shown_count: 0, show_guide: true } },
+  })
+  let finishFirst!: (value: unknown) => void
+  vi.spyOn(api, 'post')
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve
+        })
+    )
+    .mockResolvedValue({
+      data: { success: true, data: { shown_count: 1, show_guide: true } },
+    })
+  const user = userEvent.setup()
+  renderCard({ topupInfo: makeTopupInfo(), topupLink: CHANNEL_URL })
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  await user.click(getChannel())
+  await waitFor(() => expect(api.post).toHaveBeenCalledOnce())
+  act(() =>
+    useAuthStore
+      .getState()
+      .auth.setUser({ id: 2, username: 'second-user', role: 1 })
+  )
+  await act(async () =>
+    finishFirst({
+      data: { success: true, data: { shown_count: 3, show_guide: true } },
+    })
+  )
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  await user.click(getChannel())
+  expect(await screen.findByRole('dialog')).toBeInTheDocument()
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2))
+})
+
+const clients: QueryClient[] = []
+beforeEach(() => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'guide-user', role: 1 })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: { shown_count: 3, show_guide: false } },
+  })
+})
+afterEach(() => {
+  cleanup()
+  for (const client of clients) client.clear()
+  clients.length = 0
+  useAuthStore.getState().auth.setUser(null)
+})
 
 // Button 的 render 会把 role="button" 一并交给渲染出来的 <a>（和概览页
 // api-info-item 的外链同一个写法），所以这里按 aria-label 取，再自己确认它
@@ -65,26 +121,32 @@ function renderCard(options: {
   topupAmount?: number
 }) {
   const onPaymentMethodSelect = vi.fn()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  clients.push(client)
   render(
-    <I18nextProvider i18n={i18n}>
-      <RechargeFormCard
-        topupInfo={options.topupInfo}
-        presetAmounts={[]}
-        selectedPreset={null}
-        onSelectPreset={vi.fn()}
-        topupAmount={options.topupAmount ?? 50}
-        onTopupAmountChange={vi.fn()}
-        paymentAmount={50}
-        calculating={false}
-        onPaymentMethodSelect={onPaymentMethodSelect}
-        paymentLoading={null}
-        redemptionCode=''
-        onRedemptionCodeChange={vi.fn()}
-        onRedeem={vi.fn()}
-        redeeming={false}
-        topupLink={options.topupLink}
-      />
-    </I18nextProvider>
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <RechargeFormCard
+          topupInfo={options.topupInfo}
+          presetAmounts={[]}
+          selectedPreset={null}
+          onSelectPreset={vi.fn()}
+          topupAmount={options.topupAmount ?? 50}
+          onTopupAmountChange={vi.fn()}
+          paymentAmount={50}
+          calculating={false}
+          onPaymentMethodSelect={onPaymentMethodSelect}
+          paymentLoading={null}
+          redemptionCode=''
+          onRedemptionCodeChange={vi.fn()}
+          onRedeem={vi.fn()}
+          redeeming={false}
+          topupLink={options.topupLink}
+        />
+      </I18nextProvider>
+    </QueryClientProvider>
   )
   return { onPaymentMethodSelect }
 }
@@ -103,7 +165,7 @@ it('renders the external channel next to the gateway methods as a new-tab link',
   expect(screen.getByRole('button', { name: 'Alipay' })).toBeInTheDocument()
 })
 
-it('keeps the external channel clickable when the amount is below the gateway minimum', () => {
+it('keeps the external channel clickable when the amount is below the gateway minimum', async () => {
   renderCard({
     topupInfo: makeTopupInfo(),
     topupLink: CHANNEL_URL,
@@ -112,7 +174,7 @@ it('keeps the external channel clickable when the amount is below the gateway mi
 
   // 金额在店里选，所以网关的最低金额限制不该传染给外部渠道。
   expect(screen.getByRole('button', { name: /Alipay/ })).toBeDisabled()
-  expect(getChannel()).toBeEnabled()
+  await waitFor(() => expect(getChannel()).toBeEnabled())
 })
 
 it('shows only the external channel when no gateway is actually switched on', () => {
@@ -166,4 +228,87 @@ it('renders no channel when the link is missing, blank or not http(s)', () => {
     expect(screen.queryByLabelText('Online Topup')).toBeNull()
     cleanup()
   }
+})
+
+it('shows the three payment steps before navigation and keeps reminding after dismissal until three views', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { shown_count: 0, show_guide: true } },
+  })
+  let count = 0
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({
+    data: { success: true, data: { shown_count: ++count, show_guide: true } },
+  }))
+  const user = userEvent.setup()
+  renderCard({ topupInfo: makeTopupInfo(), topupLink: CHANNEL_URL })
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  for (let view = 1; view <= 3; view++) {
+    await user.click(getChannel())
+    expect(
+      await screen.findByRole('dialog', { name: 'Read before paying' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Payment alone does not credit your balance')
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('img')).toHaveLength(3)
+    const proceed = screen.getByRole('button', {
+      name: 'Got it, continue to payment',
+    })
+    expect(proceed).toHaveAttribute('href', CHANNEL_URL)
+    expect(proceed).toHaveAttribute('rel', 'noopener noreferrer')
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(view))
+    await user.click(screen.getByRole('button', { name: 'Close for now' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(getChannel()).toBeEnabled())
+  }
+  // Observe the default link action without actually navigating in jsdom.
+  let wasPrevented = true
+  const stopNavigation = (event: MouseEvent) => {
+    wasPrevented = event.defaultPrevented
+    event.preventDefault()
+  }
+  document.addEventListener('click', stopNavigation)
+  await user.click(getChannel())
+  document.removeEventListener('click', stopNavigation)
+  expect(wasPrevented).toBe(false)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(post).toHaveBeenCalledTimes(3)
+})
+
+it('does not consume reminders just by opening the wallet or clicking a gateway payment method', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { shown_count: 0, show_guide: true } },
+  })
+  const post = vi.spyOn(api, 'post')
+  const user = userEvent.setup()
+  const { onPaymentMethodSelect } = renderCard({
+    topupInfo: makeTopupInfo(),
+    topupLink: CHANNEL_URL,
+  })
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  await user.click(screen.getByRole('button', { name: 'Alipay' }))
+  expect(onPaymentMethodSelect).toHaveBeenCalledOnce()
+  expect(post).not.toHaveBeenCalled()
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it('keeps the guide readable and the payment link available when saving the view fails', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { shown_count: 0, show_guide: true } },
+  })
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: false, message: 'Unable to save reminder' },
+  })
+  const user = userEvent.setup()
+  renderCard({ topupInfo: makeTopupInfo(), topupLink: CHANNEL_URL })
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  await user.click(getChannel())
+  expect(await screen.findByRole('dialog')).toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Got it, continue to payment' })
+  ).toHaveAttribute('href', CHANNEL_URL)
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await waitFor(() => expect(getChannel()).toBeEnabled())
+  await user.click(getChannel())
+  expect(await screen.findByRole('dialog')).toBeInTheDocument()
 })

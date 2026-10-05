@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Gift, Loader2, Receipt, ShoppingCart, WalletCards } from 'lucide-react'
+import { Gift, Loader2, Receipt, WalletCards } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -53,6 +53,7 @@ import type {
   WaffoPayMethod,
 } from '../types'
 import { CreemProductsSection } from './creem-products-section'
+import { ExternalTopupButton } from './external-topup-button'
 
 interface RechargeFormCardProps {
   topupInfo: TopupInfo | null
@@ -402,30 +403,7 @@ export function RechargeFormCard({
                       )
                     })}
                   {hasExternalTopup && (
-                    // 金额在店里选，所以这个渠道不看上面的充值金额，也不受网关
-                    // 下单状态影响：它是条链接，永远可点。
-                    <Button
-                      variant='outline'
-                      aria-label={t('Online Topup')}
-                      className='min-h-14 min-w-0 justify-start gap-2 rounded-lg px-3 py-2 text-left'
-                      render={
-                        <a
-                          href={externalTopupUrl}
-                          target='_blank'
-                          rel='noopener noreferrer'
-                        />
-                      }
-                    >
-                      <ShoppingCart className='h-4 w-4' />
-                      <span className='flex min-w-0 flex-col items-start gap-0.5'>
-                        <span className='max-w-full truncate'>
-                          {t('Online Topup')}
-                        </span>
-                        <span className='text-muted-foreground max-w-full truncate text-[11px] leading-4 font-normal'>
-                          {t('Buy a code, then redeem below')}
-                        </span>
-                      </span>
-                    </Button>
+                    <ExternalTopupButton url={externalTopupUrl} />
                   )}
                 </div>
               ) : null}
