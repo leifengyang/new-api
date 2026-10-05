@@ -196,6 +196,8 @@ export function TextOutputPreview(props: {
 export function RecordUsage(props: {
   record: DegradationWatchRecord
   onInputClick?: () => void
+  inputExpanded?: boolean
+  inputControls?: string
 }) {
   const { t, i18n } = useTranslation()
   const record = props.record
@@ -224,7 +226,11 @@ export function RecordUsage(props: {
             variant='ghost'
             className='h-auto min-w-0 flex-col items-start gap-0 rounded-lg bg-emerald-500/10 px-3 py-2 text-left text-emerald-700 hover:bg-emerald-500/20 hover:text-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-200'
             aria-label={t('View input details')}
-            aria-haspopup='dialog'
+            aria-haspopup={
+              props.inputExpanded === undefined ? 'dialog' : undefined
+            }
+            aria-expanded={props.inputExpanded}
+            aria-controls={props.inputControls}
             onClick={props.onInputClick}
           >
             {inputContent}

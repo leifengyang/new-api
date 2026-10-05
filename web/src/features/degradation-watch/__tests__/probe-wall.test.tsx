@@ -55,8 +55,12 @@ const record: DegradationWatchRecord = {
 }
 let records: DegradationWatchRecord[]
 let since = 0
+let drawings: DegradationWatchRecord[] = []
+let failOlderDrawings = false
 beforeEach(() => {
   since = 0
+  drawings = []
+  failOlderDrawings = false
   records = [
     { ...record, id: 7, success: false, status: 'running' },
     {
@@ -79,12 +83,42 @@ beforeEach(() => {
           },
         }
       }
+      if (
+        config.params.probe_id === 'drawing' &&
+        config.params.before &&
+        failOlderDrawings
+      ) {
+        throw new Error('offline')
+      }
       return {
         data: {
           success: true,
           data: {
             since,
             probes: [
+              ...(drawings.length
+                ? [
+                    {
+                      id: 'drawing',
+                      name: 'Drawing',
+                      kind: 'drawing',
+                      enabled: true,
+                      interval_minutes: 60,
+                      stats: {
+                        passed: 7,
+                        mismatched: 0,
+                        errors: 0,
+                        avg_elapsed_ms: 1200,
+                      },
+                      records:
+                        config.params.before &&
+                        config.params.probe_id === 'drawing'
+                          ? [{ ...drawings[0], id: 90 }]
+                          : drawings,
+                      next_before: config.params.before ? 0 : 95,
+                    },
+                  ]
+                : []),
               {
                 id: 'sanae',
                 name: 'Sanae',
@@ -103,6 +137,21 @@ beforeEach(() => {
                 next_before: config.params.before ? 0 : 5,
               },
             ],
+          },
+        },
+      }
+    }
+    if (String(url).endsWith('/html')) {
+      return { data: { success: true, data: { html: '<html><svg/></html>' } } }
+    }
+    if (String(url).startsWith('/api/degradation_watch/records/1')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            record: drawings[0],
+            prompt: 'saved drawing prompt',
+            output: '<html><svg>full drawing output</svg></html>',
           },
         },
       }
@@ -140,7 +189,9 @@ function setup() {
 test('wall excludes errors from pass rate, shows live tokens and fetches details only when selected', async () => {
   const { view, client } = setup()
   const lane = within(
-    await screen.findByRole('article', { name: 'alpha / sol' })
+    await within(
+      await screen.findByRole('region', { name: 'Text probes' })
+    ).findByRole('article', { name: 'alpha / sol' })
   )
   expect(await lane.findByText('50%')).toBeInTheDocument()
   expect(lane.getByText('Input tokens: 15')).toBeInTheDocument()
@@ -152,10 +203,10 @@ test('wall excludes errors from pass rate, shows live tokens and fetches details
   expect(screen.getByText('expected answer')).toBeInTheDocument()
   expect(screen.getByText('full model response')).toBeInTheDocument()
   expect(
-    within(screen.getByRole('dialog')).getAllByRole('button', {
-      name: 'Copy to clipboard',
+    within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Copy prompt',
     })
-  ).toHaveLength(2)
+  ).toBeInTheDocument()
   view.unmount()
   client.clear()
 })
@@ -163,7 +214,9 @@ test('wall excludes errors from pass rate, shows live tokens and fetches details
 test('older history is loaded on demand, stays anchored, and can return to live records', async () => {
   const { view, client } = setup()
   const lane = within(
-    await screen.findByRole('article', { name: 'alpha / sol' })
+    await within(
+      await screen.findByRole('region', { name: 'Text probes' })
+    ).findByRole('article', { name: 'alpha / sol' })
   )
   fireEvent.click(await lane.findByRole('button', { name: 'Load more' }))
   expect(
@@ -194,7 +247,9 @@ test('older history is loaded on demand, stays anchored, and can return to live 
 test('expired cached history disappears while active attempts remain visible', async () => {
   const { view, client } = setup()
   const lane = within(
-    await screen.findByRole('article', { name: 'alpha / sol' })
+    await within(
+      await screen.findByRole('region', { name: 'Text probes' })
+    ).findByRole('article', { name: 'alpha / sol' })
   )
   fireEvent.click(await lane.findByRole('button', { name: 'Load more' }))
   const history = within(lane.getByLabelText('Detection history'))
@@ -205,6 +260,127 @@ test('expired cached history disappears while active attempts remain visible', a
   })
   await waitFor(() => expect(history.getAllByRole('button')).toHaveLength(1))
   expect(history.getByRole('button', { name: /· Running/ })).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('drawing lanes show five cards, append on demand and reset to five when returning live', async () => {
+  drawings = [100, 99, 98, 97, 96, 95].map((id) => ({
+    ...record,
+    id,
+    probe_id: 'drawing',
+    probe_name: 'Drawing',
+    probe_kind: 'drawing',
+  }))
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  const history = within(
+    await section.findByRole('region', { name: 'Drawing history' })
+  )
+  expect(history.getAllByRole('button', { name: 'View artwork' })).toHaveLength(
+    5
+  )
+  expect(
+    within(screen.getByRole('region', { name: 'Text probes' })).queryByRole(
+      'button',
+      { name: 'View artwork' }
+    )
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalledWith(
+    '/api/degradation_watch/records/95/html'
+  )
+  fireEvent.click(history.getByRole('button', { name: 'Load more' }))
+  expect(
+    await history.findAllByRole('button', { name: 'View artwork' })
+  ).toHaveLength(6)
+  fireEvent.click(history.getByRole('button', { name: 'Load more' }))
+  await waitFor(() =>
+    expect(
+      history.getAllByRole('button', { name: 'View artwork' })
+    ).toHaveLength(7)
+  )
+  expect(
+    history.queryByRole('button', { name: 'Load more' })
+  ).not.toBeInTheDocument()
+  drawings = [{ ...drawings[0], id: 101 }, ...drawings]
+  await act(async () => {
+    await client.refetchQueries({ queryKey: ['degradation-watch', 'monitor'] })
+  })
+  expect(history.getAllByRole('button', { name: 'View artwork' })).toHaveLength(
+    7
+  )
+  fireEvent.click(section.getByRole('button', { name: 'Return to live' }))
+  expect(history.getAllByRole('button', { name: 'View artwork' })).toHaveLength(
+    5
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('drawing input opens its saved prompt and the large dialog exposes full output', async () => {
+  drawings = [
+    {
+      ...record,
+      id: 100,
+      probe_kind: 'drawing',
+      probe_id: 'drawing',
+      probe_name: 'Drawing',
+    },
+  ]
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  fireEvent.click(await section.findByRole('button', { name: 'View artwork' }))
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Drawing check details' })
+  )
+  const input = dialog.getByRole('button', { name: 'View input details' })
+  expect(input).toHaveAttribute('aria-expanded', 'false')
+  expect(dialog.queryByText('saved drawing prompt')).not.toBeInTheDocument()
+  fireEvent.click(input)
+  expect(await dialog.findByText('saved drawing prompt')).toBeInTheDocument()
+  expect(input).toHaveAttribute('aria-expanded', 'true')
+  fireEvent.click(dialog.getByRole('tab', { name: 'Full output' }))
+  expect(
+    await dialog.findByText('<html><svg>full drawing output</svg></html>')
+  ).toBeInTheDocument()
+  expect(
+    dialog.getAllByRole('button', { name: 'Copy full output' }).length
+  ).toBeGreaterThan(0)
+  view.unmount()
+  client.clear()
+})
+
+test('failed older drawing loads keep existing cards and allow retry', async () => {
+  drawings = [
+    {
+      ...record,
+      id: 100,
+      probe_kind: 'drawing',
+      probe_id: 'drawing',
+      probe_name: 'Drawing',
+    },
+  ]
+  failOlderDrawings = true
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  fireEvent.click(await section.findByRole('button', { name: 'Load more' }))
+  const retry = await section.findByRole('button', { name: 'Retry' })
+  expect(section.getAllByRole('button', { name: 'View artwork' })).toHaveLength(
+    1
+  )
+  failOlderDrawings = false
+  fireEvent.click(retry)
+  await waitFor(() =>
+    expect(
+      section.getAllByRole('button', { name: 'View artwork' })
+    ).toHaveLength(2)
+  )
   view.unmount()
   client.clear()
 })

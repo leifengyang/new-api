@@ -16,15 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useIsAdmin } from '@/hooks/use-admin'
+import { formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import {
   useDegradationWatchRecord,
@@ -34,10 +39,11 @@ import {
 import { probeVerdict } from '../lib/probes'
 import type { DegradationWatchRecord } from '../types'
 import { ArtworkFrame } from './artwork-frame'
-import { RecordUsage } from './record-card'
+import { RecordUsage, TextOutputPreview } from './record-card'
 
 export function ProbeRecordDialog(props: {
   record: DegradationWatchRecord
+  initialInputOpen?: boolean
   onClose: () => void
 }) {
   const { t } = useTranslation()
@@ -47,7 +53,8 @@ export function ProbeRecordDialog(props: {
   const record = detail.data?.record ?? props.record
   const drawing = (record.probe_kind || props.record.probe_kind) === 'drawing'
   const html = useRecordHtml(record.id, drawing && record.success)
-  const [source, setSource] = useState(false)
+  const [inputOpen, setInputOpen] = useState(props.initialInputOpen ?? false)
+  const inputId = useId()
   const labels = {
     passed: drawing ? t('Drawing generated') : t('Passed'),
     mismatch: t('Answer or drawing mismatch'),
@@ -55,14 +62,49 @@ export function ProbeRecordDialog(props: {
     running: t('Running'),
     queued: t('Queued'),
   }
+  const prompt =
+    detail.data?.prompt || t('Prompt not recorded for legacy checks')
+  const output = detail.data?.output || html.data || ''
+  let preview = <LoadingState className='size-full min-h-0' />
+  if (html.isError) {
+    preview = (
+      <ErrorState
+        title={t('Failed to load the artwork')}
+        onRetry={() => void html.refetch()}
+      />
+    )
+  } else if (html.data) {
+    preview = <ArtworkFrame html={html.data} title={record.model_name} />
+  }
+  const input = (
+    <section className='min-w-0 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3'>
+      <div className='mb-2 flex items-center justify-between text-sm font-medium'>
+        {t('Prompt snapshot')}
+        <CopyButton
+          value={detail.data?.prompt ?? ''}
+          aria-label={t('Copy prompt')}
+        />
+      </div>
+      {detail.isPending ? (
+        <LoadingState className='min-h-16' />
+      ) : (
+        <pre className='max-h-64 overflow-auto text-xs leading-relaxed break-all whitespace-pre-wrap'>
+          {prompt}
+        </pre>
+      )}
+    </section>
+  )
   return (
     <Dialog
       open
       onOpenChange={(open) => {
         if (!open) props.onClose()
       }}
-      title={`${record.group_name || props.record.group_name || ''} · ${record.model_name}`}
-      contentClassName='sm:max-w-5xl'
+      title={drawing ? t('Drawing check details') : t('Probe details')}
+      description={`${record.group_name || props.record.group_name || ''} · ${record.model_name} · ${formatTimestampToDate(record.created_at)}`}
+      contentClassName={
+        drawing ? 'sm:max-w-[min(1440px,95vw)]' : 'sm:max-w-3xl'
+      }
       footer={
         admin ? (
           <Button
@@ -80,82 +122,132 @@ export function ProbeRecordDialog(props: {
         ) : undefined
       }
     >
-      <div className='flex flex-col gap-4'>
+      <div className='space-y-4'>
         <div className='flex flex-wrap items-center gap-2'>
           <Badge variant='secondary'>
             {record.probe_name || props.record.probe_name}
           </Badge>
-          <Badge variant='outline'>{labels[probeVerdict(record)]}</Badge>
+          <Badge
+            variant='outline'
+            className={cn(
+              probeVerdict(record) === 'passed' &&
+                'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+            )}
+          >
+            {labels[probeVerdict(record)]}
+          </Badge>
+          <Badge variant='outline'>
+            {t('Reasoning effort')}: {record.reasoning_effort || '—'}
+          </Badge>
         </div>
-        <RecordUsage record={record} />
         {detail.isError && (
           <ErrorState
             title={t('Failed to load the artwork')}
             onRetry={() => void detail.refetch()}
           />
         )}
-        <div className='grid gap-3 md:grid-cols-2'>
-          <section className='rounded-xl border p-3'>
-            <div className='flex items-center justify-between text-sm font-medium'>
-              {t('Prompt')}
-              <CopyButton value={detail.data?.prompt ?? ''} />
-            </div>
-            <pre className='max-h-40 overflow-auto text-xs leading-relaxed whitespace-pre-wrap'>
-              {detail.data?.prompt ||
-                t('Prompt not recorded for legacy checks')}
-            </pre>
-          </section>
-          {!drawing && (
-            <section className='rounded-xl border p-3'>
-              <div className='mb-3 text-sm font-medium'>
-                {t('Expected answer')}
-              </div>
-              <pre className='text-sm break-all whitespace-pre-wrap'>
-                {detail.data?.expected ?? ''}
-              </pre>
-              <p className='text-muted-foreground mt-2 text-xs'>
-                {detail.data?.match === 'contains'
-                  ? t('Contains answer')
-                  : t('Exact match (trim whitespace)')}
-              </p>
-            </section>
+        <div
+          className={cn(
+            'grid min-w-0 gap-5',
+            drawing && 'lg:grid-cols-[minmax(0,1.6fr)_minmax(18rem,1fr)]'
           )}
-        </div>
-        {record.error_details && (
-          <section className='rounded-xl border border-amber-400/30 bg-amber-500/5 p-3'>
-            <div className='flex items-center justify-between text-sm font-medium'>
-              {t('Error details')}
-              <CopyButton value={record.error_details} />
-            </div>
-            <pre className='max-h-64 overflow-auto text-xs leading-relaxed break-all whitespace-pre-wrap'>
-              {record.error_details}
-            </pre>
-          </section>
-        )}
-        <div className='flex items-center justify-between gap-2'>
-          <span className='text-sm font-medium'>{t('Model response')}</span>
-          <div className='flex items-center gap-2'>
-            {drawing && record.success && (
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => setSource(!source)}
-              >
-                {source ? t('Play') : t('View source')}
-              </Button>
+        >
+          <div
+            className={cn(
+              'min-w-0 space-y-4',
+              drawing && 'lg:col-start-2 lg:row-start-1'
             )}
-            <CopyButton value={detail.data?.output || html.data || ''} />
+          >
+            <RecordUsage
+              record={record}
+              onInputClick={
+                drawing ? () => setInputOpen((open) => !open) : undefined
+              }
+              inputExpanded={drawing ? inputOpen : undefined}
+              inputControls={drawing ? inputId : undefined}
+            />
+            {drawing ? (
+              <Collapsible open={inputOpen} onOpenChange={setInputOpen}>
+                <CollapsibleContent id={inputId}>{input}</CollapsibleContent>
+              </Collapsible>
+            ) : (
+              input
+            )}
+            {!drawing && (
+              <section className='rounded-xl border p-3'>
+                <h3 className='mb-2 text-sm font-medium'>
+                  {t('Expected answer')}
+                </h3>
+                <pre className='max-h-40 overflow-auto text-sm break-all whitespace-pre-wrap'>
+                  {detail.data?.expected ?? ''}
+                </pre>
+                <p className='text-muted-foreground mt-2 text-xs'>
+                  {detail.data?.match === 'contains'
+                    ? t('Contains answer')
+                    : t('Exact match (trim whitespace)')}
+                </p>
+              </section>
+            )}
+            {record.error_details && (
+              <section className='rounded-xl border border-amber-400/30 bg-amber-500/5 p-3'>
+                <div className='flex items-center justify-between text-sm font-medium'>
+                  {t('Error details')}
+                  <CopyButton value={record.error_details} />
+                </div>
+                <pre className='max-h-64 overflow-auto text-xs leading-relaxed break-all whitespace-pre-wrap'>
+                  {record.error_details}
+                </pre>
+              </section>
+            )}
+          </div>
+          <div
+            className={cn(
+              'min-w-0',
+              drawing && 'lg:col-start-1 lg:row-start-1'
+            )}
+          >
+            {drawing ? (
+              <Tabs defaultValue={record.success ? 'preview' : 'output'}>
+                <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
+                  <TabsList aria-label={t('Model response')}>
+                    <TabsTrigger value='preview' disabled={!record.success}>
+                      {t('Preview')}
+                    </TabsTrigger>
+                    <TabsTrigger value='output'>{t('Full output')}</TabsTrigger>
+                  </TabsList>
+                  <CopyButton
+                    value={output}
+                    variant='outline'
+                    size='sm'
+                    aria-label={t('Copy full output')}
+                  >
+                    {t('Copy full output')}
+                  </CopyButton>
+                </div>
+                <TabsContent value='preview'>
+                  <div className='aspect-[16/10] max-h-[65dvh] overflow-hidden rounded-xl border'>
+                    {preview}
+                  </div>
+                </TabsContent>
+                <TabsContent value='output'>
+                  <div className='h-[min(60dvh,36rem)] overflow-hidden rounded-xl border'>
+                    <TextOutputPreview
+                      output={output}
+                      title={t('Model response')}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            ) : (
+              <div className='max-h-[40dvh] overflow-auto rounded-xl border'>
+                <TextOutputPreview
+                  output={output}
+                  title={t('Model response')}
+                />
+              </div>
+            )}
           </div>
         </div>
-        {drawing && record.success && !source && html.data ? (
-          <div className='aspect-[16/10] overflow-hidden rounded-xl border'>
-            <ArtworkFrame html={html.data} title={record.model_name} />
-          </div>
-        ) : (
-          <pre className='bg-muted/50 max-h-[50dvh] min-h-24 overflow-auto rounded-xl p-4 text-xs leading-relaxed break-all whitespace-pre-wrap'>
-            {detail.data?.output || t('Waiting for model output...')}
-          </pre>
-        )}
       </div>
     </Dialog>
   )
