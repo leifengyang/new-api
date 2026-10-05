@@ -353,6 +353,7 @@ func migrateDB() error {
 		&Log{},
 		&Midjourney{},
 		&TopUp{},
+		&PaymentGuideProgress{},
 		&InviteRebate{},
 		&QuotaData{},
 		&Task{},

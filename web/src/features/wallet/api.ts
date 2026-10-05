@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   RedemptionRequest,
@@ -42,6 +43,18 @@ import type {
 // ============================================================================
 // Wallet API Functions
 // ============================================================================
+
+type PaymentGuideStatus = { shown_count: number; show_guide: boolean }
+
+export async function getPaymentGuide(): Promise<PaymentGuideStatus> {
+  const response = await api.get('/api/user/topup/guide')
+  return requireServerSuccess(response.data).data
+}
+
+export async function recordPaymentGuide(): Promise<PaymentGuideStatus> {
+  const response = await api.post('/api/user/topup/guide')
+  return requireServerSuccess(response.data).data
+}
 
 /**
  * Check if API response is successful
