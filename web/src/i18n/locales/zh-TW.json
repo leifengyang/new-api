@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "規則 JSON 必須是陣列",
     "Rules match the original model value from the client request body.": "規則匹配客戶端請求體裡的原始 model 值。",
     "Run {{model}} on this channel now": "立即在此渠道執行 {{model}}",
+    "Run {{probe}} now": "立即執行「{{probe}}」",
     "Run all checks": "立即檢測全部",
     "Run all now": "全部立即檢測",
     "Run background checks using the selected test mode": "依所選檢查模式在背景執行檢查",

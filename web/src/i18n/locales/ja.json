@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "ルール JSON は配列である必要があります",
     "Rules match the original model value from the client request body.": "ルールはクライアントリクエスト本文の元の model 値に一致します。",
     "Run {{model}} on this channel now": "このチャネルで {{model}} を今すぐ実行",
+    "Run {{probe}} now": "{{probe}} を今すぐ実行",
     "Run all checks": "すべて検査",
     "Run all now": "すべて今すぐ実行",
     "Run background checks using the selected test mode": "選択したテストモードでバックグラウンド検査を実行します",

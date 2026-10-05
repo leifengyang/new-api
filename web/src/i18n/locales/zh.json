@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "规则 JSON 必须是数组",
     "Rules match the original model value from the client request body.": "规则匹配客户端请求体里的原始 model 值。",
     "Run {{model}} on this channel now": "立即在此渠道运行 {{model}}",
+    "Run {{probe}} now": "立即运行「{{probe}}」",
     "Run all checks": "立即检测全部",
     "Run all now": "全部立即检测",
     "Run background checks using the selected test mode": "按所选检查模式在后台运行检查",

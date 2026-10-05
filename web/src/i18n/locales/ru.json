@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "JSON правил должен быть массивом",
     "Rules match the original model value from the client request body.": "Правила сопоставляются с исходным значением model из тела клиентского запроса.",
     "Run {{model}} on this channel now": "Запустить {{model}} на этом канале сейчас",
+    "Run {{probe}} now": "Запустить {{probe}} сейчас",
     "Run all checks": "Проверить всё",
     "Run all now": "Запустить все сейчас",
     "Run background checks using the selected test mode": "Выполнять фоновые проверки в выбранном режиме",

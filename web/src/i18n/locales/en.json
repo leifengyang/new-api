@@ -5475,6 +5475,7 @@
     "Rules JSON must be an array": "Rules JSON must be an array",
     "Rules match the original model value from the client request body.": "Rules match the original model value from the client request body.",
     "Run {{model}} on this channel now": "Run {{model}} on this channel now",
+    "Run {{probe}} now": "Run {{probe}} now",
     "Run all checks": "Run all checks",
     "Run all now": "Run all now",
     "Run background checks using the selected test mode": "Run background checks using the selected test mode",
