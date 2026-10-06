@@ -28,7 +28,11 @@ export interface TemporaryMonitor {
   name: string
   base_url: string
   model: string
-  protocol: string
+  protocol: 'chat' | 'responses' | 'anthropic'
+  text_effort?: string
+  drawing_effort?: string
+  max_output_tokens?: number | null
+  has_saved_key?: boolean
   status: 'running' | 'completed' | 'stopped'
   created_at: number
   ends_at: number
@@ -70,7 +74,7 @@ export interface MonitorHistory {
 }
 export async function monitorRequest<T>(
   path: string,
-  method: 'get' | 'post' = 'get',
+  method: 'get' | 'post' | 'put' | 'delete' = 'get',
   data?: unknown
 ): Promise<T> {
   const res = await api.request<{

@@ -254,6 +254,96 @@ func StopTemporaryMonitor(id int) error {
 	})
 }
 
+// The original connection is checked under the lock so a concurrent stop or
+// credential edit cannot restore a cleared key or overwrite a newer destination.
+func UpdateTemporaryMonitor(original TemporaryMonitor, updated *TemporaryMonitor, restart bool, now int64) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if restart {
+			var user User
+			if err := lockForUpdate(tx).First(&user, original.UserID).Error; err != nil {
+				return err
+			}
+		}
+		var current TemporaryMonitor
+		if err := lockForUpdate(tx).First(&current, original.ID).Error; err != nil {
+			return err
+		}
+		if current.Secret != original.Secret || current.BaseURL != original.BaseURL || current.Protocol != original.Protocol || current.Status != original.Status || current.EndsAt != original.EndsAt {
+			return errors.New("monitor changed; reload its configuration and try again")
+		}
+		active := current.Status == "running" && current.EndsAt > now
+		if restart {
+			if active {
+				return errors.New("stop the monitor before restarting")
+			}
+			if updated.Secret == "" {
+				return errors.New("enter an API key to restart monitoring")
+			}
+			var count int64
+			if err := tx.Model(&TemporaryMonitor{}).Where("user_id = ? AND status = ? AND ends_at > ?", current.UserID, "running", now).Count(&count).Error; err != nil {
+				return err
+			}
+			if count >= 10 {
+				return errors.New("at most 10 temporary monitors may run per administrator")
+			}
+			if err := tx.Model(&TemporaryMonitorAttempt{}).Where("monitor_id = ? AND status IN ?", current.ID, []string{"queued", "running"}).Updates(map[string]any{"status": "cancelled", "error": "Previous monitoring session ended", "secret": ""}).Error; err != nil {
+				return err
+			}
+			updated.Status, updated.CreatedAt, updated.EndsAt = "running", now, now+86400
+		} else {
+			updated.Status, updated.CreatedAt, updated.EndsAt = current.Status, current.CreatedAt, current.EndsAt
+			if !active {
+				updated.Secret = ""
+				if updated.Status == "running" {
+					updated.Status = "completed"
+				}
+			}
+		}
+		for _, kind := range []string{"text", "drawing"} {
+			prompt, expected := current.ProbePrompt(kind)
+			if err := tx.Model(&TemporaryMonitorAttempt{}).Where("monitor_id = ? AND kind = ? AND (prompt_captured = ? OR prompt_captured IS NULL)", current.ID, kind, false).Updates(map[string]any{"prompt": prompt, "original_prompt": prompt, "expected": expected, "prompt_captured": true}).Error; err != nil {
+				return err
+			}
+		}
+		updated.ID, updated.UserID = current.ID, current.UserID
+		if err := tx.Model(&current).Select("name", "base_url", "model", "protocol", "text_effort", "drawing_effort", "max_output_tokens", "secret", "text_disabled", "drawing_disabled", "text_interval_minutes", "drawing_interval_minutes", "text_prompt", "text_expected", "drawing_prompt", "status", "created_at", "ends_at").Updates(updated).Error; err != nil {
+			return err
+		}
+		if restart {
+			for _, kind := range []string{"text", "drawing"} {
+				settings, _ := updated.ProbeSettings(kind)
+				if !settings.Enabled {
+					continue
+				}
+				var previous TemporaryMonitorAttempt
+				err := tx.Where("monitor_id = ? AND kind = ? AND slot >= 0", current.ID, kind).Order("slot desc").First(&previous).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				attempt := updated.NewProbeAttempt(kind, now)
+				attempt.Slot, attempt.Status = max(now, previous.Slot+1), "queued"
+				if err := tx.Create(&attempt).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+}
+
+func DeleteTemporaryMonitor(id int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var monitor TemporaryMonitor
+		if err := lockForUpdate(tx).First(&monitor, id).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("monitor_id = ?", id).Delete(&TemporaryMonitorAttempt{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&monitor).Error
+	})
+}
+
 // Claim prioritizes one-shot requests, even when automatic checks are disabled.
 // Scheduled runs use the latest scheduled start, so changing an interval cannot
 // collide with a previous slot. Missed runs are skipped, never replayed in bulk.
@@ -301,8 +391,13 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 				return err
 			}
 		} else {
+			// A queued request starts with the latest configuration; an already
+			// running request keeps the snapshot it originally claimed.
+			fresh := monitor.NewProbeAttempt(kind, now)
+			attempt.Name, attempt.BaseURL, attempt.Model, attempt.Protocol = fresh.Name, fresh.BaseURL, fresh.Model, fresh.Protocol
+			attempt.Effort, attempt.MaxOutputTokens = fresh.Effort, fresh.MaxOutputTokens
 			attempt.Status, attempt.Runner, attempt.StartedAt = "running", runner, now*1000
-			if err := tx.Model(&attempt).Updates(map[string]any{"status": attempt.Status, "runner": runner, "started_at": attempt.StartedAt}).Error; err != nil {
+			if err := tx.Model(&attempt).Updates(map[string]any{"status": attempt.Status, "runner": runner, "started_at": attempt.StartedAt, "name": attempt.Name, "base_url": attempt.BaseURL, "model": attempt.Model, "protocol": attempt.Protocol, "effort": attempt.Effort, "max_output_tokens": attempt.MaxOutputTokens}).Error; err != nil {
 				return err
 			}
 		}

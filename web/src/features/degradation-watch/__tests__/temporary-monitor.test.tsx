@@ -116,6 +116,35 @@ beforeEach(() => {
       monitors = [{ ...monitor, name: 'New trial' }]
       return response(monitors[0])
     }
+    if (url.endsWith('/1/configuration')) {
+      return response({
+        ...monitors[0],
+        has_saved_key: monitors[0].status === 'running',
+        text_effort: 'low',
+        drawing_effort: 'high',
+      })
+    }
+    if (url.endsWith('/1/models')) {
+      return response(['trial-model', 'replacement-model'])
+    }
+    if (url.endsWith('/temporary-monitors/1') && config.method === 'delete') {
+      if (failProbeSave) throw new Error('could not delete')
+      monitors = monitors.filter((monitor) => monitor.id !== 1)
+      return response(null)
+    }
+    if (url.endsWith('/temporary-monitors/1') && config.method === 'put') {
+      if (failProbeSave) throw new Error('could not update')
+      const input = config.data as TemporaryMonitor & { restart: boolean }
+      monitors = [
+        {
+          ...monitors[0],
+          ...input,
+          id: monitors[0].id,
+          status: input.restart ? 'running' : monitors[0].status,
+        },
+      ]
+      return response(monitors[0])
+    }
     if (url.includes('/temporary-monitors?')) {
       return response({ monitors, next_before: 0 })
     }
@@ -212,6 +241,153 @@ function setup() {
   )
   return { client, view }
 }
+
+test('deletion requires confirmation, preserves the monitor on failure and removes it after success', async () => {
+  const { client, view } = setup()
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+  const confirmation = within(
+    screen.getByRole('alertdialog', { name: 'Delete temporary monitor?' })
+  )
+  fireEvent.click(confirmation.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  )
+  expect(api.request).not.toHaveBeenCalledWith(
+    expect.objectContaining({ method: 'delete' })
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  failProbeSave = true
+  fireEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'delete' })
+    )
+  )
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Delete',
+      })
+    ).toBeEnabled()
+  )
+  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  failProbeSave = false
+  fireEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await screen.findByText('No checks to display')
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('editing a running monitor reuses its key and submits independent settings and prompts', async () => {
+  const { client, view } = setup()
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Edit configuration' })
+  )
+  await screen.findByLabelText('Base URL')
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Edit configuration' })
+  )
+  await dialog.findByLabelText('Base URL')
+  expect(dialog.getByLabelText('API key')).toHaveValue('')
+  expect(dialog.getByLabelText('Drawing reasoning effort')).toHaveValue('high')
+  expect(dialog.getByLabelText('Probe reasoning effort')).toHaveValue('low')
+  fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/degradation_watch/temporary-monitors/1/models',
+      })
+    )
+  )
+  fireEvent.change(dialog.getByLabelText('Model'), {
+    target: { value: 'replacement-model' },
+  })
+  fireEvent.change(dialog.getByLabelText('Text probe prompt'), {
+    target: { value: 'updated question' },
+  })
+  fireEvent.change(dialog.getByLabelText('Expected answer'), {
+    target: { value: 'updated answer' },
+  })
+  failProbeSave = true
+  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'put' })
+    )
+  )
+  await waitFor(() =>
+    expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  expect(dialog.getByLabelText('Text probe prompt')).toHaveValue(
+    'updated question'
+  )
+  failProbeSave = false
+  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(api.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      method: 'put',
+      data: expect.objectContaining({
+        model: 'replacement-model',
+        api_key: '',
+        text_effort: 'low',
+        drawing_effort: 'high',
+        text_prompt: 'updated question',
+        text_expected: 'updated answer',
+        restart: false,
+      }),
+    })
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('restarting a stopped monitor requires a new key and keeps the same monitor ID', async () => {
+  monitors = [{ ...monitor, status: 'stopped' }]
+  const { client, view } = setup()
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Restart monitoring' })
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Restart monitoring' })
+  )
+  await dialog.findByLabelText('API key')
+  fireEvent.click(dialog.getByRole('button', { name: 'Save and restart' }))
+  expect(api.request).not.toHaveBeenCalledWith(
+    expect.objectContaining({ method: 'put' })
+  )
+  fireEvent.change(dialog.getByLabelText('API key'), {
+    target: { value: 'replacement-key' },
+  })
+  fireEvent.click(dialog.getByRole('button', { name: 'Save and restart' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(api.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/degradation_watch/temporary-monitors/1',
+      method: 'put',
+      data: expect.objectContaining({
+        restart: true,
+        api_key: 'replacement-key',
+      }),
+    })
+  )
+  await screen.findByRole('button', { name: 'Stop' })
+  view.unmount()
+  client.clear()
+})
 
 test('temporary monitor starts with separate reasoning levels and no remembered self-test profile', async () => {
   monitors = []
