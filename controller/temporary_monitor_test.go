@@ -473,61 +473,73 @@ func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
 }
 
 func TestTemporaryMonitorDispatcherStopsBothInflightProbes(t *testing.T) {
-	db := selfTestDB(t, "sqlite")
-	temporaryRewriterFixture(t)
-	require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
-	secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "dispatcher-secret")
-	require.NoError(t, err)
-	now := common.GetTimestamp()
-	monitor := model.TemporaryMonitor{UserID: 1, Name: "dispatcher", BaseURL: "https://example.com/v1", Model: "test-model", Protocol: "chat", TextEffort: "low", DrawingEffort: "high", Secret: model.LongText(secret), DrawingPrompt: "Draw SVG", Status: "running", CreatedAt: now, EndsAt: now + 86400}
-	monitor.TextDisabled, monitor.DrawingDisabled = true, true
-	require.NoError(t, model.CreateTemporaryMonitor(&monitor))
-	for _, kind := range []string{"text", "drawing"} {
-		_, queueErr := model.QueueTemporaryMonitorProbe(monitor.ID, kind, now)
-		require.NoError(t, queueErr)
-	}
-	entered := make(chan string, 2)
-	oldClient := selfTestClient
-	t.Cleanup(func() { selfTestClient = oldClient })
-	selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
-		raw, readErr := io.ReadAll(req.Body)
-		if readErr != nil {
-			return nil, readErr
-		}
-		entered <- gjson.GetBytes(raw, "reasoning_effort").String()
-		<-req.Context().Done()
-		return nil, req.Context().Err()
-	})}
-	task := &model.SystemTask{TaskID: "temporary-dispatch", Type: temporaryMonitorTaskType, Status: model.SystemTaskStatusRunning, LockedBy: "fixture"}
-	require.NoError(t, db.Create(task).Error)
-	require.NoError(t, db.Create(&model.SystemTaskLock{Type: task.Type, TaskID: task.TaskID, LockedBy: "fixture", LockedUntil: now + 60}).Error)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	finished := make(chan struct{})
-	go func() { temporaryMonitorHandler{}.Run(ctx, task, "fixture"); close(finished) }()
-	t.Cleanup(func() { cancel(); <-finished })
-	efforts := []string{}
-	for range 2 {
-		select {
-		case effort := <-entered:
-			efforts = append(efforts, effort)
-		case <-ctx.Done():
-			t.Fatal("probes did not start")
-		}
-	}
-	assert.ElementsMatch(t, []string{"low", "minimal"}, efforts)
-	require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
-	select {
-	case <-finished:
-	case <-ctx.Done():
-		t.Fatal("stopping monitor did not cancel inflight requests")
-	}
-	var attempts []model.TemporaryMonitorAttempt
-	require.NoError(t, db.Where("monitor_id = ?", monitor.ID).Find(&attempts).Error)
-	require.Len(t, attempts, 2)
-	for _, attempt := range attempts {
-		assert.Equal(t, "cancelled", attempt.Status)
-		assert.Empty(t, attempt.Secret)
+	for _, action := range []string{"stop", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			db := selfTestDB(t, "sqlite")
+			temporaryRewriterFixture(t)
+			require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
+			secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "dispatcher-secret")
+			require.NoError(t, err)
+			now := common.GetTimestamp()
+			monitor := model.TemporaryMonitor{UserID: 1, Name: "dispatcher", BaseURL: "https://example.com/v1", Model: "test-model", Protocol: "chat", TextEffort: "low", DrawingEffort: "high", Secret: model.LongText(secret), DrawingPrompt: "Draw SVG", Status: "running", CreatedAt: now, EndsAt: now + 86400}
+			monitor.TextDisabled, monitor.DrawingDisabled = true, true
+			require.NoError(t, model.CreateTemporaryMonitor(&monitor))
+			for _, kind := range []string{"text", "drawing"} {
+				_, queueErr := model.QueueTemporaryMonitorProbe(monitor.ID, kind, now)
+				require.NoError(t, queueErr)
+			}
+			entered := make(chan string, 2)
+			oldClient := selfTestClient
+			t.Cleanup(func() { selfTestClient = oldClient })
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				raw, readErr := io.ReadAll(req.Body)
+				if readErr != nil {
+					return nil, readErr
+				}
+				entered <- gjson.GetBytes(raw, "reasoning_effort").String()
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			})}
+			task := &model.SystemTask{TaskID: "temporary-dispatch", Type: temporaryMonitorTaskType, Status: model.SystemTaskStatusRunning, LockedBy: "fixture"}
+			require.NoError(t, db.Create(task).Error)
+			require.NoError(t, db.Create(&model.SystemTaskLock{Type: task.Type, TaskID: task.TaskID, LockedBy: "fixture", LockedUntil: now + 60}).Error)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			finished := make(chan struct{})
+			go func() { temporaryMonitorHandler{}.Run(ctx, task, "fixture"); close(finished) }()
+			t.Cleanup(func() { cancel(); <-finished })
+			efforts := []string{}
+			for range 2 {
+				select {
+				case effort := <-entered:
+					efforts = append(efforts, effort)
+				case <-ctx.Done():
+					t.Fatal("probes did not start")
+				}
+			}
+			assert.ElementsMatch(t, []string{"low", "minimal"}, efforts)
+			if action == "delete" {
+				require.NoError(t, model.DeleteTemporaryMonitor(monitor.ID))
+			} else {
+				require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
+			}
+			select {
+			case <-finished:
+			case <-ctx.Done():
+				t.Fatal("stopping monitor did not cancel inflight requests")
+			}
+			var attempts []model.TemporaryMonitorAttempt
+			require.NoError(t, db.Where("monitor_id = ?", monitor.ID).Find(&attempts).Error)
+			if action == "delete" {
+				assert.Empty(t, attempts)
+				return
+			}
+			require.Len(t, attempts, 2)
+			for _, attempt := range attempts {
+				assert.Equal(t, "cancelled", attempt.Status)
+				assert.Empty(t, attempt.Secret)
+			}
+		})
 	}
 }
 
@@ -553,6 +565,10 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			routes.POST("/:id/probes/:kind/prompt", UpdateTemporaryMonitorPrompt)
 			routes.POST("/rewriter", UpdateTemporaryMonitorRewriter)
 			routes.POST("/rewriter/models", FetchTemporaryMonitorRewriterModels)
+			routes.GET("/:id/configuration", GetTemporaryMonitorConfiguration)
+			routes.PUT("/:id", UpdateTemporaryMonitor)
+			routes.DELETE("/:id", DeleteTemporaryMonitor)
+			routes.POST("/:id/models", FetchTemporaryMonitorModels)
 			request := httptest.NewRequest(http.MethodGet, "/temporary-monitors", nil)
 			if tc.token != "" {
 				request.Header.Set("Authorization", "Bearer "+tc.token)
@@ -561,6 +577,15 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			router.ServeHTTP(response, request)
 			assert.Equal(t, tc.code, response.Code, response.Body.String())
 			if tc.role != common.RoleRootUser {
+				for _, endpoint := range []struct{ method, path string }{{"GET", "/1/configuration"}, {"PUT", "/1"}, {"DELETE", "/1"}, {"POST", "/1/models"}} {
+					request := httptest.NewRequest(endpoint.method, "/temporary-monitors"+endpoint.path, strings.NewReader(`{}`))
+					if tc.token != "" {
+						request.Header.Set("Authorization", "Bearer "+tc.token)
+					}
+					result := httptest.NewRecorder()
+					router.ServeHTTP(result, request)
+					assert.Equal(t, tc.code, result.Code)
+				}
 				for _, path := range []string{"/temporary-monitors/1/probes/text", "/temporary-monitors/1/probes/drawing/run", "/temporary-monitors/1/probes/text/prompt", "/temporary-monitors/rewriter", "/temporary-monitors/rewriter/models"} {
 					request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"enabled":true,"interval_minutes":5}`))
 					request.Header.Set("Content-Type", "application/json")
@@ -657,4 +682,95 @@ func TestTemporaryMonitorAPIAndDiagnostics(t *testing.T) {
 	assert.NotContains(t, run.Body.String(), "monitor-api-secret")
 	input["drawing_probe"] = model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 0}
 	assert.Equal(t, 400, selfTestAPI(t, StartTemporaryMonitor, 1, 0, input).Code)
+}
+
+func TestTemporaryMonitorEditRestartDelete(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			require.NoError(t, db.Migrator().DropTable(&model.TemporaryMonitorAttempt{}, &model.TemporaryMonitor{}))
+			require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
+			now := common.GetTimestamp()
+			secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "monitor-edit-secret")
+			require.NoError(t, err)
+			monitor := model.TemporaryMonitor{UserID: 1, Name: "before", Model: "old-model", BaseURL: "https://example.com/v1", Protocol: "chat", Status: "running", Secret: model.LongText(secret), CreatedAt: now - 100, EndsAt: now + 86400, DrawingPrompt: "old drawing", TextPrompt: "old question", TextExpected: "old answer"}
+			require.NoError(t, model.CreateTemporaryMonitor(&monitor))
+			old, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "runner", now)
+			require.NoError(t, err)
+			queued, err := model.QueueTemporaryMonitorProbe(monitor.ID, "drawing", now)
+			require.NoError(t, err)
+			input := map[string]any{"name": "after", "base_url": monitor.BaseURL, "model": "new-model", "protocol": "responses", "text_effort": "low", "drawing_effort": "high", "max_output_tokens": 4096,
+				"text_prompt": "new question", "text_expected": "new answer", "drawing_prompt": "new drawing", "text_probe": model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 5}, "drawing_probe": model.TemporaryProbeSettings{Enabled: false, IntervalMinutes: 20}}
+			response := selfTestAPI(t, GetTemporaryMonitorConfiguration, 2, monitor.ID, nil)
+			require.Equal(t, 200, response.Code)
+			assert.True(t, gjson.Get(response.Body.String(), "data.has_saved_key").Bool())
+			assert.NotContains(t, response.Body.String(), secret)
+			input["base_url"] = "https://example.org/v1"
+			response = selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input)
+			require.Equal(t, 400, response.Code)
+			input["base_url"] = monitor.BaseURL
+			input["max_output_tokens"] = 0
+			assert.Equal(t, 400, selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input).Code)
+			input["max_output_tokens"] = 4096
+			response = selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			assert.NotContains(t, response.Body.String(), "monitor-edit-secret")
+			require.NoError(t, db.First(&monitor, monitor.ID).Error)
+			assert.Equal(t, now+86400, monitor.EndsAt)
+			key, err := service.DecryptSelfTestKey(1, monitor.BaseURL+":"+monitor.Protocol, string(monitor.Secret))
+			require.NoError(t, err)
+			assert.Equal(t, "monitor-edit-secret", key)
+			var retained model.TemporaryMonitorAttempt
+			require.NoError(t, db.First(&retained, old.ID).Error)
+			assert.Equal(t, "old-model", retained.Model)
+			assert.Equal(t, model.LongText("old question"), retained.Prompt)
+			next, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "runner", now)
+			require.NoError(t, err)
+			require.NotNil(t, next)
+			assert.Equal(t, queued.ID, next.ID)
+			assert.Equal(t, "new-model", next.Model)
+			assert.Equal(t, "responses", next.Protocol)
+			assert.Equal(t, "high", next.Effort)
+			assert.Equal(t, model.LongText("new drawing"), next.OriginalPrompt)
+			require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
+			stale := monitor
+			assert.Error(t, model.UpdateTemporaryMonitor(monitor, &stale, false, now))
+			input["restart"] = true
+			assert.Equal(t, 400, selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input).Code)
+			input["restart"] = false
+			input["name"] = "edited while stopped"
+			require.Equal(t, 200, selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input).Code)
+			require.NoError(t, db.First(&monitor, monitor.ID).Error)
+			assert.Equal(t, "stopped", monitor.Status)
+			assert.Empty(t, monitor.Secret)
+			input["restart"], input["api_key"] = true, "new-monitor-key"
+			response = selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			assert.Equal(t, "running", gjson.Get(response.Body.String(), "data.status").String())
+			assert.Equal(t, int64(86400), gjson.Get(response.Body.String(), "data.ends_at").Int()-gjson.Get(response.Body.String(), "data.created_at").Int())
+			assert.Equal(t, 400, selfTestAPI(t, UpdateTemporaryMonitor, 2, monitor.ID, input).Code)
+			require.NoError(t, db.First(&retained, old.ID).Error)
+			assert.Equal(t, "cancelled", retained.Status)
+			assert.Equal(t, model.LongText("old question"), retained.Prompt)
+			resumed, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "new-runner", common.GetTimestamp())
+			require.NoError(t, err)
+			require.NotNil(t, resumed)
+			assert.NotEqual(t, old.ID, resumed.ID)
+			assert.Equal(t, model.LongText("new answer"), resumed.Expected)
+			require.NoError(t, db.Model(resumed).Update("status", "succeeded").Error)
+			notDue, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "new-runner", common.GetTimestamp())
+			require.NoError(t, err)
+			assert.Nil(t, notDue)
+			response = selfTestAPI(t, DeleteTemporaryMonitor, 2, monitor.ID, nil)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			var count int64
+			require.NoError(t, db.Model(&model.TemporaryMonitorAttempt{}).Where("monitor_id = ?", monitor.ID).Count(&count).Error)
+			assert.Zero(t, count)
+			assert.Equal(t, 400, selfTestAPI(t, GetTemporaryMonitorConfiguration, 2, monitor.ID, nil).Code)
+			// Late worker completions update only existing running attempts.
+			result := db.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", old.ID, "running", "runner").Update("output", "late result")
+			require.NoError(t, result.Error)
+			assert.Zero(t, result.RowsAffected)
+		})
+	}
 }

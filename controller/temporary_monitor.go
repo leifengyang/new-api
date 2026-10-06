@@ -248,6 +248,121 @@ func StopTemporaryMonitor(c *gin.Context) {
 	selfTestResponse(c, nil, err)
 }
 
+func DeleteTemporaryMonitor(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err == nil {
+		err = model.DeleteTemporaryMonitor(id)
+	}
+	selfTestResponse(c, nil, err)
+}
+
+func GetTemporaryMonitorConfiguration(c *gin.Context) {
+	var monitor model.TemporaryMonitor
+	err := model.DB.Where("id = ?", c.Param("id")).First(&monitor).Error
+	monitor.TextPrompt, monitor.TextExpected = monitor.ProbePrompt("text")
+	selfTestResponse(c, struct {
+		model.TemporaryMonitor
+		HasSavedKey bool `json:"has_saved_key"`
+	}{monitor, monitor.Status == "running" && monitor.EndsAt > common.GetTimestamp() && monitor.Secret != ""}, err)
+}
+
+// Reuse keys only at their existing destination; never expose them to the UI.
+func prepareTemporaryMonitorInput(input selfTestGroupInput, saved model.TemporaryMonitor) (selfTestGroupInput, error) {
+	input.ID, input.RememberKey = 0, false
+	base, err := service.NormalizeSelfTestURL(input.BaseURL)
+	if err != nil {
+		return input, err
+	}
+	input.BaseURL = base
+	if strings.TrimSpace(input.APIKey) == "" && saved.Status == "running" && saved.EndsAt > common.GetTimestamp() && saved.Secret != "" {
+		if base != saved.BaseURL {
+			return input, errors.New("enter a new API key when changing the upstream address")
+		}
+		input.APIKey, err = service.DecryptSelfTestKey(saved.UserID, saved.BaseURL+":"+saved.Protocol, string(saved.Secret))
+	}
+	return input, err
+}
+
+func FetchTemporaryMonitorModels(c *gin.Context) {
+	var input selfTestGroupInput
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	var saved model.TemporaryMonitor
+	if err := model.DB.Where("id = ?", c.Param("id")).First(&saved).Error; err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	input, err := prepareTemporaryMonitorInput(input, saved)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	fetchDiagnosticModels(c, input)
+}
+
+func UpdateTemporaryMonitor(c *gin.Context) {
+	var input struct {
+		selfTestGroupInput
+		TextEffort    string                       `json:"text_effort"`
+		DrawingEffort string                       `json:"drawing_effort"`
+		TextProbe     model.TemporaryProbeSettings `json:"text_probe"`
+		DrawingProbe  model.TemporaryProbeSettings `json:"drawing_probe"`
+		TextPrompt    string                       `json:"text_prompt"`
+		TextExpected  string                       `json:"text_expected"`
+		DrawingPrompt string                       `json:"drawing_prompt"`
+		Restart       bool                         `json:"restart"`
+	}
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	for _, settings := range []model.TemporaryProbeSettings{input.TextProbe, input.DrawingProbe} {
+		if err := settings.Validate(); err != nil {
+			selfTestResponse(c, nil, err)
+			return
+		}
+	}
+	input.TextPrompt, input.TextExpected, input.DrawingPrompt = strings.TrimSpace(input.TextPrompt), strings.TrimSpace(input.TextExpected), strings.TrimSpace(input.DrawingPrompt)
+	if input.TextPrompt == "" || input.DrawingPrompt == "" || input.TextExpected == "" || len([]rune(input.TextPrompt)) > operation_setting.MaxDegradationWatchPromptLength || len([]rune(input.DrawingPrompt)) > operation_setting.MaxDegradationWatchPromptLength || len([]rune(input.TextExpected)) > 2000 {
+		selfTestResponse(c, nil, errors.New("invalid probe prompt or expected answer"))
+		return
+	}
+	var saved model.TemporaryMonitor
+	if err := model.DB.Where("id = ?", c.Param("id")).First(&saved).Error; err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	group, err := prepareTemporaryMonitorInput(input.selfTestGroupInput, saved)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	group.Effort = input.TextEffort
+	drawing := group
+	drawing.Effort = input.DrawingEffort
+	now := common.GetTimestamp()
+	requireKey := input.Restart || (saved.Status == "running" && saved.EndsAt > now)
+	_, attempts, err := prepareSelfTestGroups(saved.UserID, []selfTestGroupInput{group, drawing}, requireKey)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	if attempts[0].Model == "" {
+		selfTestResponse(c, nil, errors.New("model is required"))
+		return
+	}
+	updated := model.TemporaryMonitor{Name: attempts[0].Name, BaseURL: attempts[0].BaseURL, Model: attempts[0].Model, Protocol: attempts[0].Protocol,
+		TextEffort: input.TextEffort, DrawingEffort: input.DrawingEffort, MaxOutputTokens: attempts[0].MaxOutputTokens, Secret: attempts[0].Secret,
+		TextDisabled: !input.TextProbe.Enabled, DrawingDisabled: !input.DrawingProbe.Enabled, TextIntervalMinutes: input.TextProbe.IntervalMinutes, DrawingIntervalMinutes: input.DrawingProbe.IntervalMinutes,
+		TextPrompt: model.LongText(input.TextPrompt), TextExpected: model.LongText(input.TextExpected), DrawingPrompt: model.LongText(input.DrawingPrompt)}
+	err = model.UpdateTemporaryMonitor(saved, &updated, input.Restart, now)
+	// The scheduler also discovers durable running monitors on its next tick.
+	if err == nil && input.Restart {
+		_, _, _ = service.EnqueueSystemTask(temporaryMonitorTaskType, nil)
+	}
+	selfTestResponse(c, updated, err)
+}
+
 func UpdateTemporaryMonitorProbe(c *gin.Context) {
 	var settings model.TemporaryProbeSettings
 	if !bindSelfTest(c, &settings) {
@@ -353,6 +468,11 @@ func (temporaryMonitorHandler) Run(ctx context.Context, task *model.SystemTask, 
 }
 
 func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryMonitor, attempt model.TemporaryMonitorAttempt, runner string) {
+	// A restart can happen between the dispatcher's list and the claim. Read
+	// the current deadline; cancelled attempts are still rejected by active.
+	if err := model.DB.Select("ends_at").First(&monitor, monitor.ID).Error; err != nil {
+		return
+	}
 	ctx, cancel := context.WithDeadline(parent, time.Unix(monitor.EndsAt, 0))
 	defer cancel()
 	ctx, timeoutCancel := context.WithTimeout(ctx, 20*time.Minute)
@@ -369,6 +489,9 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 			return false
 		}
 		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed).Error == nil
+	}
+	if !active(0) {
+		return
 	}
 	if attempt.Kind == "drawing" && attempt.Subject != "" {
 		rewriter, err := model.GetTemporaryMonitorRewriter()
