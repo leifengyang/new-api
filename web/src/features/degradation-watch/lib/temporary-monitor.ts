@@ -1,0 +1,64 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { api } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
+
+import type { ComparisonAttempt } from './comparison'
+
+export interface TemporaryMonitor {
+  id: number
+  name: string
+  base_url: string
+  model: string
+  protocol: string
+  status: 'running' | 'completed' | 'stopped'
+  created_at: number
+  ends_at: number
+  drawing_prompt: string
+}
+export interface MonitorAttempt extends ComparisonAttempt {
+  kind: 'text' | 'drawing'
+  verdict: string
+}
+export interface MonitorHistory {
+  monitor: TemporaryMonitor
+  attempts: MonitorAttempt[]
+  stats: { verdict: string; status: string; count: number }[]
+  next_before: number
+  text_prompt: string
+  expected: string
+}
+export async function monitorRequest<T>(
+  path: string,
+  method: 'get' | 'post' = 'get',
+  data?: unknown
+): Promise<T> {
+  const res = await api.request<{
+    success: boolean
+    message?: string
+    data: T
+  }>({ url: `/api/degradation_watch/temporary-monitors${path}`, method, data })
+  if (!res.data.success) throw createServerError(res.data)
+  return res.data.data
+}
+export const monitorResultSource = {
+  key: 'temporary-monitor',
+  loadAttempt: (id: number) =>
+    monitorRequest<MonitorAttempt>(`/attempts/${id}`),
+}
