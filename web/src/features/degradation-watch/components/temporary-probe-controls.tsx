@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Play, Save } from 'lucide-react'
-import { useId } from 'react'
+import { Play, Save, Pencil } from 'lucide-react'
+import { useId, useState } from 'react'
 import { Controller, useForm, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -35,6 +35,7 @@ import {
   type TemporaryMonitor,
   type TemporaryProbeSettings,
 } from '../lib/temporary-monitor'
+import { TemporaryPromptEditor } from './temporary-prompt-editor'
 
 export function TemporaryProbeFields(props: {
   form: UseFormReturn<TemporaryProbeSettings>
@@ -96,6 +97,7 @@ export function TemporaryProbeControls(props: {
   busy: boolean
 }) {
   const { t } = useTranslation()
+  const [editingPrompt, setEditingPrompt] = useState(false)
   const client = useQueryClient()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const active =
@@ -141,6 +143,15 @@ export function TemporaryProbeControls(props: {
           <Button
             variant='outline'
             size='sm'
+            disabled={!active}
+            onClick={() => setEditingPrompt(true)}
+          >
+            <Pencil className='size-3.5' />
+            {t('Edit probe prompt')}
+          </Button>
+          <Button
+            variant='outline'
+            size='sm'
             disabled={!active || save.isPending || !form.formState.isDirty}
             onClick={() =>
               void form.handleSubmit((value) => save.mutate(value))()
@@ -171,6 +182,13 @@ export function TemporaryProbeControls(props: {
           'Disabling automatic checks lets the current run finish. You can still run a probe once.'
         )}
       </p>
+      {editingPrompt && (
+        <TemporaryPromptEditor
+          monitor={props.monitor}
+          kind={props.kind}
+          onClose={() => setEditingPrompt(false)}
+        />
+      )}
     </div>
   )
 }

@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,7 +71,7 @@ func StartTemporaryMonitor(c *gin.Context) {
 func ListTemporaryMonitors(c *gin.Context) {
 	monitors := []model.TemporaryMonitor{}
 	before, _ := strconv.Atoi(c.Query("before"))
-	query := model.DB.Omit("secret", "drawing_prompt").Order("id desc").Limit(21)
+	query := model.DB.Omit("secret", "drawing_prompt", "text_prompt", "text_expected").Order("id desc").Limit(21)
 	if before > 0 {
 		query = query.Where("id < ?", before)
 	}
@@ -113,19 +115,64 @@ func GetTemporaryMonitor(c *gin.Context) {
 		query = query.Where("id < ?", before)
 	}
 	attempts := []model.TemporaryMonitorAttempt{}
-	err := query.Omit("secret", "output", "html").Order("id desc").Limit(limit + 1).Find(&attempts).Error
+	err := query.Omit("secret", "output", "html", "prompt", "original_prompt", "expected", "rewrite_prompt", "rewrite_result").Order("id desc").Limit(limit + 1).Find(&attempts).Error
 	next := 0
 	if len(attempts) > limit {
 		attempts = attempts[:limit]
 		next = attempts[limit-1].ID
 	}
-	selfTestResponse(c, gin.H{"monitor": monitor, "attempts": attempts, "stats": stats, "next_before": next, "text_prompt": operation_setting.SanaeProbePrompt, "expected": "高市早苗"}, err)
+	textPrompt, expected := monitor.ProbePrompt("text")
+	monitor.TextPrompt, monitor.TextExpected = textPrompt, expected
+	selfTestResponse(c, gin.H{"monitor": monitor, "attempts": attempts, "stats": stats, "next_before": next, "text_prompt": textPrompt, "expected": expected}, err)
 }
 
 func GetTemporaryMonitorAttempt(c *gin.Context) {
 	var attempt model.TemporaryMonitorAttempt
 	err := model.DB.Omit("secret").Where("id = ?", c.Param("id")).First(&attempt).Error
-	selfTestResponse(c, attempt, err)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	if !attempt.PromptCaptured {
+		var monitor model.TemporaryMonitor
+		if err = model.DB.Omit("secret").First(&monitor, attempt.MonitorID).Error; err != nil {
+			selfTestResponse(c, nil, err)
+			return
+		}
+		// An edit freezes legacy inputs before replacing the monitor template.
+		// Re-read after the template to avoid mixing pre-edit and post-edit data.
+		if err = model.DB.Omit("secret").First(&attempt, attempt.ID).Error; err != nil {
+			selfTestResponse(c, nil, err)
+			return
+		}
+		if !attempt.PromptCaptured {
+			attempt.Prompt, attempt.Expected = monitor.ProbePrompt(attempt.Kind)
+			attempt.OriginalPrompt = attempt.Prompt
+		}
+	}
+	var preparation *model.SelfTestAttempt
+	if attempt.RewriteResult != "" {
+		err = common.UnmarshalJsonStr(string(attempt.RewriteResult), &preparation)
+	}
+	selfTestResponse(c, struct {
+		model.TemporaryMonitorAttempt
+		Preparation *model.SelfTestAttempt `json:"preparation,omitempty"`
+	}{attempt, preparation}, err)
+}
+
+func UpdateTemporaryMonitorPrompt(c *gin.Context) {
+	var input struct {
+		Prompt   string `json:"prompt"`
+		Expected string `json:"expected"`
+	}
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	id, err := strconv.Atoi(c.Param("id"))
+	if err == nil {
+		err = model.UpdateTemporaryMonitorPrompt(id, c.Param("kind"), input.Prompt, input.Expected, common.GetTimestamp())
+	}
+	selfTestResponse(c, nil, err)
 }
 
 func StopTemporaryMonitor(c *gin.Context) {
@@ -243,18 +290,66 @@ func (temporaryMonitorHandler) Run(ctx context.Context, task *model.SystemTask, 
 func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryMonitor, attempt model.TemporaryMonitorAttempt, runner string) {
 	ctx, cancel := context.WithDeadline(parent, time.Unix(monitor.EndsAt, 0))
 	defer cancel()
-	prompt := operation_setting.SanaeProbePrompt
-	if attempt.Kind == "drawing" {
-		prompt = string(monitor.DrawingPrompt)
+	ctx, timeoutCancel := context.WithTimeout(ctx, 20*time.Minute)
+	defer timeoutCancel()
+	if !attempt.PromptCaptured {
+		attempt.Prompt, attempt.Expected = monitor.ProbePrompt(attempt.Kind)
 	}
-	round := model.SelfTestRound{Prompt: model.LongText(prompt), TimeoutSeconds: 1200}
+	active := func(elapsed int64) bool {
+		var count int64
+		if err := model.DB.Model(&model.TemporaryMonitor{}).Where("id = ? AND status = ? AND ends_at > ?", monitor.ID, "running", common.GetTimestamp()).Count(&count).Error; err != nil || count == 0 {
+			return false
+		}
+		if err := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Count(&count).Error; err != nil || count == 0 {
+			return false
+		}
+		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed).Error == nil
+	}
+	if attempt.Kind == "drawing" && attempt.Subject != "" {
+		attempt.RewritePrompt = model.LongText(fmt.Sprintf("你是绘画测试提示词编辑器。不要执行绘画，不要输出 HTML 或 SVG 代码。将下面提示词中的主角（例如鹈鹕）换成「%s」，并同步修改该主角的外形特征描述。保持动作、场景、动画、技术要求和测试难度不变。只返回修改后的完整提示词，不要解释、标题或代码围栏。改写后不得残留鹈鹕。\n<原始提示词>\n%s\n</原始提示词>", attempt.Subject, attempt.OriginalPrompt))
+		var preparation model.SelfTestAttempt
+		var persistenceErr error
+		runDiagnosticAttempt(ctx, model.SelfTestRound{Prompt: attempt.RewritePrompt, TimeoutSeconds: 1200}, attempt.SelfTestAttempt, func(result model.SelfTestAttempt, final bool) error {
+			preparation = result
+			encoded, err := common.Marshal(result)
+			if err != nil {
+				persistenceErr = err
+				return err
+			}
+			persistenceErr = model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"rewrite_prompt": attempt.RewritePrompt, "rewrite_result": string(encoded)}).Error
+			return persistenceErr
+		}, active)
+		prompt := strings.TrimSpace(string(preparation.Output))
+		lowerPrompt := strings.ToLower(prompt)
+		errText := string(preparation.Error)
+		if persistenceErr != nil {
+			errText = "Could not save rewritten prompt"
+		}
+		if preparation.Status == "succeeded" && persistenceErr == nil && (prompt == "" || len([]rune(prompt)) > operation_setting.MaxDegradationWatchPromptLength || !strings.Contains(lowerPrompt, strings.ToLower(attempt.Subject)) || strings.Contains(prompt, "鹈鹕") || strings.HasPrefix(lowerPrompt, "<!doctype") || strings.HasPrefix(lowerPrompt, "<html") || strings.HasPrefix(lowerPrompt, "<svg") || strings.HasPrefix(prompt, "```")) {
+			errText = "The rewritten prompt is empty, too long, still contains the original subject, or does not contain the replacement subject"
+		}
+		if errText != "" || preparation.Status != "succeeded" {
+			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Prompt rewrite failed: " + errText})
+			return
+		}
+		if !active(preparation.ElapsedMs) {
+			return
+		}
+		attempt.Prompt = model.LongText(prompt)
+		if err := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"prompt": attempt.Prompt, "phase": "detecting", "elapsed_ms": 0}).Error; err != nil {
+			common.SysError("temporary monitor prompt persistence failed")
+			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Could not save rewritten prompt"})
+			return
+		}
+	}
+	round := model.SelfTestRound{Prompt: attempt.Prompt, TimeoutSeconds: 1200}
 	runDiagnosticAttempt(ctx, round, attempt.SelfTestAttempt, func(result model.SelfTestAttempt, final bool) error {
 		updates := diagnosticAttemptUpdates(result, final)
 		if final {
 			verdict := "error"
 			if result.Status == "succeeded" {
 				record := &model.DegradationWatchRecord{}
-				evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: attempt.Kind, Expected: "高市早苗", Match: "exact"}, string(result.Output))
+				evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: attempt.Kind, Expected: string(attempt.Expected), Match: "exact"}, string(result.Output))
 				verdict = record.Verdict
 				if !record.Success {
 					updates["status"], updates["error"] = "failed", record.FailureReason
@@ -263,15 +358,5 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 			updates["verdict"] = verdict
 		}
 		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error
-	}, func(elapsed int64) bool {
-		var count int64
-		if err := model.DB.Model(&model.TemporaryMonitor{}).Where("id = ? AND status = ? AND ends_at > ?", monitor.ID, "running", common.GetTimestamp()).Count(&count).Error; err != nil || count == 0 {
-			return false
-		}
-		if err := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Count(&count).Error; err != nil || count == 0 {
-			return false
-		}
-		update := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed)
-		return update.Error == nil
-	})
+	}, active)
 }

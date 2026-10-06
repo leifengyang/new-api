@@ -78,10 +78,17 @@ export function ComparisonResult(props: {
       props.source
         ? props.source.loadAttempt(attempt.id)
         : comparisonRequest<ComparisonAttempt>(`/attempts/${attempt.id}`),
-    enabled: player || (inView && (expanded || !active)),
+    enabled:
+      player ||
+      (inputOpen && !!props.source) ||
+      (inView && (expanded || !active)),
     staleTime: active ? 0 : Infinity,
     gcTime: 2 * 60_000,
-    refetchInterval: active && ((inView && expanded) || player) ? 1000 : false,
+    refetchInterval:
+      active &&
+      ((inView && expanded) || player || (inputOpen && !!props.source))
+        ? 1000
+        : false,
   })
   const record = comparisonRecord(attempt)
   const outputLimited = useMemo(() => {
@@ -245,7 +252,7 @@ export function ComparisonResult(props: {
         open={inputOpen}
         onOpenChange={setInputOpen}
         attempt={attempt}
-        prompt={props.prompt}
+        prompt={detail.data?.prompt ?? attempt.prompt ?? props.prompt}
       />
       <ArtworkPlayerDialog
         open={player}

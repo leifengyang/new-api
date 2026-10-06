@@ -28,25 +28,38 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			previous := model.SelfTestProfile{UserID: 1, Name: "retained profile", BaseURL: "https://example.com/v1", Model: "previous"}
 			require.NoError(t, db.Create(&previous).Error)
 			require.NoError(t, db.Migrator().DropTable(&model.TemporaryMonitorAttempt{}, &model.TemporaryMonitor{}))
-			// Exact monitor schema from .30, before independent probe controls.
+			// Released .31 schema, before editable prompts and input snapshots.
 			legacy := struct {
-				ID              int
-				UserID          int    `gorm:"index"`
-				Name            string `gorm:"size:128"`
-				BaseURL         string `gorm:"size:1024"`
-				Model           string `gorm:"size:128"`
-				Protocol        string `gorm:"size:32"`
-				TextEffort      string `gorm:"size:32"`
-				DrawingEffort   string `gorm:"size:32"`
-				MaxOutputTokens *uint
-				Secret          model.LongText
-				DrawingPrompt   model.LongText
-				Status          string `gorm:"size:16;index"`
-				CreatedAt       int64
-				EndsAt          int64 `gorm:"index"`
+				ID                     int
+				UserID                 int    `gorm:"index"`
+				Name                   string `gorm:"size:128"`
+				BaseURL                string `gorm:"size:1024"`
+				Model                  string `gorm:"size:128"`
+				Protocol               string `gorm:"size:32"`
+				TextEffort             string `gorm:"size:32"`
+				DrawingEffort          string `gorm:"size:32"`
+				MaxOutputTokens        *uint
+				Secret                 model.LongText
+				DrawingPrompt          model.LongText
+				TextDisabled           bool
+				DrawingDisabled        bool
+				TextIntervalMinutes    int
+				DrawingIntervalMinutes int
+				Status                 string `gorm:"size:16;index"`
+				CreatedAt              int64
+				EndsAt                 int64 `gorm:"index"`
 			}{UserID: 1, Name: "released monitor", Status: "stopped", Secret: "preserved encrypted key", DrawingPrompt: "retained prompt", EndsAt: common.GetTimestamp() + 86400}
 			require.NoError(t, db.Table("temporary_monitors").AutoMigrate(&legacy))
 			require.NoError(t, db.Table("temporary_monitors").Create(&legacy).Error)
+			legacyAttempt := struct {
+				model.SelfTestAttempt `gorm:"embedded"`
+				MonitorID             int    `gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
+				Kind                  string `gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
+				Slot                  int64  `gorm:"uniqueIndex:idx_temp_monitor_slot"`
+				Verdict               string `gorm:"size:16"`
+			}{MonitorID: legacy.ID, Kind: "drawing", Verdict: "passed", SelfTestAttempt: model.SelfTestAttempt{Status: "succeeded", Output: "retained artwork"}}
+			require.NoError(t, db.Table("temporary_monitor_attempts").AutoMigrate(&legacyAttempt))
+			require.NoError(t, db.Table("temporary_monitor_attempts").Create(&legacyAttempt).Error)
 			for range 2 {
 				require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
 			}
@@ -60,6 +73,13 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			drawingDefaults, err := upgraded.ProbeSettings("drawing")
 			require.NoError(t, err)
 			assert.Equal(t, model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 10}, drawingDefaults)
+			require.NoError(t, db.Model(&upgraded).Update("status", "running").Error)
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(upgraded.ID, "drawing", "new template", "", common.GetTimestamp()))
+			legacyDetail := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, legacyAttempt.ID, nil)
+			require.Equal(t, 200, legacyDetail.Code, legacyDetail.Body.String())
+			assert.Equal(t, "retained prompt", gjson.Get(legacyDetail.Body.String(), "data.prompt").String())
+			assert.Equal(t, "retained artwork", gjson.Get(legacyDetail.Body.String(), "data.output").String())
+			require.NoError(t, db.Where("monitor_id = ?", upgraded.ID).Delete(&model.TemporaryMonitorAttempt{}).Error)
 			require.NoError(t, db.Delete(&upgraded).Error)
 			assert.False(t, (temporaryMonitorHandler{}).Enabled())
 			var retained model.SelfTestProfile
@@ -95,6 +115,8 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			require.NotNil(t, drawing)
 			assert.Equal(t, "low", text.Effort)
 			assert.Equal(t, "high", drawing.Effort)
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new question for later checks", "new answer", now))
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "new drawing template", "", now))
 			var storedAttempt model.TemporaryMonitorAttempt
 			require.NoError(t, db.First(&storedAttempt, text.ID).Error)
 			assert.Empty(t, storedAttempt.Secret)
@@ -118,6 +140,14 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 					output = "高市早苗"
 				} else {
 					assert.Equal(t, "high", gjson.GetBytes(body, "reasoning_effort").String())
+					prompt := gjson.GetBytes(body, "messages.0.content").String()
+					if strings.Contains(prompt, "<原始提示词>") {
+						assert.Contains(t, prompt, string(monitor.DrawingPrompt))
+						assert.NotContains(t, prompt, "new drawing template")
+						output = "Draw " + drawing.Subject + " in a complete HTML SVG"
+					} else {
+						assert.Equal(t, "Draw "+drawing.Subject+" in a complete HTML SVG", prompt)
+					}
 				}
 				raw, marshalErr := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": output}, "finish_reason": "stop"}}, "usage": map[string]any{"prompt_tokens": 15, "completion_tokens": 8}})
 				require.NoError(t, marshalErr)
@@ -129,6 +159,12 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "passed", storedAttempt.Verdict)
 			assert.Equal(t, 15, storedAttempt.InputTokens)
 			assert.Equal(t, "高市早苗", string(storedAttempt.Output))
+			var artwork model.TemporaryMonitorAttempt
+			require.NoError(t, db.First(&artwork, drawing.ID).Error)
+			assert.Equal(t, "passed", artwork.Verdict)
+			assert.Equal(t, "Draw "+drawing.Subject+" in a complete HTML SVG", string(artwork.Prompt))
+			assert.Equal(t, int64(15), gjson.Get(string(artwork.RewriteResult), "input_tokens").Int())
+			assert.NotContains(t, string(artwork.RewriteResult), "temporary-private-key")
 			history := selfTestAPI(t, GetTemporaryMonitor, 1, monitor.ID, nil)
 			require.Equal(t, 200, history.Code, history.Body.String())
 			assert.Equal(t, int64(1), gjson.Get(history.Body.String(), "data.stats.0.count").Int())
@@ -257,6 +293,104 @@ func TestTemporaryMonitorIndependentProbeControls(t *testing.T) {
 	}
 }
 
+func TestTemporaryMonitorEditablePromptSnapshots(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			require.NoError(t, db.Migrator().DropTable(&model.TemporaryMonitorAttempt{}, &model.TemporaryMonitor{}))
+			require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
+			now := common.GetTimestamp()
+			monitor := model.TemporaryMonitor{UserID: 1, Status: "running", CreatedAt: now, EndsAt: now + 86400, Secret: "fixture", TextPrompt: "old question", TextExpected: "old answer", DrawingPrompt: "draw 鹈鹕"}
+			require.NoError(t, model.CreateTemporaryMonitor(&monitor))
+			text, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "worker", now)
+			require.NoError(t, err)
+			require.NotNil(t, text)
+			queued, err := model.QueueTemporaryMonitorProbe(monitor.ID, "drawing", now)
+			require.NoError(t, err)
+			for _, kind := range []string{"text", "drawing"} {
+				response := selfTestAPI(t, func(c *gin.Context) {
+					c.Params = append(c.Params, gin.Param{Key: "kind", Value: kind})
+					UpdateTemporaryMonitorPrompt(c)
+				}, 1, monitor.ID, map[string]any{"prompt": "new " + kind, "expected": "new answer"})
+				require.Equal(t, 200, response.Code, response.Body.String())
+			}
+			var unchanged model.TemporaryMonitorAttempt
+			require.NoError(t, db.First(&unchanged, text.ID).Error)
+			assert.Equal(t, model.LongText("old question"), unchanged.Prompt)
+			assert.Equal(t, model.LongText("old answer"), unchanged.Expected)
+			drawing, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "worker", now)
+			require.NoError(t, err)
+			require.NotNil(t, drawing)
+			assert.Equal(t, queued.ID, drawing.ID)
+			assert.Equal(t, model.LongText("new drawing"), drawing.OriginalPrompt)
+			assert.Empty(t, drawing.Prompt, "drawing input is not sent until rewriting succeeds")
+			require.NoError(t, db.Model(text).Update("status", "succeeded").Error)
+			require.NoError(t, db.Model(drawing).Update("status", "succeeded").Error)
+			next, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "worker", now+180)
+			require.NoError(t, err)
+			require.NotNil(t, next)
+			assert.Equal(t, model.LongText("new text"), next.Prompt)
+			assert.Equal(t, model.LongText("new answer"), next.Expected)
+			secondDrawing, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "worker", now+600)
+			require.NoError(t, err)
+			require.NotNil(t, secondDrawing)
+			assert.NotEqual(t, drawing.Subject, secondDrawing.Subject)
+			for _, tc := range []struct{ kind, prompt, expected string }{{"text", "", "answer"}, {"text", "question", " "}, {"unknown", "question", "answer"}, {"drawing", strings.Repeat("a", 20001), ""}} {
+				assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, tc.kind, tc.prompt, tc.expected, now))
+			}
+			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "expired", "", monitor.EndsAt))
+			require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
+			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "ended", "answer", now))
+		})
+	}
+}
+
+func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		code         int
+	}{
+		{"upstream error", `{"error":"rewrite-private-key: upstream rejected request"}`, 502},
+		{"unchanged subject", "draw 鹈鹕 instead", 200},
+		{"empty output", "", 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := selfTestDB(t, "sqlite")
+			require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
+			secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "rewrite-private-key")
+			require.NoError(t, err)
+			now := common.GetTimestamp()
+			monitor := model.TemporaryMonitor{UserID: 1, Status: "running", CreatedAt: now, EndsAt: now + 86400, Secret: model.LongText(secret), BaseURL: "https://example.com/v1", Model: "test-model", Protocol: "chat", DrawingPrompt: "draw 鹈鹕"}
+			require.NoError(t, model.CreateTemporaryMonitor(&monitor))
+			attempt, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "worker", now)
+			require.NoError(t, err)
+			require.NotNil(t, attempt)
+			oldClient := selfTestClient
+			t.Cleanup(func() { selfTestClient = oldClient })
+			calls := 0
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				calls++
+				body := tc.output
+				if tc.code == 200 {
+					raw, marshalErr := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": tc.output}, "finish_reason": "stop"}}})
+					require.NoError(t, marshalErr)
+					body = string(raw)
+				}
+				return &http.Response{StatusCode: tc.code, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			runTemporaryMonitorAttempt(context.Background(), monitor, *attempt, "worker")
+			assert.Equal(t, 1, calls)
+			response := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, attempt.ID, nil)
+			require.Equal(t, 200, response.Code, response.Body.String())
+			assert.Equal(t, "failed", gjson.Get(response.Body.String(), "data.status").String())
+			assert.Contains(t, gjson.Get(response.Body.String(), "data.error").String(), "Prompt rewrite failed")
+			assert.True(t, gjson.Get(response.Body.String(), "data.preparation").Exists())
+			assert.NotContains(t, response.Body.String(), "rewrite-private-key")
+			assert.Empty(t, gjson.Get(response.Body.String(), "data.prompt").String())
+		})
+	}
+}
+
 func TestTemporaryMonitorDispatcherStopsBothInflightProbes(t *testing.T) {
 	db := selfTestDB(t, "sqlite")
 	require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
@@ -334,6 +468,7 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			routes.GET("", ListTemporaryMonitors)
 			routes.POST("/:id/probes/:kind", UpdateTemporaryMonitorProbe)
 			routes.POST("/:id/probes/:kind/run", RunTemporaryMonitorProbe)
+			routes.POST("/:id/probes/:kind/prompt", UpdateTemporaryMonitorPrompt)
 			request := httptest.NewRequest(http.MethodGet, "/temporary-monitors", nil)
 			if tc.token != "" {
 				request.Header.Set("Authorization", "Bearer "+tc.token)
@@ -342,7 +477,7 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			router.ServeHTTP(response, request)
 			assert.Equal(t, tc.code, response.Code, response.Body.String())
 			if tc.role != common.RoleRootUser {
-				for _, path := range []string{"/temporary-monitors/1/probes/text", "/temporary-monitors/1/probes/drawing/run"} {
+				for _, path := range []string{"/temporary-monitors/1/probes/text", "/temporary-monitors/1/probes/drawing/run", "/temporary-monitors/1/probes/text/prompt"} {
 					request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"enabled":true,"interval_minutes":5}`))
 					request.Header.Set("Content-Type", "application/json")
 					if tc.token != "" {
