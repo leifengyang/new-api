@@ -179,6 +179,34 @@ func readSelfTestEvents(ctx context.Context, body io.Reader, events chan<- selfT
 }
 
 func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attempt model.SelfTestAttempt, runner string) {
+	runDiagnosticAttempt(parent, round, attempt, func(result model.SelfTestAttempt, final bool) error {
+		updates := diagnosticAttemptUpdates(result, final)
+		err := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error
+		if err == nil && final {
+			err = model.FinishSelfTestRound(round.ID)
+		}
+		return err
+	}, func(elapsed int64) bool {
+		var count int64
+		if err := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Count(&count).Error; err != nil || count == 0 {
+			return false
+		}
+		result := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed)
+		return result.Error == nil
+	})
+}
+
+// Both interactive comparisons and temporary monitors use identical protocol,
+// cancellation, redaction and token accounting behavior; storage stays separate.
+func diagnosticAttemptUpdates(attempt model.SelfTestAttempt, final bool) map[string]any {
+	updates := map[string]any{"output": attempt.Output, "elapsed_ms": attempt.ElapsedMs, "first_token_ms": attempt.FirstTokenMs, "input_tokens": attempt.InputTokens, "output_tokens": attempt.OutputTokens, "reasoning_tokens": attempt.ReasoningTokens, "tokens_estimated": attempt.TokensEstimated}
+	if final {
+		updates["status"], updates["error"], updates["html"] = attempt.Status, attempt.Error, attempt.HTML
+	}
+	return updates
+}
+
+func runDiagnosticAttempt(parent context.Context, round model.SelfTestRound, attempt model.SelfTestAttempt, save func(model.SelfTestAttempt, bool) error, active func(int64) bool) {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(round.TimeoutSeconds)*time.Second)
 	defer cancel()
 	started := time.Now()
@@ -201,13 +229,8 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 		}
 		attempt.Output = model.LongText(service.RedactSelfTestSecret(string(attempt.Output), key))
 		attempt.HTML = model.LongText(service.RedactSelfTestSecret(string(attempt.HTML), key))
-		updates := map[string]any{"status": attempt.Status, "error": attempt.Error, "output": attempt.Output, "html": attempt.HTML, "elapsed_ms": attempt.ElapsedMs, "first_token_ms": attempt.FirstTokenMs, "input_tokens": attempt.InputTokens, "output_tokens": attempt.OutputTokens, "reasoning_tokens": attempt.ReasoningTokens, "tokens_estimated": attempt.TokensEstimated}
-		// A stopped task or a replacement lease owner always wins over late writes.
-		if err := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error; err != nil {
-			common.SysError("self-test final result persistence failed")
-		}
-		if err := model.FinishSelfTestRound(round.ID); err != nil {
-			common.SysError("self-test round finalization failed")
+		if err := save(attempt, true); err != nil {
+			common.SysError("diagnostic result persistence failed")
 		}
 	}()
 	key, runErr = service.DecryptSelfTestKey(attempt.UserID, attempt.BaseURL+":"+attempt.Protocol, string(attempt.Secret))
@@ -216,8 +239,12 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 	}
 	attempt.InputTokens = service.CountTextToken(string(round.Prompt), attempt.Model)
 	attempt.TokensEstimated = true
-	if err := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"input_tokens": attempt.InputTokens, "tokens_estimated": true}).Error; err != nil {
+	if err := save(attempt, false); err != nil {
 		runErr = errors.New("could not save initial progress")
+		return
+	}
+	if !active(max(1, time.Since(started).Milliseconds())) {
+		runErr = context.Canceled
 		return
 	}
 	payload := map[string]any{"model": attempt.Model, "stream": true}
@@ -280,12 +307,10 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				var state model.SelfTestAttempt
-				if err := model.DB.Select("status", "runner").First(&state, attempt.ID).Error; err != nil || state.Status != "running" || state.Runner != runner {
+				if !active(time.Since(started).Milliseconds()) {
 					cancel()
 					return
 				}
-				model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", time.Since(started).Milliseconds())
 			}
 		}
 	}()
@@ -440,9 +465,10 @@ func runSelfTestAttempt(parent context.Context, round model.SelfTestRound, attem
 				}
 			case <-ticker.C:
 				applySelfTestProgress(&attempt, raw.Bytes(), string(round.Prompt), started)
-				output := service.RedactSelfTestSecret(string(attempt.Output), key)
-				update := model.DB.Model(&model.SelfTestAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"output": output, "input_tokens": attempt.InputTokens, "output_tokens": attempt.OutputTokens, "reasoning_tokens": attempt.ReasoningTokens, "tokens_estimated": attempt.TokensEstimated, "elapsed_ms": attempt.ElapsedMs, "first_token_ms": attempt.FirstTokenMs})
-				if update.Error != nil {
+				snapshot := attempt
+				snapshot.Output = model.LongText(service.RedactSelfTestSecret(string(attempt.Output), key))
+				updateErr := save(snapshot, false)
+				if updateErr != nil {
 					runErr = errors.New("could not save progress")
 					break streamLoop
 				}

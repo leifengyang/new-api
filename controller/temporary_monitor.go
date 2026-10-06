@@ -1,0 +1,233 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/gin-gonic/gin"
+)
+
+const temporaryMonitorTaskType = "temporary_upstream_monitor"
+
+func StartTemporaryMonitor(c *gin.Context) {
+	var input struct {
+		selfTestGroupInput
+		TextEffort    string `json:"text_effort"`
+		DrawingEffort string `json:"drawing_effort"`
+	}
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	// Temporary credentials must be supplied explicitly, never borrowed from profiles.
+	input.ID, input.RememberKey = 0, false
+	input.Effort = input.TextEffort
+	text := input.selfTestGroupInput
+	input.Effort = input.DrawingEffort
+	_, attempts, err := prepareSelfTestGroups(c.GetInt("id"), []selfTestGroupInput{text, input.selfTestGroupInput}, true)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	now := common.GetTimestamp()
+	monitor := model.TemporaryMonitor{UserID: c.GetInt("id"), Name: attempts[0].Name, BaseURL: attempts[0].BaseURL, Model: attempts[0].Model, Protocol: attempts[0].Protocol,
+		TextEffort: input.TextEffort, DrawingEffort: input.DrawingEffort, MaxOutputTokens: attempts[0].MaxOutputTokens, Secret: attempts[0].Secret,
+		DrawingPrompt: model.LongText(operation_setting.GetDegradationWatchPrompt()), Status: "running", CreatedAt: now, EndsAt: now + 24*60*60}
+	err = model.CreateTemporaryMonitor(&monitor)
+	if err == nil {
+		_, _, err = service.EnqueueSystemTask(temporaryMonitorTaskType, nil)
+	}
+	// A dispatcher failure must not leave a paid schedule the caller thinks failed.
+	if err != nil && monitor.ID > 0 {
+		_ = model.StopTemporaryMonitor(monitor.ID)
+	}
+	selfTestResponse(c, monitor, err)
+}
+
+func ListTemporaryMonitors(c *gin.Context) {
+	monitors := []model.TemporaryMonitor{}
+	before, _ := strconv.Atoi(c.Query("before"))
+	query := model.DB.Omit("secret", "drawing_prompt").Order("id desc").Limit(21)
+	if before > 0 {
+		query = query.Where("id < ?", before)
+	}
+	err := query.Find(&monitors).Error
+	next := 0
+	if len(monitors) > 20 {
+		monitors = monitors[:20]
+		next = monitors[19].ID
+	}
+	selfTestResponse(c, gin.H{"monitors": monitors, "next_before": next}, err)
+}
+
+func GetTemporaryMonitor(c *gin.Context) {
+	var monitor model.TemporaryMonitor
+	if err := model.DB.Omit("secret").Where("id = ?", c.Param("id")).First(&monitor).Error; err != nil {
+		c.JSON(404, gin.H{"success": false, "message": "monitor not found"})
+		return
+	}
+	kind := c.DefaultQuery("kind", "text")
+	if kind != "text" && kind != "drawing" {
+		selfTestResponse(c, nil, errors.New("invalid monitor probe"))
+		return
+	}
+	before, _ := strconv.Atoi(c.Query("before"))
+	limit := 100
+	if kind == "drawing" {
+		limit = 5
+	}
+	query := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("monitor_id = ? AND kind = ?", monitor.ID, kind)
+	var stats []struct {
+		Verdict string `json:"verdict"`
+		Status  string `json:"status"`
+		Count   int64  `json:"count"`
+	}
+	if err := query.Select("verdict, status, COUNT(*) AS count").Group("verdict, status").Scan(&stats).Error; err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	query = model.DB.Where("monitor_id = ? AND kind = ?", monitor.ID, kind)
+	if before > 0 {
+		query = query.Where("id < ?", before)
+	}
+	attempts := []model.TemporaryMonitorAttempt{}
+	err := query.Omit("secret", "output", "html").Order("id desc").Limit(limit + 1).Find(&attempts).Error
+	next := 0
+	if len(attempts) > limit {
+		attempts = attempts[:limit]
+		next = attempts[limit-1].ID
+	}
+	selfTestResponse(c, gin.H{"monitor": monitor, "attempts": attempts, "stats": stats, "next_before": next, "text_prompt": operation_setting.SanaeProbePrompt, "expected": "高市早苗"}, err)
+}
+
+func GetTemporaryMonitorAttempt(c *gin.Context) {
+	var attempt model.TemporaryMonitorAttempt
+	err := model.DB.Omit("secret").Where("id = ?", c.Param("id")).First(&attempt).Error
+	selfTestResponse(c, attempt, err)
+}
+
+func StopTemporaryMonitor(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err == nil {
+		err = model.StopTemporaryMonitor(id)
+	}
+	selfTestResponse(c, nil, err)
+}
+
+type temporaryMonitorHandler struct{}
+
+func (temporaryMonitorHandler) Type() string { return temporaryMonitorTaskType }
+func (temporaryMonitorHandler) Enabled() bool {
+	var count int64
+	return model.DB.Model(&model.TemporaryMonitor{}).Where("status = ? OR ends_at < ?", "running", common.GetTimestamp()-model.DegradationWatchRetentionSeconds).Count(&count).Error == nil && count > 0
+}
+func (temporaryMonitorHandler) Interval() time.Duration { return time.Minute }
+func (temporaryMonitorHandler) NewPayload() any         { return nil }
+
+// One leased dispatcher survives browser closes and resumes persisted schedules
+// after a process restart. Text and drawing have independent concurrency slots.
+func (temporaryMonitorHandler) Run(ctx context.Context, task *model.SystemTask, runner string) {
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	done := make(chan int, 20)
+	active := map[int]bool{}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var runErr error
+	for {
+		now := common.GetTimestamp()
+		if runErr = model.MaintainTemporaryMonitors(now, task.TaskID); runErr != nil {
+			break
+		}
+		var monitors []model.TemporaryMonitor
+		if runErr = model.DB.Where("status = ? AND ends_at > ?", "running", now).Order("id").Find(&monitors).Error; runErr != nil {
+			break
+		}
+		for _, monitor := range monitors {
+			for _, kind := range []string{"text", "drawing"} {
+				if len(active) >= 20 {
+					break
+				}
+				var attempt *model.TemporaryMonitorAttempt
+				attempt, runErr = model.ClaimTemporaryMonitorAttempt(monitor.ID, kind, task.TaskID, now)
+				if runErr != nil {
+					break
+				}
+				if attempt == nil {
+					continue
+				}
+				active[attempt.ID] = true
+				workers.Go(func() {
+					defer func() { done <- attempt.ID }()
+					runTemporaryMonitorAttempt(ctx, monitor, *attempt, task.TaskID)
+				})
+			}
+			if runErr != nil {
+				break
+			}
+		}
+		if runErr != nil || (len(monitors) == 0 && len(active) == 0) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			runErr = ctx.Err()
+		case id := <-done:
+			delete(active, id)
+		case <-ticker.C:
+		}
+		if runErr != nil {
+			break
+		}
+	}
+	cancel()
+	workers.Wait()
+	status := model.SystemTaskStatusSucceeded
+	if runErr != nil {
+		status = model.SystemTaskStatusFailed
+	}
+	finishSystemTaskHandler(task, runner, status, nil, runErr)
+}
+
+func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryMonitor, attempt model.TemporaryMonitorAttempt, runner string) {
+	ctx, cancel := context.WithDeadline(parent, time.Unix(monitor.EndsAt, 0))
+	defer cancel()
+	prompt := operation_setting.SanaeProbePrompt
+	if attempt.Kind == "drawing" {
+		prompt = string(monitor.DrawingPrompt)
+	}
+	round := model.SelfTestRound{Prompt: model.LongText(prompt), TimeoutSeconds: 1200}
+	runDiagnosticAttempt(ctx, round, attempt.SelfTestAttempt, func(result model.SelfTestAttempt, final bool) error {
+		updates := diagnosticAttemptUpdates(result, final)
+		if final {
+			verdict := "error"
+			if result.Status == "succeeded" {
+				record := &model.DegradationWatchRecord{}
+				evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: attempt.Kind, Expected: "高市早苗", Match: "exact"}, string(result.Output))
+				verdict = record.Verdict
+				if !record.Success {
+					updates["status"], updates["error"] = "failed", record.FailureReason
+				}
+			}
+			updates["verdict"] = verdict
+		}
+		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error
+	}, func(elapsed int64) bool {
+		var count int64
+		if err := model.DB.Model(&model.TemporaryMonitor{}).Where("id = ? AND status = ? AND ends_at > ?", monitor.ID, "running", common.GetTimestamp()).Count(&count).Error; err != nil || count == 0 {
+			return false
+		}
+		if err := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Count(&count).Error; err != nil || count == 0 {
+			return false
+		}
+		update := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed)
+		return update.Error == nil
+	})
+}

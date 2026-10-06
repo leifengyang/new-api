@@ -49,9 +49,10 @@ const verdictClasses = {
   error: 'bg-amber-400 hover:bg-amber-300',
   running: 'bg-sky-500 motion-safe:animate-pulse',
   queued: 'bg-muted-foreground/30',
+  cancelled: 'bg-muted-foreground/30',
 }
 
-function StatusBlocks(props: {
+export function StatusBlocks(props: {
   records: DegradationWatchRecord[]
   onOpen: (record: DegradationWatchRecord) => void
 }) {
@@ -62,26 +63,32 @@ function StatusBlocks(props: {
     error: t('Request error'),
     running: t('Running'),
     queued: t('Queued'),
+    cancelled: t('Cancelled'),
   }
   return (
     <>
       {[...props.records]
         .sort((a, b) => a.created_at - b.created_at || a.id - b.id)
-        .map((record) => (
-          <Button
-            key={record.id}
-            variant='ghost'
-            size='icon'
-            className={cn(
-              'h-7 min-w-3 max-w-5 flex-1 shrink-0 rounded-sm border-0 p-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              verdictClasses[probeVerdict(record)],
-              (record.public_visible === false || record.hidden) && 'opacity-50'
-            )}
-            aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
-            title={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
-            onClick={() => props.onOpen(record)}
-          />
-        ))}
+        .map((record) => {
+          const verdict =
+            record.status === 'cancelled' ? 'cancelled' : probeVerdict(record)
+          return (
+            <Button
+              key={record.id}
+              variant='ghost'
+              size='icon'
+              className={cn(
+                'h-7 min-w-3 max-w-5 flex-1 shrink-0 rounded-sm border-0 p-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                verdictClasses[verdict],
+                (record.public_visible === false || record.hidden) &&
+                  'opacity-50'
+              )}
+              aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[verdict]}`}
+              title={`${formatTimestampToDate(record.created_at)} · ${labels[verdict]}`}
+              onClick={() => props.onOpen(record)}
+            />
+          )
+        })}
     </>
   )
 }

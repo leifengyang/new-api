@@ -48,6 +48,11 @@ export function ComparisonResult(props: {
   busy: boolean
   onStop: (id: number) => void
   onRetry: (attempt: ComparisonAttempt) => void
+  source?: {
+    key: string
+    loadAttempt: (id: number) => Promise<ComparisonAttempt>
+  }
+  readOnly?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -62,9 +67,17 @@ export function ComparisonResult(props: {
   const active = attempt.status === 'queued' || attempt.status === 'running'
   const { ref, inView } = useInViewport<HTMLDivElement>('0px')
   const detail = useQuery({
-    queryKey: ['self-test', userID, 'attempt', attempt.id, attempt.status],
+    queryKey: [
+      props.source?.key ?? 'self-test',
+      userID,
+      'attempt',
+      attempt.id,
+      attempt.status,
+    ],
     queryFn: () =>
-      comparisonRequest<ComparisonAttempt>(`/attempts/${attempt.id}`),
+      props.source
+        ? props.source.loadAttempt(attempt.id)
+        : comparisonRequest<ComparisonAttempt>(`/attempts/${attempt.id}`),
     enabled: player || (inView && (expanded || !active)),
     staleTime: active ? 0 : Infinity,
     gcTime: 2 * 60_000,
@@ -175,7 +188,7 @@ export function ComparisonResult(props: {
         >
           {t('Live output')}
         </Button>
-        {active && (
+        {active && !props.readOnly && (
           <Button
             variant='outline'
             size='sm'
@@ -186,7 +199,8 @@ export function ComparisonResult(props: {
             {t('Stop')}
           </Button>
         )}
-        {attempt.id === latest.id &&
+        {!props.readOnly &&
+          attempt.id === latest.id &&
           (attempt.status === 'failed' ||
             attempt.status === 'cancelled' ||
             attempt.status === 'incomplete') &&

@@ -41,6 +41,7 @@ export function ComparisonGroupEditor(props: {
   index: number
   removable: boolean
   onRemove: () => void
+  temporaryMonitor?: boolean
 }) {
   const { t } = useTranslation()
   const id = useId()
@@ -73,16 +74,18 @@ export function ComparisonGroupEditor(props: {
           {...props.form.register(`${prefix}.name`)}
           className='focus-visible:border-input h-8 border-transparent font-medium shadow-none'
         />
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon'
-          disabled={!props.removable}
-          aria-label={t('Remove group')}
-          onClick={props.onRemove}
-        >
-          <Trash2 className='size-4' />
-        </Button>
+        {!props.temporaryMonitor && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            disabled={!props.removable}
+            aria-label={t('Remove group')}
+            onClick={props.onRemove}
+          >
+            <Trash2 className='size-4' />
+          </Button>
+        )}
       </div>
       <div className='grid gap-3'>
         <div className='space-y-1.5'>
@@ -109,19 +112,21 @@ export function ComparisonGroupEditor(props: {
             {...props.form.register(`${prefix}.api_key`)}
           />
         </div>
-        <Controller
-          control={props.form.control}
-          name={`${prefix}.remember_key`}
-          render={({ field }) => (
-            <Label className='text-muted-foreground flex items-center gap-2 text-xs'>
-              <Checkbox
-                checked={field.value}
-                onCheckedChange={field.onChange}
-              />
-              {t('Save key encrypted for reuse')}
-            </Label>
-          )}
-        />
+        {!props.temporaryMonitor && (
+          <Controller
+            control={props.form.control}
+            name={`${prefix}.remember_key`}
+            render={({ field }) => (
+              <Label className='text-muted-foreground flex items-center gap-2 text-xs'>
+                <Checkbox
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+                {t('Save key encrypted for reuse')}
+              </Label>
+            )}
+          />
+        )}
         <div className='grid grid-cols-2 gap-3'>
           <div className='space-y-1.5'>
             <Label htmlFor={`${id}-protocol`}>{t('Protocol')}</Label>
@@ -154,7 +159,11 @@ export function ComparisonGroupEditor(props: {
             </NativeSelect>
           </div>
           <div className='space-y-1.5'>
-            <Label htmlFor={`${id}-effort`}>{t('Reasoning effort')}</Label>
+            <Label htmlFor={`${id}-effort`}>
+              {props.temporaryMonitor
+                ? t('Drawing reasoning effort')
+                : t('Reasoning effort')}
+            </Label>
             <NativeSelect
               id={`${id}-effort`}
               aria-invalid={!!errors?.effort}

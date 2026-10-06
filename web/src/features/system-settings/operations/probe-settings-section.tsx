@@ -32,6 +32,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ProbeWall } from '@/features/degradation-watch/components/probe-wall'
+import { TemporaryMonitorPanel } from '@/features/degradation-watch/components/temporary-monitor-panel'
 import {
   useDegradationWatchChannels,
   useDegradationWatchActivity,
@@ -230,6 +231,10 @@ function ProbeSettingsForm(props: {
             <Activity />
             {t('Run history')}
           </TabsTrigger>
+          <TabsTrigger value='temporary' className='flex-none px-3'>
+            <Activity />
+            {t('Temporary monitoring')}
+          </TabsTrigger>
         </TabsList>
         <TabsContent value='targets'>
           <fieldset disabled={busy} className='min-w-0'>
@@ -250,6 +255,9 @@ function ProbeSettingsForm(props: {
         </TabsContent>
         <TabsContent value='records'>
           {tab === 'records' && <ProbeRunHistory />}
+        </TabsContent>
+        <TabsContent value='temporary'>
+          {tab === 'temporary' && <TemporaryMonitorPanel />}
         </TabsContent>
       </Tabs>
       <p className='text-muted-foreground border-t pt-4 text-xs'>

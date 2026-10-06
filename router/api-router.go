@@ -370,6 +370,12 @@ func SetApiRouter(router *gin.Engine) {
 		selfTestRoute.POST("/rounds/:id/stop", controller.StopSelfTest)
 		selfTestRoute.POST("/attempts/:id/retry", middleware.UserCriticalRateLimit("self-test"), controller.RetrySelfTest)
 		selfTestRoute.POST("/models", middleware.UserCriticalRateLimit("self-test"), controller.FetchSelfTestModels)
+		temporaryMonitorRoute := degradationWatchRoute.Group("/temporary-monitors", middleware.RootAuth(), middleware.DisableCache())
+		temporaryMonitorRoute.GET("", controller.ListTemporaryMonitors)
+		temporaryMonitorRoute.POST("", middleware.UserCriticalRateLimit("temporary-monitor"), controller.StartTemporaryMonitor)
+		temporaryMonitorRoute.GET("/:id", controller.GetTemporaryMonitor)
+		temporaryMonitorRoute.POST("/:id/stop", controller.StopTemporaryMonitor)
+		temporaryMonitorRoute.GET("/attempts/:id", controller.GetTemporaryMonitorAttempt)
 		{
 			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)
 			degradationWatchRoute.GET("/monitor", controller.GetDegradationProbeWall)
