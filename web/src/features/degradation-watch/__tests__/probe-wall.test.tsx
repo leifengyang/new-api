@@ -186,7 +186,7 @@ function setup() {
   return { client, view }
 }
 
-test('probe blocks show answer characters without loading full replies and still open details', async () => {
+test('probe blocks stay text-free even when answers are present and still open full details', async () => {
   records = [
     { ...record, id: 7, answer_last_character: '苗' },
     {
@@ -204,14 +204,12 @@ test('probe blocks show answer characters without loading full replies and still
   const section = within(
     await screen.findByRole('region', { name: 'Text probes' })
   )
-  const answer = await section.findByRole('button', { name: /· Passed · 苗/ })
-  expect(answer).toHaveTextContent('苗')
+  const answers = await section.findAllByRole('button', { name: /· Passed$/ })
+  const answer = answers[1]
+  for (const block of answers) expect(block).toBeEmptyDOMElement()
   expect(
-    section.getByRole('button', { name: /· Answer or drawing mismatch · n/ })
-  ).toHaveTextContent('n')
-  expect(
-    section.getByRole('button', { name: /· Passed · 𠮷/ })
-  ).toHaveTextContent('𠮷')
+    section.getByRole('button', { name: /· Answer or drawing mismatch$/ })
+  ).toBeEmptyDOMElement()
   expect(
     section.getByRole('button', { name: /· Request error/ })
   ).toBeEmptyDOMElement()
@@ -222,7 +220,7 @@ test('probe blocks show answer characters without loading full replies and still
   client.clear()
 })
 
-test('records in the same interval stack together across history pages with a capped scrollable height', async () => {
+test('same-interval records and older pages remain separate blocks in one horizontally scrollable row', async () => {
   records = [
     { ...record, id: 12, created_at: 1300, answer_last_character: 'n' },
     ...[11, 10, 9, 8, 7].map((id) => ({
@@ -232,20 +230,26 @@ test('records in the same interval stack together across history pages with a ca
     })),
   ]
   const { view, client } = setup()
-  const history = within(await screen.findByLabelText('Detection history'))
-  const slots = history.getAllByRole('group')
-  expect(slots).toHaveLength(2)
-  expect(within(slots[0]).getAllByRole('button')).toHaveLength(5)
-  expect(slots[0]).toHaveClass('max-h-21', 'overflow-y-auto')
-  expect(slots[0]).toHaveAttribute('tabindex', '0')
-  expect(within(slots[1]).getByRole('button')).toHaveTextContent('n')
+  const strip = await screen.findByLabelText('Detection history')
+  const history = within(strip)
+  expect(strip).toHaveClass('flex', 'flex-nowrap', 'overflow-x-auto')
+  const blocks = history.getAllByRole('button', { name: /· Passed$/ })
+  expect(blocks).toHaveLength(6)
+  for (const block of blocks) {
+    expect(block.parentElement).toBe(strip)
+    expect(block).toBeEmptyDOMElement()
+    expect(block).toHaveClass('shrink-0', 'h-7')
+  }
   fireEvent.click(history.getByRole('button', { name: 'Load more' }))
   await waitFor(() =>
-    expect(
-      within(history.getAllByRole('group')[0]).getAllByRole('button')
-    ).toHaveLength(6)
+    expect(history.getAllByRole('button', { name: /· Passed$/ })).toHaveLength(
+      7
+    )
   )
-  expect(history.getAllByRole('group')).toHaveLength(2)
+  for (const block of history.getAllByRole('button', { name: /· Passed$/ })) {
+    expect(block.parentElement).toBe(strip)
+    expect(block).toBeEmptyDOMElement()
+  }
   view.unmount()
   client.clear()
 })
@@ -265,7 +269,7 @@ test('admin-only probe blocks are translucent and hidden drawings have an access
   const text = within(
     await screen.findByRole('region', { name: 'Text probes' })
   )
-  const button = await text.findByRole('button', { name: /· Passed · 苗/ })
+  const button = await text.findByRole('button', { name: /· Passed$/ })
   expect(button).toHaveClass('opacity-50')
   expect(button).toBeEnabled()
   const drawing = within(
