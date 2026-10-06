@@ -8,20 +8,119 @@ import (
 
 // Temporary monitors never create routable channels or public wall records.
 type TemporaryMonitor struct {
-	ID              int      `json:"id"`
-	UserID          int      `json:"-" gorm:"index"`
-	Name            string   `json:"name" gorm:"size:128"`
-	BaseURL         string   `json:"base_url" gorm:"size:1024"`
-	Model           string   `json:"model" gorm:"size:128"`
-	Protocol        string   `json:"protocol" gorm:"size:32"`
-	TextEffort      string   `json:"text_effort" gorm:"size:32"`
-	DrawingEffort   string   `json:"drawing_effort" gorm:"size:32"`
-	MaxOutputTokens *uint    `json:"max_output_tokens"`
-	Secret          LongText `json:"-"`
-	DrawingPrompt   LongText `json:"drawing_prompt"`
-	Status          string   `json:"status" gorm:"size:16;index"`
-	CreatedAt       int64    `json:"created_at"`
-	EndsAt          int64    `json:"ends_at" gorm:"index"`
+	ID                     int      `json:"id"`
+	UserID                 int      `json:"-" gorm:"index"`
+	Name                   string   `json:"name" gorm:"size:128"`
+	BaseURL                string   `json:"base_url" gorm:"size:1024"`
+	Model                  string   `json:"model" gorm:"size:128"`
+	Protocol               string   `json:"protocol" gorm:"size:32"`
+	TextEffort             string   `json:"text_effort" gorm:"size:32"`
+	DrawingEffort          string   `json:"drawing_effort" gorm:"size:32"`
+	MaxOutputTokens        *uint    `json:"max_output_tokens"`
+	Secret                 LongText `json:"-"`
+	DrawingPrompt          LongText `json:"drawing_prompt"`
+	Status                 string   `json:"status" gorm:"size:16;index"`
+	CreatedAt              int64    `json:"created_at"`
+	EndsAt                 int64    `json:"ends_at" gorm:"index"`
+	TextDisabled           bool     `json:"text_disabled"`
+	DrawingDisabled        bool     `json:"drawing_disabled"`
+	TextIntervalMinutes    int      `json:"text_interval_minutes"`
+	DrawingIntervalMinutes int      `json:"drawing_interval_minutes"`
+}
+
+type TemporaryProbeSettings struct {
+	Enabled         bool `json:"enabled"`
+	IntervalMinutes int  `json:"interval_minutes"`
+}
+
+func (monitor TemporaryMonitor) ProbeSettings(kind string) (TemporaryProbeSettings, error) {
+	settings := TemporaryProbeSettings{}
+	switch kind {
+	case "text":
+		settings.Enabled, settings.IntervalMinutes = !monitor.TextDisabled, monitor.TextIntervalMinutes
+		if settings.IntervalMinutes == 0 {
+			settings.IntervalMinutes = 3
+		}
+	case "drawing":
+		settings.Enabled, settings.IntervalMinutes = !monitor.DrawingDisabled, monitor.DrawingIntervalMinutes
+		if settings.IntervalMinutes == 0 {
+			settings.IntervalMinutes = 10
+		}
+	default:
+		return settings, errors.New("invalid monitor probe")
+	}
+	return settings, nil
+}
+
+func (settings TemporaryProbeSettings) Validate() error {
+	if settings.IntervalMinutes < 1 || settings.IntervalMinutes > 1440 {
+		return errors.New("probe interval must be between 1 and 1440 minutes")
+	}
+	return nil
+}
+
+func UpdateTemporaryMonitorProbe(id int, kind string, settings TemporaryProbeSettings, now int64) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	if kind != "text" && kind != "drawing" {
+		return errors.New("invalid monitor probe")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var monitor TemporaryMonitor
+		if err := lockForUpdate(tx).First(&monitor, id).Error; err != nil {
+			return err
+		}
+		if monitor.Status != "running" || now >= monitor.EndsAt {
+			return errors.New("monitoring has ended")
+		}
+		return tx.Model(&monitor).Updates(map[string]any{kind + "_disabled": !settings.Enabled, kind + "_interval_minutes": settings.IntervalMinutes}).Error
+	})
+}
+
+func (monitor TemporaryMonitor) NewProbeAttempt(kind string, now int64) TemporaryMonitorAttempt {
+	effort := monitor.TextEffort
+	if kind == "drawing" {
+		effort = monitor.DrawingEffort
+	}
+	return TemporaryMonitorAttempt{MonitorID: monitor.ID, Kind: kind, SelfTestAttempt: SelfTestAttempt{
+		UserID: monitor.UserID, Name: monitor.Name, BaseURL: monitor.BaseURL, Model: monitor.Model, Protocol: monitor.Protocol, Effort: effort, MaxOutputTokens: monitor.MaxOutputTokens,
+		CreatedAt: now, TokensEstimated: true,
+	}}
+}
+
+// Manual requests occupy negative slots, so they never consume a scheduled run.
+// The monitor lock deduplicates double clicks and excludes an in-flight probe.
+func QueueTemporaryMonitorProbe(id int, kind string, now int64) (*TemporaryMonitorAttempt, error) {
+	var attempt TemporaryMonitorAttempt
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var monitor TemporaryMonitor
+		if err := lockForUpdate(tx).First(&monitor, id).Error; err != nil {
+			return err
+		}
+		if _, err := monitor.ProbeSettings(kind); err != nil {
+			return err
+		}
+		if monitor.Status != "running" || now >= monitor.EndsAt || monitor.Secret == "" {
+			return errors.New("monitoring has ended")
+		}
+		err := tx.Where("monitor_id = ? AND kind = ? AND status IN ?", id, kind, []string{"queued", "running"}).First(&attempt).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var previous TemporaryMonitorAttempt
+		err = tx.Where("monitor_id = ? AND kind = ? AND slot < 0", id, kind).Order("slot").First(&previous).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		attempt = monitor.NewProbeAttempt(kind, now)
+		attempt.Slot, attempt.Status = previous.Slot-1, "queued"
+		return tx.Create(&attempt).Error
+	})
+	return &attempt, err
 }
 
 type TemporaryMonitorAttempt struct {
@@ -62,8 +161,9 @@ func StopTemporaryMonitor(id int) error {
 	})
 }
 
-// Claim is protected by the session row lock and a per-kind slot uniqueness
-// constraint. Missed slots are skipped; a slow request never overlaps itself.
+// Claim prioritizes one-shot requests, even when automatic checks are disabled.
+// Scheduled runs use the latest scheduled start, so changing an interval cannot
+// collide with a previous slot. Missed runs are skipped, never replayed in bulk.
 func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*TemporaryMonitorAttempt, error) {
 	var claimed *TemporaryMonitorAttempt
 	err := DB.Transaction(func(tx *gorm.DB) error {
@@ -74,30 +174,48 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 		if monitor.Status != "running" || now >= monitor.EndsAt || now < monitor.CreatedAt {
 			return nil
 		}
-		seconds, effort := int64(180), monitor.TextEffort
-		if kind == "drawing" {
-			seconds, effort = 600, monitor.DrawingEffort
-		} else if kind != "text" {
-			return errors.New("invalid monitor probe")
+		settings, err := monitor.ProbeSettings(kind)
+		if err != nil {
+			return err
 		}
-		slot := (now - monitor.CreatedAt) / seconds
 		var count int64
-		if err := tx.Model(&TemporaryMonitorAttempt{}).Where("monitor_id = ? AND kind = ? AND (slot = ? OR status IN ?)", id, kind, slot, []string{"queued", "running"}).Count(&count).Error; err != nil {
+		if err := tx.Model(&TemporaryMonitorAttempt{}).Where("monitor_id = ? AND kind = ? AND status = ?", id, kind, "running").Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {
 			return nil
 		}
-		attempt := &TemporaryMonitorAttempt{MonitorID: id, Kind: kind, Slot: slot, SelfTestAttempt: SelfTestAttempt{
-			UserID: monitor.UserID, Name: monitor.Name, BaseURL: monitor.BaseURL, Model: monitor.Model, Protocol: monitor.Protocol, Effort: effort, MaxOutputTokens: monitor.MaxOutputTokens,
-			Status: "running", Runner: runner, CreatedAt: now, StartedAt: now * 1000, TokensEstimated: true,
-		}}
-		if err := tx.Create(attempt).Error; err != nil {
+		attempt := monitor.NewProbeAttempt(kind, now)
+		err = tx.Where("monitor_id = ? AND kind = ? AND status = ?", id, kind, "queued").Order("id").First(&attempt).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if !settings.Enabled {
+				return nil
+			}
+			var previous TemporaryMonitorAttempt
+			err = tx.Where("monitor_id = ? AND kind = ? AND slot >= 0", id, kind).Order("created_at desc, id desc").First(&previous).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil && now < previous.CreatedAt+int64(settings.IntervalMinutes)*60 {
+				return nil
+			}
+			attempt.Slot = now
+			attempt.Status, attempt.Runner, attempt.StartedAt = "running", runner, now*1000
+			if err := tx.Create(&attempt).Error; err != nil {
+				return err
+			}
+		} else {
+			attempt.Status, attempt.Runner, attempt.StartedAt = "running", runner, now*1000
+			if err := tx.Model(&attempt).Updates(map[string]any{"status": attempt.Status, "runner": runner, "started_at": attempt.StartedAt}).Error; err != nil {
+				return err
+			}
 		}
 		// Only the session stores the encrypted key. Worker copies stay in memory.
 		attempt.Secret = monitor.Secret
-		claimed = attempt
+		claimed = &attempt
 		return nil
 	})
 	return claimed, err

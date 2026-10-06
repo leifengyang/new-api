@@ -19,11 +19,25 @@ const temporaryMonitorTaskType = "temporary_upstream_monitor"
 func StartTemporaryMonitor(c *gin.Context) {
 	var input struct {
 		selfTestGroupInput
-		TextEffort    string `json:"text_effort"`
-		DrawingEffort string `json:"drawing_effort"`
+		TextEffort    string                        `json:"text_effort"`
+		DrawingEffort string                        `json:"drawing_effort"`
+		TextProbe     *model.TemporaryProbeSettings `json:"text_probe"`
+		DrawingProbe  *model.TemporaryProbeSettings `json:"drawing_probe"`
 	}
 	if !bindSelfTest(c, &input) {
 		return
+	}
+	if input.TextProbe == nil {
+		input.TextProbe = &model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 3}
+	}
+	if input.DrawingProbe == nil {
+		input.DrawingProbe = &model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 10}
+	}
+	for _, settings := range []*model.TemporaryProbeSettings{input.TextProbe, input.DrawingProbe} {
+		if err := settings.Validate(); err != nil {
+			selfTestResponse(c, nil, err)
+			return
+		}
 	}
 	// Temporary credentials must be supplied explicitly, never borrowed from profiles.
 	input.ID, input.RememberKey = 0, false
@@ -39,6 +53,8 @@ func StartTemporaryMonitor(c *gin.Context) {
 	monitor := model.TemporaryMonitor{UserID: c.GetInt("id"), Name: attempts[0].Name, BaseURL: attempts[0].BaseURL, Model: attempts[0].Model, Protocol: attempts[0].Protocol,
 		TextEffort: input.TextEffort, DrawingEffort: input.DrawingEffort, MaxOutputTokens: attempts[0].MaxOutputTokens, Secret: attempts[0].Secret,
 		DrawingPrompt: model.LongText(operation_setting.GetDegradationWatchPrompt()), Status: "running", CreatedAt: now, EndsAt: now + 24*60*60}
+	monitor.TextDisabled, monitor.TextIntervalMinutes = !input.TextProbe.Enabled, input.TextProbe.IntervalMinutes
+	monitor.DrawingDisabled, monitor.DrawingIntervalMinutes = !input.DrawingProbe.Enabled, input.DrawingProbe.IntervalMinutes
 	err = model.CreateTemporaryMonitor(&monitor)
 	if err == nil {
 		_, _, err = service.EnqueueSystemTask(temporaryMonitorTaskType, nil)
@@ -118,6 +134,34 @@ func StopTemporaryMonitor(c *gin.Context) {
 		err = model.StopTemporaryMonitor(id)
 	}
 	selfTestResponse(c, nil, err)
+}
+
+func UpdateTemporaryMonitorProbe(c *gin.Context) {
+	var settings model.TemporaryProbeSettings
+	if !bindSelfTest(c, &settings) {
+		return
+	}
+	id, err := strconv.Atoi(c.Param("id"))
+	if err == nil {
+		err = model.UpdateTemporaryMonitorProbe(id, c.Param("kind"), settings, common.GetTimestamp())
+	}
+	selfTestResponse(c, nil, err)
+}
+
+func RunTemporaryMonitorProbe(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	attempt, err := model.QueueTemporaryMonitorProbe(id, c.Param("kind"), common.GetTimestamp())
+	if err == nil {
+		_, _, err = service.EnqueueSystemTask(temporaryMonitorTaskType, nil)
+		if err != nil {
+			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ?", attempt.ID, "queued").Updates(map[string]any{"status": "cancelled", "error": "Could not schedule probe"})
+		}
+	}
+	selfTestResponse(c, attempt, err)
 }
 
 type temporaryMonitorHandler struct{}

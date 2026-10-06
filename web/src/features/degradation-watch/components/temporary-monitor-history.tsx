@@ -38,6 +38,7 @@ import {
 } from '../lib/temporary-monitor'
 import { ComparisonResult } from './comparison-results'
 import { StatusBlocks } from './probe-wall'
+import { TemporaryProbeControls } from './temporary-probe-controls'
 
 export function TemporaryMonitorHistory(props: { monitorID: number }) {
   const { t } = useTranslation()
@@ -111,6 +112,17 @@ function TemporaryProbeHistory(props: {
           </Badge>
         </div>
       </div>
+      {head && (
+        <TemporaryProbeControls
+          monitor={head.monitor}
+          kind={props.kind}
+          busy={stats.some(
+            (stat) =>
+              stat.count > 0 &&
+              (stat.status === 'queued' || stat.status === 'running')
+          )}
+        />
+      )}
       {head && (
         <p className='text-muted-foreground text-xs'>
           {t('Monitoring ends at {{time}}', {

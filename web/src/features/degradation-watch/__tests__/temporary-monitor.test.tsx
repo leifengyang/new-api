@@ -40,8 +40,12 @@ const monitor: TemporaryMonitor = {
   protocol: 'chat',
   status: 'running',
   created_at: 1000,
-  ends_at: 87400,
+  ends_at: Math.floor(Date.now() / 1000) + 86400,
   drawing_prompt: 'Draw a complete SVG in HTML',
+  text_disabled: false,
+  drawing_disabled: false,
+  text_interval_minutes: 3,
+  drawing_interval_minutes: 10,
 }
 const attempt: MonitorAttempt = {
   id: 7,
@@ -71,9 +75,13 @@ const attempt: MonitorAttempt = {
 }
 let monitors: TemporaryMonitor[]
 let failCreate: boolean
+let failProbeSave: boolean
+let queuedKinds: Set<string>
 beforeEach(() => {
   monitors = [{ ...monitor }]
   failCreate = false
+  failProbeSave = false
+  queuedKinds = new Set()
   vi.spyOn(api, 'request').mockImplementation(async (config) => {
     const url = String(config.url)
     const response = (data: unknown) => ({ data: { success: true, data } })
@@ -87,6 +95,26 @@ beforeEach(() => {
     }
     if (url.endsWith('/1/stop')) {
       monitors = [{ ...monitor, status: 'stopped' }]
+      return response(null)
+    }
+    if (url.includes('/1/probes/')) {
+      const kind = url.includes('/probes/text') ? 'text' : 'drawing'
+      if (url.endsWith('/run')) {
+        queuedKinds.add(kind)
+      } else {
+        if (failProbeSave) throw new Error('could not save schedule')
+        const input = config.data as {
+          enabled: boolean
+          interval_minutes: number
+        }
+        monitors = [
+          {
+            ...monitors[0],
+            [`${kind}_disabled`]: !input.enabled,
+            [`${kind}_interval_minutes`]: input.interval_minutes,
+          },
+        ]
+      }
       return response(null)
     }
     if (url.includes('/temporary-monitors/attempts/')) {
@@ -109,6 +137,11 @@ beforeEach(() => {
         attempts,
         stats: [
           { verdict: 'passed', status: 'succeeded', count: drawing ? 6 : 1 },
+          {
+            verdict: '',
+            status: 'queued',
+            count: queuedKinds.has(drawing ? 'drawing' : 'text') ? 1 : 0,
+          },
         ],
         next_before: drawing && !older ? 20 : 0,
         text_prompt: 'Saved Sanae prompt',
@@ -160,6 +193,18 @@ test('temporary monitor starts with separate reasoning levels and no remembered 
     dialog.getByLabelText('Probe reasoning effort'),
     'low'
   )
+  const textSchedule = within(
+    dialog.getByRole('region', { name: 'Text probes' })
+  )
+  const drawingSchedule = within(
+    dialog.getByRole('region', { name: 'Drawing checks' })
+  )
+  fireEvent.change(textSchedule.getByLabelText('Interval (minutes)'), {
+    target: { value: '7' },
+  })
+  await userEvent.click(
+    drawingSchedule.getByRole('switch', { name: 'Automatic checks' })
+  )
   expect(
     dialog.queryByText('Save key encrypted for reuse')
   ).not.toBeInTheDocument()
@@ -179,6 +224,8 @@ test('temporary monitor starts with separate reasoning levels and no remembered 
         remember_key: false,
         api_key: 'test-key',
         max_output_tokens: 32768,
+        text_probe: { enabled: true, interval_minutes: 7 },
+        drawing_probe: { enabled: false, interval_minutes: 10 },
       }),
     })
   )
@@ -266,6 +313,118 @@ test('invalid or failed creation keeps the temporary form available', async () =
     ).toBeEnabled()
   )
   expect(screen.getByRole('dialog')).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('each probe saves its schedule independently and can run once while automatic checks are off', async () => {
+  const { view, client } = setup()
+  const text = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  const drawing = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  const interval = await text.findByLabelText('Interval (minutes)')
+  expect(interval).toHaveValue(3)
+  expect(drawing.getByLabelText('Interval (minutes)')).toHaveValue(10)
+  fireEvent.change(interval, { target: { value: '0' } })
+  fireEvent.click(text.getByRole('button', { name: 'Save' }))
+  expect(await text.findByRole('alert')).toHaveTextContent('Enter an interval')
+  expect(api.request).not.toHaveBeenCalledWith(
+    expect.objectContaining({ method: 'post' })
+  )
+  fireEvent.change(interval, { target: { value: '7' } })
+  await userEvent.click(text.getByRole('switch', { name: 'Automatic checks' }))
+  expect(text.getByRole('button', { name: 'Run once' })).toBeDisabled()
+  fireEvent.click(text.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(text.getByRole('button', { name: 'Save' })).toBeDisabled()
+  )
+  expect(api.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/degradation_watch/temporary-monitors/1/probes/text',
+      method: 'post',
+      data: { enabled: false, interval_minutes: 7 },
+    })
+  )
+  expect(
+    drawing.getByRole('switch', { name: 'Automatic checks' })
+  ).toBeChecked()
+  expect(drawing.getByLabelText('Interval (minutes)')).toHaveValue(10)
+  await waitFor(() =>
+    expect(text.getByRole('button', { name: 'Run once' })).toBeEnabled()
+  )
+  fireEvent.click(text.getByRole('button', { name: 'Run once' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/degradation_watch/temporary-monitors/1/probes/text/run',
+        method: 'post',
+      })
+    )
+  )
+  await waitFor(() =>
+    expect(text.getByRole('button', { name: 'Run once' })).toBeDisabled()
+  )
+  expect(drawing.getByRole('button', { name: 'Run once' })).toBeEnabled()
+  fireEvent.click(drawing.getByRole('button', { name: 'Run once' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/degradation_watch/temporary-monitors/1/probes/drawing/run',
+        method: 'post',
+      })
+    )
+  )
+  await waitFor(() =>
+    expect(drawing.getByRole('button', { name: 'Run once' })).toBeDisabled()
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('ended monitors disable probe editing and manual execution', async () => {
+  monitors = [{ ...monitor, status: 'completed' }]
+  const { view, client } = setup()
+  const text = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  expect(
+    await text.findByRole('switch', { name: 'Automatic checks' })
+  ).toHaveAttribute('aria-disabled', 'true')
+  expect(text.getByRole('button', { name: 'Run once' })).toBeDisabled()
+  expect(text.getByLabelText('Interval (minutes)')).toBeDisabled()
+  view.unmount()
+  client.clear()
+})
+
+test('a failed schedule save preserves the draft and allows retry', async () => {
+  failProbeSave = true
+  const { view, client } = setup()
+  const text = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  const interval = await text.findByLabelText('Interval (minutes)')
+  fireEvent.change(interval, { target: { value: '9' } })
+  fireEvent.click(text.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'post' })
+    )
+  )
+  await waitFor(() =>
+    expect(text.getByRole('button', { name: 'Save' })).toBeEnabled()
+  )
+  expect(interval).toHaveValue(9)
+  expect(monitors[0].text_interval_minutes).toBe(3)
+  expect(text.getByRole('button', { name: 'Run once' })).toBeDisabled()
+  failProbeSave = false
+  fireEvent.click(text.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(text.getByRole('button', { name: 'Save' })).toBeDisabled()
+  )
+  expect(monitors[0].text_interval_minutes).toBe(9)
   view.unmount()
   client.clear()
 })
