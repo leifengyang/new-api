@@ -53,7 +53,6 @@ const verdictClasses = {
 
 function StatusBlocks(props: {
   records: DegradationWatchRecord[]
-  intervalMinutes: number
   onOpen: (record: DegradationWatchRecord) => void
 }) {
   const { t } = useTranslation()
@@ -64,47 +63,24 @@ function StatusBlocks(props: {
     running: t('Running'),
     queued: t('Queued'),
   }
-  const slots = new Map<number, DegradationWatchRecord[]>()
-  const seconds = Math.max(1, props.intervalMinutes) * 60
-  for (const record of props.records) {
-    const time = Math.floor(record.created_at / seconds) * seconds
-    const slot = slots.get(time) ?? []
-    slot.push(record)
-    slots.set(time, slot)
-  }
   return (
     <>
-      {[...slots.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([time, records]) => (
-          <div
-            key={time}
-            role='group'
-            aria-label={formatTimestampToDate(time)}
-            className='flex max-h-21 max-w-9 min-w-9 flex-1 [scrollbar-width:thin] flex-col gap-1 overflow-y-auto rounded-sm p-0.5'
-            tabIndex={records.length > 3 ? 0 : undefined}
-          >
-            {[...records]
-              .sort((a, b) => a.created_at - b.created_at || a.id - b.id)
-              .map((record) => (
-                <Button
-                  key={record.id}
-                  variant='ghost'
-                  size='icon'
-                  className={cn(
-                    'h-6 w-full min-w-6 shrink-0 rounded-sm border-0 p-0 text-xs font-semibold text-slate-950 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                    verdictClasses[probeVerdict(record)],
-                    (record.public_visible === false || record.hidden) &&
-                      'opacity-50'
-                  )}
-                  aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}${record.answer_last_character ? ` · ${record.answer_last_character}` : ''}`}
-                  title={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}${record.answer_last_character ? ` · ${record.answer_last_character}` : ''}`}
-                  onClick={() => props.onOpen(record)}
-                >
-                  {record.answer_last_character}
-                </Button>
-              ))}
-          </div>
+      {[...props.records]
+        .sort((a, b) => a.created_at - b.created_at || a.id - b.id)
+        .map((record) => (
+          <Button
+            key={record.id}
+            variant='ghost'
+            size='icon'
+            className={cn(
+              'h-7 min-w-3 max-w-5 flex-1 shrink-0 rounded-sm border-0 p-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+              verdictClasses[probeVerdict(record)],
+              (record.public_visible === false || record.hidden) && 'opacity-50'
+            )}
+            aria-label={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
+            title={`${formatTimestampToDate(record.created_at)} · ${labels[probeVerdict(record)]}`}
+            onClick={() => props.onOpen(record)}
+          />
         ))}
     </>
   )
@@ -137,11 +113,7 @@ function OlderProbeHistory(props: {
   )
   return (
     <>
-      <StatusBlocks
-        records={records}
-        intervalMinutes={props.initial.interval_minutes}
-        onOpen={props.onOpen}
-      />
+      <StatusBlocks records={records} onOpen={props.onOpen} />
       {history.isFetching && (
         <LoadingState className='min-h-12 w-12 shrink-0' />
       )}
@@ -271,7 +243,7 @@ function ProbeStrip(props: {
         ) : (
           <div
             ref={strip}
-            className='flex min-w-0 items-start gap-1 overflow-x-auto py-1'
+            className='flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto py-1'
             onScroll={(event) => {
               const el = event.currentTarget
               followLatest.current =
@@ -291,11 +263,7 @@ function ProbeStrip(props: {
                 onOpen={props.onOpen}
               />
             ) : (
-              <StatusBlocks
-                records={row.records}
-                intervalMinutes={row.interval_minutes}
-                onOpen={props.onOpen}
-              />
+              <StatusBlocks records={row.records} onOpen={props.onOpen} />
             )}
             {!frozen && row.next_before > 0 && (
               <Button
