@@ -270,6 +270,10 @@ func FetchSelfTestModels(c *gin.Context) {
 	if !bindSelfTest(c, &input) {
 		return
 	}
+	fetchDiagnosticModels(c, input)
+}
+
+func fetchDiagnosticModels(c *gin.Context, input selfTestGroupInput) {
 	// Model discovery does not depend on generation settings being complete.
 	input.Effort, input.MaxOutputTokens = "", nil
 	if input.Name == "" {

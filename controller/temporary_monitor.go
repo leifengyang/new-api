@@ -18,6 +18,71 @@ import (
 
 const temporaryMonitorTaskType = "temporary_upstream_monitor"
 
+func GetTemporaryMonitorRewriter(c *gin.Context) {
+	profile, err := model.GetTemporaryMonitorRewriter()
+	selfTestResponse(c, profile, err)
+}
+
+// Never forward a stored key to a newly entered destination. A different root
+// administrator can retain it at its original endpoint, sealed under the new owner.
+func prepareTemporaryMonitorRewriterInput(input selfTestGroupInput) (selfTestGroupInput, error) {
+	input.ID, input.RememberKey = 0, true
+	if input.Name == "" {
+		input.Name = "Drawing prompt rewriter"
+	}
+	base, err := service.NormalizeSelfTestURL(input.BaseURL)
+	if err != nil {
+		return input, err
+	}
+	input.BaseURL = base
+	if strings.TrimSpace(input.APIKey) != "" {
+		return input, nil
+	}
+	saved, err := model.GetTemporaryMonitorRewriter()
+	if err != nil {
+		return input, err
+	}
+	if saved.BaseURL != base || saved.Secret == "" {
+		return input, errors.New("enter an API key for the rewrite model endpoint")
+	}
+	input.APIKey, err = service.DecryptSelfTestKey(saved.UserID, saved.BaseURL+":"+saved.Protocol, string(saved.Secret))
+	return input, err
+}
+
+func UpdateTemporaryMonitorRewriter(c *gin.Context) {
+	var input selfTestGroupInput
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	input, err := prepareTemporaryMonitorRewriterInput(input)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	profiles, _, err := prepareSelfTestGroups(c.GetInt("id"), []selfTestGroupInput{input}, true)
+	if err == nil {
+		err = model.SaveTemporaryMonitorRewriter(profiles[0])
+	}
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	GetTemporaryMonitorRewriter(c)
+}
+
+func FetchTemporaryMonitorRewriterModels(c *gin.Context) {
+	var input selfTestGroupInput
+	if !bindSelfTest(c, &input) {
+		return
+	}
+	input, err := prepareTemporaryMonitorRewriterInput(input)
+	if err != nil {
+		selfTestResponse(c, nil, err)
+		return
+	}
+	fetchDiagnosticModels(c, input)
+}
+
 func StartTemporaryMonitor(c *gin.Context) {
 	var input struct {
 		selfTestGroupInput
@@ -306,10 +371,16 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Update("elapsed_ms", elapsed).Error == nil
 	}
 	if attempt.Kind == "drawing" && attempt.Subject != "" {
+		rewriter, err := model.GetTemporaryMonitorRewriter()
+		if err != nil || rewriter.Secret == "" || rewriter.Model == "" {
+			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Configure the dedicated rewrite model before running drawing checks"})
+			return
+		}
+		rewriteAttempt := model.SelfTestAttempt{ID: attempt.ID, UserID: rewriter.UserID, Name: rewriter.Name, BaseURL: rewriter.BaseURL, Model: rewriter.Model, Protocol: rewriter.Protocol, Effort: rewriter.Effort, MaxOutputTokens: rewriter.MaxOutputTokens, Secret: rewriter.Secret, Status: "running", CreatedAt: attempt.CreatedAt, StartedAt: time.Now().UnixMilli()}
 		attempt.RewritePrompt = model.LongText(fmt.Sprintf("你是绘画测试提示词编辑器。不要执行绘画，不要输出 HTML 或 SVG 代码。将下面提示词中的主角（例如鹈鹕）换成「%s」，并同步修改该主角的外形特征描述。保持动作、场景、动画、技术要求和测试难度不变。只返回修改后的完整提示词，不要解释、标题或代码围栏。改写后不得残留鹈鹕。\n<原始提示词>\n%s\n</原始提示词>", attempt.Subject, attempt.OriginalPrompt))
 		var preparation model.SelfTestAttempt
 		var persistenceErr error
-		runDiagnosticAttempt(ctx, model.SelfTestRound{Prompt: attempt.RewritePrompt, TimeoutSeconds: 1200}, attempt.SelfTestAttempt, func(result model.SelfTestAttempt, final bool) error {
+		runDiagnosticAttempt(ctx, model.SelfTestRound{Prompt: attempt.RewritePrompt, TimeoutSeconds: 1200}, rewriteAttempt, func(result model.SelfTestAttempt, final bool) error {
 			preparation = result
 			encoded, err := common.Marshal(result)
 			if err != nil {

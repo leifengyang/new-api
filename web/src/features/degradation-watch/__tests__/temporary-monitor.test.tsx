@@ -30,6 +30,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { TemporaryMonitorPanel } from '../components/temporary-monitor-panel'
+import { newTestGroup, type TestGroup } from '../lib/comparison'
 import type { MonitorAttempt, TemporaryMonitor } from '../lib/temporary-monitor'
 
 const monitor: TemporaryMonitor = {
@@ -79,7 +80,16 @@ let monitors: TemporaryMonitor[]
 let failCreate: boolean
 let failProbeSave: boolean
 let queuedKinds: Set<string>
+let rewriter: TestGroup
 beforeEach(() => {
+  rewriter = {
+    ...newTestGroup(),
+    name: 'Dedicated rewrite model',
+    base_url: 'https://rewrite.example.com/v1',
+    model: 'rewrite-model',
+    api_key: '',
+    has_saved_key: true,
+  }
   monitors = [{ ...monitor }]
   failCreate = false
   failProbeSave = false
@@ -87,6 +97,20 @@ beforeEach(() => {
   vi.spyOn(api, 'request').mockImplementation(async (config) => {
     const url = String(config.url)
     const response = (data: unknown) => ({ data: { success: true, data } })
+    if (url.endsWith('/rewriter/models')) {
+      return response(['rewrite-model', 'replacement-model'])
+    }
+    if (url.endsWith('/rewriter')) {
+      if (config.method === 'post') {
+        if (failProbeSave) throw new Error('could not save rewriter')
+        rewriter = {
+          ...(config.data as TestGroup),
+          api_key: '',
+          has_saved_key: true,
+        }
+      }
+      return response(rewriter)
+    }
     if (url.endsWith('/temporary-monitors') && config.method === 'post') {
       if (failCreate) throw new Error('upstream invalid')
       monitors = [{ ...monitor, name: 'New trial' }]
@@ -525,6 +549,41 @@ test('drawing details show rewrite usage and the immutable actual input', async 
   )
   expect(await screen.findByText('Historical actual input')).toBeInTheDocument()
   expect(screen.queryByText(monitor.drawing_prompt)).not.toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('dedicated rewrite model retains its saved key and discovers models through its own endpoint', async () => {
+  const { view, client } = setup()
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Configure rewrite model' })
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Configure rewrite model' })
+  )
+  expect(await dialog.findByLabelText('API key')).toHaveValue('')
+  fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/degradation_watch/temporary-monitors/rewriter/models',
+        method: 'post',
+        data: expect.objectContaining({
+          base_url: 'https://rewrite.example.com/v1',
+          api_key: '',
+        }),
+      })
+    )
+  )
+  fireEvent.change(dialog.getByLabelText('Model'), {
+    target: { value: 'replacement-model' },
+  })
+  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(rewriter.model).toBe('replacement-model')
+  expect(monitors[0].model).toBe('trial-model')
   view.unmount()
   client.clear()
 })

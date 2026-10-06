@@ -108,6 +108,7 @@ export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
             {preparation && (
               <>
                 <div className='flex flex-wrap gap-2'>
+                  <Badge variant='outline'>{preparation.model}</Badge>
                   <Button
                     variant='outline'
                     size='sm'

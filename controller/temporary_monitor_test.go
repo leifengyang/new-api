@@ -20,10 +20,20 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func temporaryRewriterFixture(t *testing.T) {
+	t.Helper()
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	secret, err := service.EncryptSelfTestKey(1, "https://example.org/v1:chat", "rewrite-private-key")
+	require.NoError(t, err)
+	limit := uint(4096)
+	require.NoError(t, model.SaveTemporaryMonitorRewriter(model.SelfTestProfile{UserID: 1, Name: "Dedicated rewriter", BaseURL: "https://example.org/v1", Model: "rewriter-model", Protocol: "chat", Effort: "minimal", MaxOutputTokens: &limit, Secret: model.LongText(secret)}))
+}
+
 func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := selfTestDB(t, dialect)
+			temporaryRewriterFixture(t)
 			// Upgrade a representative released self-test schema with retained data.
 			previous := model.SelfTestProfile{UserID: 1, Name: "retained profile", BaseURL: "https://example.com/v1", Model: "previous"}
 			require.NoError(t, db.Create(&previous).Error)
@@ -133,19 +143,27 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
 				body, readErr := io.ReadAll(req.Body)
 				require.NoError(t, readErr)
-				assert.Equal(t, "Bearer temporary-private-key", req.Header.Get("Authorization"))
+				if req.URL.Host == "example.org" {
+					assert.Equal(t, "Bearer rewrite-private-key", req.Header.Get("Authorization"))
+					assert.Equal(t, "rewriter-model", gjson.GetBytes(body, "model").String())
+					assert.Equal(t, "minimal", gjson.GetBytes(body, "reasoning_effort").String())
+					assert.Equal(t, int64(4096), gjson.GetBytes(body, "max_completion_tokens").Int())
+				} else {
+					assert.Equal(t, "Bearer temporary-private-key", req.Header.Get("Authorization"))
+					assert.Equal(t, "test-model", gjson.GetBytes(body, "model").String())
+				}
 				output := "<html><svg/></html>"
 				if gjson.GetBytes(body, "messages.0.content").String() == operation_setting.SanaeProbePrompt {
 					assert.Equal(t, "low", gjson.GetBytes(body, "reasoning_effort").String())
 					output = "高市早苗"
 				} else {
-					assert.Equal(t, "high", gjson.GetBytes(body, "reasoning_effort").String())
 					prompt := gjson.GetBytes(body, "messages.0.content").String()
 					if strings.Contains(prompt, "<原始提示词>") {
 						assert.Contains(t, prompt, string(monitor.DrawingPrompt))
 						assert.NotContains(t, prompt, "new drawing template")
 						output = "Draw " + drawing.Subject + " in a complete HTML SVG"
 					} else {
+						assert.Equal(t, "high", gjson.GetBytes(body, "reasoning_effort").String())
 						assert.Equal(t, "Draw "+drawing.Subject+" in a complete HTML SVG", prompt)
 					}
 				}
@@ -165,6 +183,7 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "Draw "+drawing.Subject+" in a complete HTML SVG", string(artwork.Prompt))
 			assert.Equal(t, int64(15), gjson.Get(string(artwork.RewriteResult), "input_tokens").Int())
 			assert.NotContains(t, string(artwork.RewriteResult), "temporary-private-key")
+			assert.NotContains(t, string(artwork.RewriteResult), "rewrite-private-key")
 			history := selfTestAPI(t, GetTemporaryMonitor, 1, monitor.ID, nil)
 			require.Equal(t, 200, history.Code, history.Body.String())
 			assert.Equal(t, int64(1), gjson.Get(history.Body.String(), "data.stats.0.count").Int())
@@ -345,6 +364,54 @@ func TestTemporaryMonitorEditablePromptSnapshots(t *testing.T) {
 	}
 }
 
+func TestTemporaryMonitorDedicatedRewriterSettings(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Option{}))
+			require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).Delete(&model.Option{}).Error)
+			missing := selfTestAPI(t, GetTemporaryMonitorRewriter, 1, 0, nil)
+			require.Equal(t, 200, missing.Code)
+			assert.False(t, gjson.Get(missing.Body.String(), "data.has_saved_key").Bool())
+			input := map[string]any{"name": "rewriter", "base_url": "https://example.org/v1", "model": "rewrite-model", "protocol": "chat", "effort": "low", "api_key": "dedicated-secret", "max_output_tokens": 4096}
+			saved := selfTestAPI(t, UpdateTemporaryMonitorRewriter, 1, 0, input)
+			require.Equal(t, 200, saved.Code, saved.Body.String())
+			assert.True(t, gjson.Get(saved.Body.String(), "data.has_saved_key").Bool())
+			assert.NotContains(t, saved.Body.String(), "dedicated-secret")
+			var option model.Option
+			require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).First(&option).Error)
+			assert.NotContains(t, option.Value, "dedicated-secret")
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.Option{}))
+			}
+			input["api_key"], input["model"], input["protocol"] = "", "new-rewrite-model", "anthropic"
+			updated := selfTestAPI(t, UpdateTemporaryMonitorRewriter, 2, 0, input)
+			require.Equal(t, 200, updated.Code, updated.Body.String())
+			profile, err := model.GetTemporaryMonitorRewriter()
+			require.NoError(t, err)
+			assert.Equal(t, 2, profile.UserID)
+			key, err := service.DecryptSelfTestKey(profile.UserID, profile.BaseURL+":"+profile.Protocol, string(profile.Secret))
+			require.NoError(t, err)
+			assert.Equal(t, "dedicated-secret", key)
+			oldClient := selfTestClient
+			t.Cleanup(func() { selfTestClient = oldClient })
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				assert.Equal(t, "https://example.org/v1/models", req.URL.String())
+				assert.Equal(t, "dedicated-secret", req.Header.Get("x-api-key"))
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"data":[{"id":"rewrite-model"}]}`))}, nil
+			})}
+			models := selfTestAPI(t, FetchTemporaryMonitorRewriterModels, 2, 0, input)
+			require.Equal(t, 200, models.Code, models.Body.String())
+			assert.Equal(t, "rewrite-model", gjson.Get(models.Body.String(), "data.0").String())
+			input["base_url"] = "https://example.com/v1"
+			assert.Equal(t, 400, selfTestAPI(t, UpdateTemporaryMonitorRewriter, 2, 0, input).Code, "never reuse a key for a changed endpoint")
+			assert.Equal(t, 400, selfTestAPI(t, FetchTemporaryMonitorRewriterModels, 2, 0, input).Code)
+			input["base_url"], input["api_key"] = "https://127.0.0.1/v1", "new-key"
+			assert.Equal(t, 400, selfTestAPI(t, UpdateTemporaryMonitorRewriter, 2, 0, input).Code)
+		})
+	}
+}
+
 func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
 	for _, tc := range []struct {
 		name, output string
@@ -353,9 +420,14 @@ func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
 		{"upstream error", `{"error":"rewrite-private-key: upstream rejected request"}`, 502},
 		{"unchanged subject", "draw 鹈鹕 instead", 200},
 		{"empty output", "", 200},
+		{"missing configuration", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := selfTestDB(t, "sqlite")
+			temporaryRewriterFixture(t)
+			if tc.code == 0 {
+				require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).Delete(&model.Option{}).Error)
+			}
 			require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
 			secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "rewrite-private-key")
 			require.NoError(t, err)
@@ -379,12 +451,21 @@ func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
 				return &http.Response{StatusCode: tc.code, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})}
 			runTemporaryMonitorAttempt(context.Background(), monitor, *attempt, "worker")
-			assert.Equal(t, 1, calls)
+			expectedCalls := 1
+			if tc.code == 0 {
+				expectedCalls = 0
+			}
+			assert.Equal(t, expectedCalls, calls)
 			response := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, attempt.ID, nil)
 			require.Equal(t, 200, response.Code, response.Body.String())
 			assert.Equal(t, "failed", gjson.Get(response.Body.String(), "data.status").String())
-			assert.Contains(t, gjson.Get(response.Body.String(), "data.error").String(), "Prompt rewrite failed")
-			assert.True(t, gjson.Get(response.Body.String(), "data.preparation").Exists())
+			if tc.code == 0 {
+				assert.Contains(t, gjson.Get(response.Body.String(), "data.error").String(), "Configure the dedicated rewrite model")
+				assert.False(t, gjson.Get(response.Body.String(), "data.preparation").Exists())
+			} else {
+				assert.Contains(t, gjson.Get(response.Body.String(), "data.error").String(), "Prompt rewrite failed")
+				assert.True(t, gjson.Get(response.Body.String(), "data.preparation").Exists())
+			}
 			assert.NotContains(t, response.Body.String(), "rewrite-private-key")
 			assert.Empty(t, gjson.Get(response.Body.String(), "data.prompt").String())
 		})
@@ -393,6 +474,7 @@ func TestTemporaryMonitorRewriteFailureSkipsDrawing(t *testing.T) {
 
 func TestTemporaryMonitorDispatcherStopsBothInflightProbes(t *testing.T) {
 	db := selfTestDB(t, "sqlite")
+	temporaryRewriterFixture(t)
 	require.NoError(t, db.AutoMigrate(&model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
 	secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "dispatcher-secret")
 	require.NoError(t, err)
@@ -433,7 +515,7 @@ func TestTemporaryMonitorDispatcherStopsBothInflightProbes(t *testing.T) {
 			t.Fatal("probes did not start")
 		}
 	}
-	assert.ElementsMatch(t, []string{"low", "high"}, efforts)
+	assert.ElementsMatch(t, []string{"low", "minimal"}, efforts)
 	require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
 	select {
 	case <-finished:
@@ -469,6 +551,8 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			routes.POST("/:id/probes/:kind", UpdateTemporaryMonitorProbe)
 			routes.POST("/:id/probes/:kind/run", RunTemporaryMonitorProbe)
 			routes.POST("/:id/probes/:kind/prompt", UpdateTemporaryMonitorPrompt)
+			routes.POST("/rewriter", UpdateTemporaryMonitorRewriter)
+			routes.POST("/rewriter/models", FetchTemporaryMonitorRewriterModels)
 			request := httptest.NewRequest(http.MethodGet, "/temporary-monitors", nil)
 			if tc.token != "" {
 				request.Header.Set("Authorization", "Bearer "+tc.token)
@@ -477,7 +561,7 @@ func TestTemporaryMonitorAdminBoundary(t *testing.T) {
 			router.ServeHTTP(response, request)
 			assert.Equal(t, tc.code, response.Code, response.Body.String())
 			if tc.role != common.RoleRootUser {
-				for _, path := range []string{"/temporary-monitors/1/probes/text", "/temporary-monitors/1/probes/drawing/run", "/temporary-monitors/1/probes/text/prompt"} {
+				for _, path := range []string{"/temporary-monitors/1/probes/text", "/temporary-monitors/1/probes/drawing/run", "/temporary-monitors/1/probes/text/prompt", "/temporary-monitors/rewriter", "/temporary-monitors/rewriter/models"} {
 					request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"enabled":true,"interval_minutes":5}`))
 					request.Header.Set("Content-Type", "application/json")
 					if tc.token != "" {
