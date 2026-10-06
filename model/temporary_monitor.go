@@ -5,9 +5,45 @@ import (
 	"math/rand/v2"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
+
+// Keep the entire connection envelope out of the generic options response.
+const TemporaryMonitorRewriterOption = "TemporaryMonitorRewriterSecret"
+
+type temporaryMonitorRewriterEnvelope struct {
+	Profile SelfTestProfile `json:"profile"`
+	UserID  int             `json:"owner_id"`
+	Secret  LongText        `json:"secret"`
+}
+
+func GetTemporaryMonitorRewriter() (SelfTestProfile, error) {
+	var option Option
+	err := DB.Where(&Option{Key: TemporaryMonitorRewriterOption}).First(&option).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return SelfTestProfile{}, nil
+	}
+	if err != nil {
+		return SelfTestProfile{}, err
+	}
+	var saved temporaryMonitorRewriterEnvelope
+	if err := common.UnmarshalJsonStr(option.Value, &saved); err != nil {
+		return SelfTestProfile{}, err
+	}
+	saved.Profile.UserID, saved.Profile.Secret = saved.UserID, saved.Secret
+	saved.Profile.HasSavedKey = saved.Secret != ""
+	return saved.Profile, nil
+}
+
+func SaveTemporaryMonitorRewriter(profile SelfTestProfile) error {
+	encoded, err := common.Marshal(temporaryMonitorRewriterEnvelope{Profile: profile, UserID: profile.UserID, Secret: profile.Secret})
+	if err != nil {
+		return err
+	}
+	return DB.Save(&Option{Key: TemporaryMonitorRewriterOption, Value: string(encoded)}).Error
+}
 
 // Temporary monitors never create routable channels or public wall records.
 type TemporaryMonitor struct {

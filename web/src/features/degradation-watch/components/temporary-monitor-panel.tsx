@@ -54,6 +54,7 @@ import {
 import { ComparisonGroupEditor } from './comparison-group-editor'
 import { TemporaryMonitorHistory } from './temporary-monitor-history'
 import { TemporaryProbeFields } from './temporary-probe-controls'
+import { TemporaryRewriterEditor } from './temporary-rewriter-editor'
 
 export function TemporaryMonitorPanel() {
   const { t } = useTranslation()
@@ -65,6 +66,7 @@ export function TemporaryMonitorPanel() {
   const userID = useAuthStore((state) => state.auth.user?.id)
   const client = useQueryClient()
   const [creating, setCreating] = useState(false)
+  const [editingRewriter, setEditingRewriter] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
   const key = ['temporary-monitor', userID]
   const history = useInfiniteQuery({
@@ -99,10 +101,15 @@ export function TemporaryMonitorPanel() {
           </p>
           <Badge variant='secondary'>{t('Administrators only')}</Badge>
         </div>
-        <Button onClick={() => setCreating(true)}>
-          <Plus />
-          {t('Start temporary monitoring')}
-        </Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button variant='outline' onClick={() => setEditingRewriter(true)}>
+            {t('Configure rewrite model')}
+          </Button>
+          <Button onClick={() => setCreating(true)}>
+            <Plus />
+            {t('Start temporary monitoring')}
+          </Button>
+        </div>
       </div>
       {history.isPending && <LoadingState />}
       {history.isError && <ErrorState onRetry={() => void history.refetch()} />}
@@ -172,6 +179,9 @@ export function TemporaryMonitorPanel() {
             void client.invalidateQueries({ queryKey: key })
           }}
         />
+      )}
+      {editingRewriter && (
+        <TemporaryRewriterEditor onClose={() => setEditingRewriter(false)} />
       )}
     </div>
   )

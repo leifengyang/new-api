@@ -127,7 +127,7 @@ export function TemporaryPromptEditor(props: {
         ) : (
           <p className='rounded-lg bg-violet-500/10 p-3 text-sm'>
             {t(
-              'Before each drawing check, this upstream model rewrites the subject, then draws with the revised prompt. This adds one model request.'
+              'Before each drawing check, the dedicated rewrite model changes the subject. The monitored model then draws with the revised prompt. Configure the rewrite model in the monitoring header.'
             )}
           </p>
         )}
