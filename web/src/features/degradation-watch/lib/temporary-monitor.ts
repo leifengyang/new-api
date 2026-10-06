@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { z } from 'zod'
+
 import { api } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
@@ -31,7 +33,16 @@ export interface TemporaryMonitor {
   created_at: number
   ends_at: number
   drawing_prompt: string
+  text_disabled: boolean
+  drawing_disabled: boolean
+  text_interval_minutes: number
+  drawing_interval_minutes: number
 }
+export const temporaryProbeSchema = z.object({
+  enabled: z.boolean(),
+  interval_minutes: z.number().int().min(1).max(1440),
+})
+export type TemporaryProbeSettings = z.infer<typeof temporaryProbeSchema>
 export interface MonitorAttempt extends ComparisonAttempt {
   kind: 'text' | 'drawing'
   verdict: string

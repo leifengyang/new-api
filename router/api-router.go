@@ -375,6 +375,8 @@ func SetApiRouter(router *gin.Engine) {
 		temporaryMonitorRoute.POST("", middleware.UserCriticalRateLimit("temporary-monitor"), controller.StartTemporaryMonitor)
 		temporaryMonitorRoute.GET("/:id", controller.GetTemporaryMonitor)
 		temporaryMonitorRoute.POST("/:id/stop", controller.StopTemporaryMonitor)
+		temporaryMonitorRoute.POST("/:id/probes/:kind", controller.UpdateTemporaryMonitorProbe)
+		temporaryMonitorRoute.POST("/:id/probes/:kind/run", middleware.UserCriticalRateLimit("temporary-monitor"), controller.RunTemporaryMonitorProbe)
 		temporaryMonitorRoute.GET("/attempts/:id", controller.GetTemporaryMonitorAttempt)
 		{
 			degradationWatchRoute.GET("/wall", controller.GetDegradationWatchWall)

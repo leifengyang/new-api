@@ -45,9 +45,15 @@ import {
   newTestGroup,
   type ComparisonInput,
 } from '../lib/comparison'
-import { monitorRequest, type TemporaryMonitor } from '../lib/temporary-monitor'
+import {
+  monitorRequest,
+  temporaryProbeSchema,
+  type TemporaryMonitor,
+  type TemporaryProbeSettings,
+} from '../lib/temporary-monitor'
 import { ComparisonGroupEditor } from './comparison-group-editor'
 import { TemporaryMonitorHistory } from './temporary-monitor-history'
+import { TemporaryProbeFields } from './temporary-probe-controls'
 
 export function TemporaryMonitorPanel() {
   const { t } = useTranslation()
@@ -88,7 +94,7 @@ export function TemporaryMonitorPanel() {
           </h3>
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Monitor for 24 hours: text every 3 minutes, drawing every 10 minutes. Stops automatically.'
+              'Monitor for 24 hours with separate schedules for text and drawing. Stops automatically.'
             )}
           </p>
           <Badge variant='secondary'>{t('Administrators only')}</Badge>
@@ -177,6 +183,14 @@ function CreateTemporaryMonitor(props: {
 }) {
   const { t } = useTranslation()
   const [textEffort, setTextEffort] = useState('')
+  const textProbe = useForm<TemporaryProbeSettings>({
+    resolver: zodResolver(temporaryProbeSchema),
+    defaultValues: { enabled: true, interval_minutes: 3 },
+  })
+  const drawingProbe = useForm<TemporaryProbeSettings>({
+    resolver: zodResolver(temporaryProbeSchema),
+    defaultValues: { enabled: true, interval_minutes: 10 },
+  })
   const form = useForm<ComparisonInput>({
     resolver: zodResolver(comparisonSchema),
     defaultValues: {
@@ -194,10 +208,17 @@ function CreateTemporaryMonitor(props: {
         ...values.groups[0],
         text_effort: textEffort,
         drawing_effort: values.groups[0].effort,
+        text_probe: textProbe.getValues(),
+        drawing_probe: drawingProbe.getValues(),
       }),
     onSuccess: props.onCreated,
   })
-  const submit = form.handleSubmit((values) => {
+  const submit = form.handleSubmit(async (values) => {
+    const valid = await Promise.all([
+      textProbe.trigger(),
+      drawingProbe.trigger(),
+    ])
+    if (valid.some((value) => !value)) return
     if (!values.groups[0].api_key.trim() || !efforts.includes(textEffort)) {
       toast.error(t('Check the probe fields before saving'))
       return
@@ -252,9 +273,31 @@ function CreateTemporaryMonitor(props: {
             )}
           </NativeSelect>
         </div>
+        <div className='grid gap-3 sm:grid-cols-2'>
+          <section
+            aria-label={t('Text probes')}
+            className='space-y-3 rounded-lg border bg-emerald-500/5 p-3'
+          >
+            <h4 className='text-sm font-medium'>{t('Text probes')}</h4>
+            <TemporaryProbeFields
+              form={textProbe}
+              disabled={create.isPending}
+            />
+          </section>
+          <section
+            aria-label={t('Drawing checks')}
+            className='space-y-3 rounded-lg border bg-violet-500/5 p-3'
+          >
+            <h4 className='text-sm font-medium'>{t('Drawing checks')}</h4>
+            <TemporaryProbeFields
+              form={drawingProbe}
+              disabled={create.isPending}
+            />
+          </section>
+        </div>
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Monitor for 24 hours: text every 3 minutes, drawing every 10 minutes. Stops automatically.'
+            'Monitor for 24 hours with separate schedules for text and drawing. Stops automatically.'
           )}
         </p>
       </fieldset>
