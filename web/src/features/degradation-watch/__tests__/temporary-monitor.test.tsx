@@ -42,6 +42,8 @@ const monitor: TemporaryMonitor = {
   created_at: 1000,
   ends_at: Math.floor(Date.now() / 1000) + 86400,
   drawing_prompt: 'Draw a complete SVG in HTML',
+  text_prompt: 'Current text question',
+  text_expected: 'Current answer',
   text_disabled: false,
   drawing_disabled: false,
   text_interval_minutes: 3,
@@ -99,7 +101,17 @@ beforeEach(() => {
     }
     if (url.includes('/1/probes/')) {
       const kind = url.includes('/probes/text') ? 'text' : 'drawing'
-      if (url.endsWith('/run')) {
+      if (url.endsWith('/prompt')) {
+        if (failProbeSave) throw new Error('could not save prompt')
+        const input = config.data as { prompt: string; expected: string }
+        monitors = [
+          {
+            ...monitors[0],
+            [`${kind}_prompt`]: input.prompt,
+            ...(kind === 'text' ? { text_expected: input.expected } : {}),
+          },
+        ]
+      } else if (url.endsWith('/run')) {
         queuedKinds.add(kind)
       } else {
         if (failProbeSave) throw new Error('could not save schedule')
@@ -121,6 +133,14 @@ beforeEach(() => {
       return response({
         ...attempt,
         output: 'Full saved upstream answer',
+        prompt: 'Historical actual input',
+        original_prompt: 'Original drawing template',
+        rewrite_prompt: 'Replace the subject with a turtle',
+        preparation: {
+          ...attempt,
+          input_tokens: 123,
+          output: 'Draw a turtle in SVG',
+        },
         html: url.endsWith('/7') ? '' : '<html><svg/></html>',
       })
     }
@@ -130,7 +150,13 @@ beforeEach(() => {
       let attempts = [attempt]
       if (drawing) {
         const ids = older ? [19] : [25, 24, 23, 22, 21]
-        attempts = ids.map((id) => ({ ...attempt, id, kind: 'drawing' }))
+        attempts = ids.map((id) => ({
+          ...attempt,
+          id,
+          kind: 'drawing',
+          subject: '乌龟',
+          phase: 'detecting',
+        }))
       }
       return response({
         monitor: monitors[0],
@@ -425,6 +451,80 @@ test('a failed schedule save preserves the draft and allows retry', async () => 
     expect(text.getByRole('button', { name: 'Save' })).toBeDisabled()
   )
   expect(monitors[0].text_interval_minutes).toBe(9)
+  view.unmount()
+  client.clear()
+})
+
+test('running monitors save text and drawing prompts independently and preserve failed drafts', async () => {
+  queuedKinds = new Set(['text', 'drawing'])
+  const { view, client } = setup()
+  for (const kind of ['Text probes', 'Drawing checks']) {
+    const section = within(await screen.findByRole('region', { name: kind }))
+    expect(
+      await section.findByRole('button', { name: 'Run once' })
+    ).toBeDisabled()
+    fireEvent.click(
+      await section.findByRole('button', { name: 'Edit probe prompt' })
+    )
+    const dialog = within(
+      await screen.findByRole('dialog', { name: 'Edit probe prompt' })
+    )
+    fireEvent.change(dialog.getByLabelText('Prompt'), {
+      target: { value: `Updated ${kind}` },
+    })
+    if (kind === 'Text probes') {
+      fireEvent.change(dialog.getByLabelText('Expected answer'), {
+        target: { value: 'Updated answer' },
+      })
+      failProbeSave = true
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(api.request).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: '/api/degradation_watch/temporary-monitors/1/probes/text/prompt',
+          })
+        )
+      )
+      await waitFor(() =>
+        expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled()
+      )
+      expect(dialog.getByLabelText('Prompt')).toHaveValue('Updated Text probes')
+      expect(monitors[0].text_prompt).toBe(monitor.text_prompt)
+      failProbeSave = false
+    }
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  }
+  expect(monitors[0].text_prompt).toBe('Updated Text probes')
+  expect(monitors[0].text_expected).toBe('Updated answer')
+  expect(monitors[0].drawing_prompt).toBe('Updated Drawing checks')
+  view.unmount()
+  client.clear()
+})
+
+test('drawing details show rewrite usage and the immutable actual input', async () => {
+  const { view, client } = setup()
+  const drawing = within(
+    await screen.findByRole('region', { name: 'Drawing checks' })
+  )
+  fireEvent.click(
+    (await drawing.findAllByRole('button', { name: 'Prompt rewrite' }))[0]
+  )
+  const rewrite = within(
+    await screen.findByRole('dialog', { name: 'Prompt rewrite' })
+  )
+  expect(await rewrite.findByText('Draw a turtle in SVG')).toBeInTheDocument()
+  expect(
+    rewrite.getByRole('button', { name: 'Input tokens: 123' })
+  ).toBeInTheDocument()
+  fireEvent.click(rewrite.getByRole('button', { name: 'Close' }))
+  fireEvent.click(
+    (await drawing.findAllByRole('button', { name: 'View input details' }))[0]
+  )
+  expect(await screen.findByText('Historical actual input')).toBeInTheDocument()
+  expect(screen.queryByText(monitor.drawing_prompt)).not.toBeInTheDocument()
   view.unmount()
   client.clear()
 })

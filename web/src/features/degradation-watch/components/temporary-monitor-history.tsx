@@ -32,12 +32,11 @@ import { useAuthStore } from '@/stores/auth-store'
 import { comparisonRecord } from '../lib/comparison'
 import {
   monitorRequest,
-  monitorResultSource,
   type MonitorAttempt,
   type MonitorHistory,
 } from '../lib/temporary-monitor'
-import { ComparisonResult } from './comparison-results'
 import { StatusBlocks } from './probe-wall'
+import { TemporaryMonitorResult } from './temporary-monitor-result'
 import { TemporaryProbeControls } from './temporary-probe-controls'
 
 export function TemporaryMonitorHistory(props: { monitorID: number }) {
@@ -89,8 +88,6 @@ function TemporaryProbeHistory(props: {
   const errors = stats
     .filter((s) => s.verdict === 'error')
     .reduce((sum, s) => sum + s.count, 0)
-  const prompt =
-    props.kind === 'text' ? head?.text_prompt : head?.monitor.drawing_prompt
   const focused = attempts.find((a) => a.id === selected?.id) ?? selected
   return (
     <section
@@ -157,16 +154,7 @@ function TemporaryProbeHistory(props: {
         <div className='flex gap-4 overflow-x-auto pb-2'>
           {attempts.map((attempt) => (
             <div key={attempt.id} className='w-72 shrink-0'>
-              <ComparisonResult
-                prompt={prompt ?? ''}
-                latest={attempt}
-                attempts={[attempt]}
-                busy={false}
-                onStop={() => {}}
-                onRetry={() => {}}
-                source={monitorResultSource}
-                readOnly
-              />
+              <TemporaryMonitorResult attempt={attempt} />
             </div>
           ))}
         </div>
@@ -187,19 +175,9 @@ function TemporaryProbeHistory(props: {
             if (!open) setSelected(null)
           }}
           title={t('Probe details')}
-          description={head?.expected}
           contentClassName='sm:max-w-3xl'
         >
-          <ComparisonResult
-            prompt={prompt ?? ''}
-            latest={focused}
-            attempts={[focused]}
-            busy={false}
-            onStop={() => {}}
-            onRetry={() => {}}
-            source={monitorResultSource}
-            readOnly
-          />
+          <TemporaryMonitorResult attempt={focused} />
         </Dialog>
       )}
     </section>

@@ -71,6 +71,7 @@ export interface ComparisonRound {
   created_at: number
 }
 export interface ComparisonAttempt {
+  prompt?: string
   id: number
   round_id: number
   group_index: number

@@ -2,7 +2,10 @@ package model
 
 import (
 	"errors"
+	"math/rand/v2"
+	"strings"
 
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
 
@@ -26,6 +29,52 @@ type TemporaryMonitor struct {
 	DrawingDisabled        bool     `json:"drawing_disabled"`
 	TextIntervalMinutes    int      `json:"text_interval_minutes"`
 	DrawingIntervalMinutes int      `json:"drawing_interval_minutes"`
+	TextPrompt             LongText `json:"text_prompt"`
+	TextExpected           LongText `json:"text_expected"`
+}
+
+func (monitor TemporaryMonitor) ProbePrompt(kind string) (LongText, LongText) {
+	if kind == "drawing" {
+		return monitor.DrawingPrompt, ""
+	}
+	prompt, expected := monitor.TextPrompt, monitor.TextExpected
+	if prompt == "" {
+		prompt = LongText(operation_setting.SanaeProbePrompt)
+	}
+	if expected == "" {
+		expected = "高市早苗"
+	}
+	return prompt, expected
+}
+
+func UpdateTemporaryMonitorPrompt(id int, kind, prompt, expected string, now int64) error {
+	prompt, expected = strings.TrimSpace(prompt), strings.TrimSpace(expected)
+	if (kind != "text" && kind != "drawing") || prompt == "" || len([]rune(prompt)) > operation_setting.MaxDegradationWatchPromptLength {
+		return errors.New("invalid probe prompt")
+	}
+	if kind == "text" && (expected == "" || len([]rune(expected)) > 2000) {
+		return errors.New("expected answer must contain 1 to 2000 characters")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var monitor TemporaryMonitor
+		if err := lockForUpdate(tx).First(&monitor, id).Error; err != nil {
+			return err
+		}
+		if monitor.Status != "running" || now >= monitor.EndsAt {
+			return errors.New("monitoring has ended")
+		}
+		// Older releases used the current monitor prompt and did not store snapshots.
+		// Freeze those historical inputs before the first edit changes their source.
+		oldPrompt, oldExpected := monitor.ProbePrompt(kind)
+		if err := tx.Model(&TemporaryMonitorAttempt{}).Where("monitor_id = ? AND kind = ? AND (prompt_captured = ? OR prompt_captured IS NULL)", id, kind, false).Updates(map[string]any{"prompt": oldPrompt, "original_prompt": oldPrompt, "expected": oldExpected, "prompt_captured": true}).Error; err != nil {
+			return err
+		}
+		updates := map[string]any{kind + "_prompt": prompt}
+		if kind == "text" {
+			updates["text_expected"] = expected
+		}
+		return tx.Model(&monitor).Updates(updates).Error
+	})
 }
 
 type TemporaryProbeSettings struct {
@@ -125,10 +174,18 @@ func QueueTemporaryMonitorProbe(id int, kind string, now int64) (*TemporaryMonit
 
 type TemporaryMonitorAttempt struct {
 	SelfTestAttempt `gorm:"embedded"`
-	MonitorID       int    `json:"monitor_id" gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
-	Kind            string `json:"kind" gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
-	Slot            int64  `json:"slot" gorm:"uniqueIndex:idx_temp_monitor_slot"`
-	Verdict         string `json:"verdict" gorm:"size:16"`
+	MonitorID       int      `json:"monitor_id" gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
+	Kind            string   `json:"kind" gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
+	Slot            int64    `json:"slot" gorm:"uniqueIndex:idx_temp_monitor_slot"`
+	Verdict         string   `json:"verdict" gorm:"size:16"`
+	Prompt          LongText `json:"prompt"`
+	OriginalPrompt  LongText `json:"original_prompt"`
+	Expected        LongText `json:"expected"`
+	PromptCaptured  bool     `json:"prompt_captured"`
+	Phase           string   `json:"phase" gorm:"size:16"`
+	Subject         string   `json:"subject" gorm:"size:64"`
+	RewritePrompt   LongText `json:"rewrite_prompt"`
+	RewriteResult   LongText `json:"-"`
 }
 
 func CreateTemporaryMonitor(monitor *TemporaryMonitor) error {
@@ -212,6 +269,29 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 			if err := tx.Model(&attempt).Updates(map[string]any{"status": attempt.Status, "runner": runner, "started_at": attempt.StartedAt}).Error; err != nil {
 				return err
 			}
+		}
+		attempt.OriginalPrompt, attempt.Expected = monitor.ProbePrompt(kind)
+		attempt.Prompt, attempt.PromptCaptured, attempt.Phase = attempt.OriginalPrompt, true, "detecting"
+		if kind == "drawing" {
+			subjects := []string{"Tibo", "小恐龙", "乌龟", "企鹅", "浣熊", "水豚", "小狐狸", "机器人"}
+			var previous TemporaryMonitorAttempt
+			err := tx.Select("subject").Where("monitor_id = ? AND kind = ? AND id < ?", id, kind, attempt.ID).Order("id desc").First(&previous).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			choices := make([]string, 0, len(subjects))
+			for _, subject := range subjects {
+				if subject != previous.Subject && !strings.Contains(strings.ToLower(string(attempt.OriginalPrompt)), strings.ToLower(subject)) {
+					choices = append(choices, subject)
+				}
+			}
+			if len(choices) == 0 {
+				choices = []string{"戴红帽子的机械小熊"}
+			}
+			attempt.Subject, attempt.Phase, attempt.Prompt = choices[rand.IntN(len(choices))], "rewriting", ""
+		}
+		if err := tx.Model(&attempt).Updates(map[string]any{"prompt": attempt.Prompt, "original_prompt": attempt.OriginalPrompt, "expected": attempt.Expected, "prompt_captured": true, "subject": attempt.Subject, "phase": attempt.Phase}).Error; err != nil {
+			return err
 		}
 		// Only the session stores the encrypted key. Worker copies stay in memory.
 		attempt.Secret = monitor.Secret

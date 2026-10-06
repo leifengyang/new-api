@@ -376,6 +376,7 @@ func SetApiRouter(router *gin.Engine) {
 		temporaryMonitorRoute.GET("/:id", controller.GetTemporaryMonitor)
 		temporaryMonitorRoute.POST("/:id/stop", controller.StopTemporaryMonitor)
 		temporaryMonitorRoute.POST("/:id/probes/:kind", controller.UpdateTemporaryMonitorProbe)
+		temporaryMonitorRoute.POST("/:id/probes/:kind/prompt", controller.UpdateTemporaryMonitorPrompt)
 		temporaryMonitorRoute.POST("/:id/probes/:kind/run", middleware.UserCriticalRateLimit("temporary-monitor"), controller.RunTemporaryMonitorProbe)
 		temporaryMonitorRoute.GET("/attempts/:id", controller.GetTemporaryMonitorAttempt)
 		{
