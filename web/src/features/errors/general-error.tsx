@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useNavigate, useRouter } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { isChunkLoadError, recoverChunkLoadError } from '@/lib/chunk-recovery'
 import { cn } from '@/lib/utils'
 
 const FEEDBACK_URL = 'https://github.com/QuantumNous/new-api/issues'
@@ -27,6 +29,7 @@ const FEEDBACK_URL = 'https://github.com/QuantumNous/new-api/issues'
 type GeneralErrorProps = React.HTMLAttributes<HTMLDivElement> & {
   minimal?: boolean
   error?: unknown
+  statusCode?: number
 }
 
 function getHttpStatus(error: unknown): number | undefined {
@@ -34,35 +37,49 @@ function getHttpStatus(error: unknown): number | undefined {
   const response = (error as Record<string, unknown>).response
   if (typeof response !== 'object' || response === null) return undefined
   const status = (response as Record<string, unknown>).status
-  return typeof status === 'number' ? status : undefined
+  return typeof status === 'number' &&
+    Number.isInteger(status) &&
+    status >= 400 &&
+    status <= 599
+    ? status
+    : undefined
 }
 
 export function GeneralError({
   className,
   minimal = false,
   error,
+  statusCode,
 }: GeneralErrorProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { history } = useRouter()
-  const status = getHttpStatus(error)
+  const status = getHttpStatus(error) ?? statusCode
+  const resourceError = isChunkLoadError(error)
+  useEffect(() => {
+    recoverChunkLoadError(error, () => window.location.reload())
+  }, [error])
   const isRateLimited = status === 429
-  const title = isRateLimited
+  let title = isRateLimited
     ? t('Too many requests')
     : `${t('Oops! Something went wrong')} ${`:')`}`
-  const description = isRateLimited
+  let description = isRateLimited
     ? t('Please wait a moment before trying again.')
     : t('Please try again later.')
+  if (resourceError) {
+    title = t('Page resources could not be loaded')
+    description = t(
+      'The page may have been updated or the connection interrupted. Reload the page to try again.'
+    )
+  }
 
   return (
     <div className={cn('h-svh w-full', className)}>
-      <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
-        {!minimal && (
-          <h1 className='text-[7rem] leading-tight font-bold'>
-            {status ?? 500}
-          </h1>
+      <div className='m-auto flex min-h-full w-full max-w-2xl flex-col items-center justify-center gap-3 px-6 py-10'>
+        {!minimal && status !== undefined && (
+          <h1 className='text-[7rem] leading-tight font-bold'>{status}</h1>
         )}
-        <span className='font-medium'>{title}</span>
+        <h2 className='text-center text-xl font-medium'>{title}</h2>
         <p className='text-muted-foreground text-center'>
           {t('We apologize for the inconvenience.')} <br /> {description}
         </p>
@@ -73,6 +90,9 @@ export function GeneralError({
         )}
         {!minimal && (
           <div className='mt-6 flex flex-wrap justify-center gap-4'>
+            <Button onClick={() => window.location.reload()}>
+              {t('Reload page')}
+            </Button>
             <Button variant='outline' onClick={() => history.go(-1)}>
               {t('Go Back')}
             </Button>
@@ -88,7 +108,7 @@ export function GeneralError({
             >
               {t('Report an issue')}
             </Button>
-            <Button onClick={() => navigate({ to: '/' })}>
+            <Button variant='outline' onClick={() => navigate({ to: '/' })}>
               {t('Back to Home')}
             </Button>
           </div>
