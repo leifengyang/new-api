@@ -30,6 +30,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { TemporaryMonitorPanel } from '../components/temporary-monitor-panel'
+import { TemporaryMonitorResult } from '../components/temporary-monitor-result'
 import { newTestGroup, type TestGroup } from '../lib/comparison'
 import type { MonitorAttempt, TemporaryMonitor } from '../lib/temporary-monitor'
 
@@ -241,6 +242,42 @@ function setup() {
   )
   return { client, view }
 }
+
+test('a blue temporary probe shows the error from its own linked drawing', async () => {
+  const blue = { ...attempt, verdict: 'intermediate' }
+  const drawing = {
+    ...attempt,
+    id: 100,
+    kind: 'drawing',
+    status: 'failed',
+    verdict: 'error',
+    error: 'Linked drawing upstream unavailable',
+  }
+  vi.mocked(api.request).mockImplementation(async (config) => ({
+    data: {
+      success: true,
+      data: String(config.url).endsWith('/100')
+        ? drawing
+        : { ...blue, linked_drawing: drawing },
+    },
+  }))
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const view = render(
+    <QueryClientProvider client={client}>
+      <TemporaryMonitorResult attempt={blue} />
+    </QueryClientProvider>
+  )
+  expect(
+    await screen.findByText('Drawing triggered by this blue probe')
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByText('Linked drawing upstream unavailable')
+  ).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
 
 test('deletion requires confirmation, preserves the monitor on failure and removes it after success', async () => {
   const { client, view } = setup()

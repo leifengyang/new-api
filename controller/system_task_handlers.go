@@ -24,6 +24,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 	service.RegisterSystemTaskHandler(degradationWatchHandler{})
 	service.RegisterSystemTaskHandler(degradationTextProbeHandler{})
+	service.RegisterSystemTaskHandler(degradationFollowupHandler{})
 	service.RegisterSystemTaskHandler(selfTestHandler{})
 	service.RegisterSystemTaskHandler(temporaryMonitorHandler{})
 }

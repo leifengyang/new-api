@@ -57,10 +57,12 @@ let records: DegradationWatchRecord[]
 let since = 0
 let drawings: DegradationWatchRecord[] = []
 let failOlderDrawings = false
+let linkedDrawing: DegradationWatchRecord | null = null
 beforeEach(() => {
   since = 0
   drawings = []
   failOlderDrawings = false
+  linkedDrawing = null
   records = [
     { ...record, id: 7, success: false, status: 'running' },
     {
@@ -168,6 +170,7 @@ beforeEach(() => {
             prompt: 'historic prompt',
             expected: 'expected answer',
             intermediate_expected: 'historic blue answer',
+            linked_drawing: linkedDrawing,
             match: 'exact',
             output: 'full model response',
           },
@@ -219,6 +222,47 @@ test('blue grades have a separate count and open the recorded grading rules', as
   expect(dialog.getByText('expected answer')).toBeInTheDocument()
   expect(dialog.getByText('Intermediate result')).toHaveClass('text-blue-700')
   expect(dialog.getByText('full model response')).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+test('a blue probe opens its own drawing and updates from queued to a finished preview', async () => {
+  records = [{ ...record, id: 7, success: false, verdict: 'intermediate' }]
+  drawings = [
+    { ...record, id: 100, probe_kind: 'drawing', probe_id: 'drawing' },
+  ]
+  linkedDrawing = { ...drawings[0], status: 'queued', success: false }
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  fireEvent.click(
+    await section.findByRole('button', { name: /· Intermediate result$/ })
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Probe details' })
+  )
+  expect(
+    await dialog.findByText('Drawing triggered by this blue probe')
+  ).toBeInTheDocument()
+  expect(dialog.getByText('Queued')).toBeInTheDocument()
+  expect(
+    dialog.queryByRole('button', { name: 'View artwork' })
+  ).not.toBeInTheDocument()
+  linkedDrawing = drawings[0]
+  await act(async () => {
+    await client.invalidateQueries({
+      queryKey: ['degradation-watch', 'record', 7],
+    })
+  })
+  fireEvent.click(await dialog.findByRole('button', { name: 'View artwork' }))
+  const drawingDialog = within(
+    await screen.findByRole('dialog', { name: 'Drawing check details' })
+  )
+  fireEvent.click(
+    drawingDialog.getByRole('button', { name: 'View input details' })
+  )
+  expect(await screen.findByText('saved drawing prompt')).toBeInTheDocument()
   view.unmount()
   client.clear()
 })

@@ -245,7 +245,18 @@ func executeDegradationProbes(ctx context.Context, task *model.SystemTask, runne
 			}
 			progress(&model.DegradationWatchRecord{TokensEstimated: true})
 			performDegradationProbe(requestCtx, job, userID, record, progress)
-			err := model.FinishDegradationWatchRecord(record)
+			var drawing *model.DegradationWatchRecord
+			if record.ProbeKind == "text" && record.Verdict == "intermediate" {
+				drawing = blueProbeDrawingRecord(plan, job.target, record)
+			}
+			err := model.FinishDegradationWatchRecordAndQueueDrawing(record, drawing)
+			if err == nil && drawing != nil {
+				// The durable queued record is retried by the scheduler if a wakeup
+				// races the previous dispatcher finishing or process shutdown.
+				if _, _, enqueueErr := service.EnqueueSystemTask("degradation_probe_followup", nil); enqueueErr != nil {
+					common.SysError("could not wake linked drawing dispatcher: " + enqueueErr.Error())
+				}
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -415,11 +426,23 @@ func canViewDegradationProbeRecord(record *model.DegradationWatchRecord) bool {
 	if err != nil {
 		return false
 	}
+	linkedVisible := false
+	if record.TriggerRecordID != nil {
+		parent, err := model.GetDegradationWatchRecordMeta(*record.TriggerRecordID)
+		if err != nil || parent.Hidden || parent.TriggerRecordID != nil || parent.ProbeKind != "text" || parent.Verdict != "intermediate" || parent.ChannelId != record.ChannelId || parent.ModelName != record.ModelName || parent.GroupName != record.GroupName || !canViewDegradationProbeRecord(parent) {
+			return false
+		}
+		linkedVisible = true
+	}
+	configured := false
 	for _, target := range plan.Targets {
 		if target.ChannelID != record.ChannelId || target.Model != record.ModelName {
 			continue
 		}
 		for _, binding := range target.Probes {
+			if record.GroupName == target.Group && record.ProbeID == binding.ProbeID {
+				configured = true
+			}
 			if !binding.IsPublic(target) {
 				continue
 			}
@@ -434,7 +457,7 @@ func canViewDegradationProbeRecord(record *model.DegradationWatchRecord) bool {
 			}
 		}
 	}
-	return false
+	return linkedVisible && !configured
 }
 
 var probeURLPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)

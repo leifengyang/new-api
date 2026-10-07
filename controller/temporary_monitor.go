@@ -219,10 +219,19 @@ func GetTemporaryMonitorAttempt(c *gin.Context) {
 	if attempt.RewriteResult != "" {
 		err = common.UnmarshalJsonStr(string(attempt.RewriteResult), &preparation)
 	}
+	var drawing *model.TemporaryMonitorAttempt
+	if err == nil && attempt.Kind == "text" && attempt.Verdict == "intermediate" {
+		var linked []model.TemporaryMonitorAttempt
+		err = model.DB.Omit("secret", "output", "html", "prompt", "original_prompt", "expected", "intermediate_expected", "rewrite_prompt", "rewrite_result").Where("monitor_id = ? AND trigger_attempt_id = ?", attempt.MonitorID, attempt.ID).Limit(1).Find(&linked).Error
+		if len(linked) > 0 {
+			drawing = &linked[0]
+		}
+	}
 	selfTestResponse(c, struct {
 		model.TemporaryMonitorAttempt
-		Preparation *model.SelfTestAttempt `json:"preparation,omitempty"`
-	}{attempt, preparation}, err)
+		Preparation   *model.SelfTestAttempt         `json:"preparation,omitempty"`
+		LinkedDrawing *model.TemporaryMonitorAttempt `json:"linked_drawing,omitempty"`
+	}{attempt, preparation, drawing}, err)
 }
 
 func UpdateTemporaryMonitorPrompt(c *gin.Context) {
@@ -558,6 +567,6 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 			}
 			updates["verdict"] = verdict
 		}
-		return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error
+		return model.UpdateTemporaryMonitorAttempt(attempt, runner, updates, final && attempt.Kind == "text" && updates["verdict"] == "intermediate")
 	}, active)
 }

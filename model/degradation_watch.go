@@ -20,9 +20,11 @@ type DegradationWatchRecord struct {
 	PromptSnapshot               LongText `json:"-"`
 	ExpectedSnapshot             LongText `json:"-"`
 	IntermediateExpectedSnapshot LongText `json:"-"`
-	MatchSnapshot                string   `json:"match" gorm:"type:varchar(16);not null;default:''"`
-	Id                           int      `json:"id"`
-	ChannelId                    int      `json:"channel_id" gorm:"index;not null"`
+	// NULL for scheduled/manual checks; one durable drawing per blue source record.
+	TriggerRecordID *int   `json:"-" gorm:"uniqueIndex"`
+	MatchSnapshot   string `json:"match" gorm:"type:varchar(16);not null;default:''"`
+	Id              int    `json:"id"`
+	ChannelId       int    `json:"channel_id" gorm:"index;not null"`
 	// RunId ties each model/channel attempt to its background batch. Legacy records may be empty.
 	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:'';index"`
 	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
@@ -74,6 +76,7 @@ func PruneExpiredDegradationWatchRecords(now int64) (int64, error) {
 
 // degradationWatchListColumns 是列表查询要的列，刻意不含 html。
 var degradationWatchListColumns = []string{
+	"trigger_record_id",
 	"group_name", "probe_id", "probe_name", "probe_kind", "verdict", "match_snapshot",
 	"id", "channel_id", "run_id", "model_name", "reasoning_effort", "success", "failure_reason",
 	"elapsed_ms", "prompt_tokens", "completion_tokens", "reasoning_tokens", "hidden", "created_at",
@@ -116,6 +119,10 @@ func UpdateDegradationWatchProgress(record *DegradationWatchRecord) error {
 }
 
 func FinishDegradationWatchRecord(record *DegradationWatchRecord) error {
+	return FinishDegradationWatchRecordAndQueueDrawing(record, nil)
+}
+
+func FinishDegradationWatchRecordAndQueueDrawing(record, drawing *DegradationWatchRecord) error {
 	if record.Success || record.Verdict == "intermediate" {
 		record.Status = "succeeded"
 	} else {
@@ -127,18 +134,61 @@ func FinishDegradationWatchRecord(record *DegradationWatchRecord) error {
 	if runes := []rune(record.FailureReason); len(runes) > maxDegradationWatchFailureReasonRunes {
 		record.FailureReason = string(runes[:maxDegradationWatchFailureReasonRunes])
 	}
-	return DB.Model(&DegradationWatchRecord{}).Where("id = ? AND status IN ?", record.Id, []string{"queued", "running"}).Updates(map[string]any{
-		"verdict": record.Verdict,
-		"status":  record.Status, "success": record.Success, "failure_reason": record.FailureReason, "error_details": record.ErrorDetails,
-		"html": record.Html, "output_text": record.OutputText, "elapsed_ms": record.ElapsedMs,
-		"prompt_tokens": record.PromptTokens, "completion_tokens": record.CompletionTokens, "reasoning_tokens": record.ReasoningTokens, "tokens_estimated": record.TokensEstimated,
-	}).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&DegradationWatchRecord{}).Where("id = ? AND status IN ?", record.Id, []string{"queued", "running"}).Updates(map[string]any{
+			"verdict": record.Verdict,
+			"status":  record.Status, "success": record.Success, "failure_reason": record.FailureReason, "error_details": record.ErrorDetails,
+			"html": record.Html, "output_text": record.OutputText, "elapsed_ms": record.ElapsedMs,
+			"prompt_tokens": record.PromptTokens, "completion_tokens": record.CompletionTokens, "reasoning_tokens": record.ReasoningTokens, "tokens_estimated": record.TokensEstimated,
+		})
+		if result.Error != nil || result.RowsAffected == 0 || drawing == nil {
+			return result.Error
+		}
+		if record.ProbeKind != "text" || record.Verdict != "intermediate" {
+			return errors.New("only blue text probes can trigger a drawing")
+		}
+		drawing.TriggerRecordID = &record.Id
+		drawing.Status, drawing.RunId = "queued", ""
+		if drawing.CreatedAt == 0 {
+			drawing.CreatedAt = common.GetTimestamp()
+		}
+		return tx.Create(drawing).Error
+	})
 }
 
 func GetDegradationWatchOutput(id int) (string, error) {
 	var record DegradationWatchRecord
 	err := DB.Select("id", "output_text").Where("id = ?", id).First(&record).Error
 	return string(record.OutputText), err
+}
+
+func ClaimBlueProbeDrawing(id int, runID string) (bool, error) {
+	claimed := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var record DegradationWatchRecord
+		if err := tx.First(&record, id).Error; err != nil {
+			return err
+		}
+		if record.TriggerRecordID == nil || record.Status != "queued" {
+			return nil
+		}
+		var channel Channel
+		err := lockForUpdate(tx).Select("id").First(&channel, record.ChannelId).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var running int64
+		if err := tx.Model(&DegradationWatchRecord{}).Where("channel_id = ? AND model_name = ? AND probe_kind = ? AND status = ?", record.ChannelId, record.ModelName, "drawing", "running").Count(&running).Error; err != nil {
+			return err
+		}
+		if running > 0 {
+			return nil
+		}
+		result := tx.Model(&record).Where("status = ?", "queued").Updates(map[string]any{"status": "running", "run_id": runID})
+		claimed = result.RowsAffected == 1
+		return result.Error
+	})
+	return claimed, err
 }
 
 func GetDegradationWatchActivity() (*SystemTask, []*DegradationWatchRecord, error) {
@@ -159,8 +209,8 @@ func GetDegradationWatchActivity() (*SystemTask, []*DegradationWatchRecord, erro
 
 // Recover records left behind by a crashed or cancelled system-task runner.
 func FailInterruptedDegradationWatchRecords() error {
-	activeRuns := DB.Model(&SystemTask{}).Select("task_id").Where("type IN ? AND status IN ?", []string{SystemTaskTypeDegradationWatch, "degradation_probe_text"}, activeSystemTaskStatuses())
-	return DB.Model(&DegradationWatchRecord{}).Where("status IN ? AND run_id NOT IN (?)", []string{"queued", "running"}, activeRuns).Updates(map[string]any{
+	activeRuns := DB.Model(&SystemTask{}).Select("task_id").Where("type IN ? AND status IN ?", []string{SystemTaskTypeDegradationWatch, "degradation_probe_text", "degradation_probe_followup"}, activeSystemTaskStatuses())
+	return DB.Model(&DegradationWatchRecord{}).Where("status IN ? AND run_id NOT IN (?)", []string{"queued", "running"}, activeRuns).Where("NOT (status = ? AND trigger_record_id IS NOT NULL)", "queued").Updates(map[string]any{
 		"status": "failed", "failure_reason": "interrupted", "error_details": "Detection interrupted: its background task stopped or lost its execution lease.",
 	}).Error
 }

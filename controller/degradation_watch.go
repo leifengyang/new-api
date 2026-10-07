@@ -975,7 +975,12 @@ func GetDegradationWatchRecord(c *gin.Context) {
 	if !visibility.admin {
 		output = publicDegradationProbeError(output, record.ChannelId)
 	}
-	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output, "prompt": string(content.PromptSnapshot), "expected": string(content.ExpectedSnapshot), "intermediate_expected": string(content.IntermediateExpectedSnapshot), "match": content.MatchSnapshot})
+	drawing, err := linkedProbeDrawing(record, visibility)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output, "prompt": string(content.PromptSnapshot), "expected": string(content.ExpectedSnapshot), "intermediate_expected": string(content.IntermediateExpectedSnapshot), "match": content.MatchSnapshot, "linked_drawing": drawing})
 }
 
 func GetDegradationWatchActivity(c *gin.Context) {

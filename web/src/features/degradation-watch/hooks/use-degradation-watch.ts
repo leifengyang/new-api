@@ -136,7 +136,12 @@ export function useDegradationWatchRecord(id: number | undefined) {
     },
     refetchInterval: (query) => {
       const status = query.state.data?.record.status
-      return status === 'queued' || status === 'running' ? 1_000 : false
+      const drawingStatus = query.state.data?.linked_drawing?.status
+      return [status, drawingStatus].some(
+        (value) => value === 'queued' || value === 'running'
+      )
+        ? 1_000
+        : false
     },
   })
 }
