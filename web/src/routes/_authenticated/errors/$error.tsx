@@ -40,7 +40,7 @@ function RouteComponent() {
     unauthorized: UnauthorisedError,
     forbidden: ForbiddenError,
     'not-found': NotFoundError,
-    'internal-server-error': GeneralError,
+    'internal-server-error': () => <GeneralError statusCode={500} />,
     'maintenance-error': MaintenanceError,
   }
   const ErrorComponent = errorMap[error] || NotFoundError

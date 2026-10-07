@@ -38,4 +38,5 @@ COPY --from=builder2 /build/new-api /
 COPY LICENSE NOTICE THIRD-PARTY-LICENSES.md /licenses/
 EXPOSE 3000
 WORKDIR /data
+ENV WEB_ASSET_ARCHIVE_DIR=/data/web-assets
 ENTRYPOINT ["/new-api"]
