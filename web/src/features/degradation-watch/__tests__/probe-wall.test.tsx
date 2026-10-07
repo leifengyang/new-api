@@ -127,6 +127,9 @@ beforeEach(() => {
                 interval_minutes: 5,
                 stats: {
                   passed: 1,
+                  intermediate: records.filter(
+                    (item) => item.verdict === 'intermediate'
+                  ).length,
                   mismatched: 1,
                   errors: 1,
                   avg_elapsed_ms: 1000,
@@ -164,6 +167,7 @@ beforeEach(() => {
             record: records[0],
             prompt: 'historic prompt',
             expected: 'expected answer',
+            intermediate_expected: 'historic blue answer',
             match: 'exact',
             output: 'full model response',
           },
@@ -185,6 +189,39 @@ function setup() {
   )
   return { client, view }
 }
+
+test('blue grades have a separate count and open the recorded grading rules', async () => {
+  records = [
+    { ...record, id: 7, success: false, verdict: 'intermediate' },
+    { ...record, id: 6, success: false, status: 'running', verdict: '' },
+    record,
+  ]
+  const { view, client } = setup()
+  const section = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  const blue = await section.findByRole('button', {
+    name: /· Intermediate result$/,
+  })
+  expect(blue).toHaveClass('bg-blue-500')
+  expect(blue).toBeEmptyDOMElement()
+  expect(section.getByRole('button', { name: /· Running$/ })).toHaveClass(
+    'bg-violet-500'
+  )
+  expect(section.getByText('Intermediate result: 1')).toBeInTheDocument()
+  expect(section.getByText('1/3 Passed')).toBeInTheDocument()
+  expect(section.getByText('Exceptions: 1')).toBeInTheDocument()
+  fireEvent.click(blue)
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Probe details' })
+  )
+  expect(await dialog.findByText('historic blue answer')).toBeInTheDocument()
+  expect(dialog.getByText('expected answer')).toBeInTheDocument()
+  expect(dialog.getByText('Intermediate result')).toHaveClass('text-blue-700')
+  expect(dialog.getByText('full model response')).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
 
 test('probe blocks stay text-free even when answers are present and still open full details', async () => {
   records = [

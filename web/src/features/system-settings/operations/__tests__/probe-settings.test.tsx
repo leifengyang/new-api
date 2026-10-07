@@ -602,6 +602,15 @@ test('template and runtime dialogs validate edits before staging and saving', as
   await user.click(screen.getByRole('button', { name: 'Apply to form' }))
   expect(screen.getByRole('alert')).toBeInTheDocument()
   await user.type(prompt, 'Updated prompt')
+  const blue = screen.getByRole('textbox', {
+    name: 'Blue answer (intermediate)',
+  })
+  await user.clear(blue)
+  await user.type(blue, plan.probes[0].expected)
+  await user.click(screen.getByRole('button', { name: 'Apply to form' }))
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  await user.clear(blue)
+  await user.type(blue, 'Secondary answer')
   await user.click(screen.getByRole('button', { name: 'Apply to form' }))
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -615,7 +624,13 @@ test('template and runtime dialogs validate edits before staging and saving', as
       '/api/degradation_watch/probe-plan',
       expect.objectContaining({
         timeout_seconds: 1800,
-        probes: [{ ...plan.probes[0], prompt: 'Updated prompt' }],
+        probes: [
+          {
+            ...plan.probes[0],
+            prompt: 'Updated prompt',
+            intermediate_expected: 'Secondary answer',
+          },
+        ],
       })
     )
   )

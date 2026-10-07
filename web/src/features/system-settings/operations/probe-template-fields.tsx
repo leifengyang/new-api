@@ -16,14 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useWatch, type UseFormReturn } from 'react-hook-form'
+import { Controller, useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import type { ProbePlan } from '@/features/degradation-watch/lib/probes'
+import {
+  intermediateAnswer,
+  type ProbePlan,
+} from '@/features/degradation-watch/lib/probes'
 
 export function ProbeTemplateFields({
   form,
@@ -74,6 +77,28 @@ export function ProbeTemplateFields({
             {t('Expected answer')}
             <Input {...form.register(`probes.${index}.expected`)} />
           </Label>
+          <Label className='grid gap-2 text-blue-700 dark:text-blue-300'>
+            {t('Blue answer (intermediate)')}
+            <Controller
+              control={form.control}
+              name={`probes.${index}.intermediate_expected`}
+              render={({ field }) => (
+                <Input
+                  {...field}
+                  value={
+                    field.value ??
+                    intermediateAnswer(plan.probes[index].expected)
+                  }
+                  maxLength={2000}
+                />
+              )}
+            />
+          </Label>
+          <p className='text-muted-foreground text-xs sm:col-span-2'>
+            {t(
+              'Green matches the expected answer; blue is counted separately; other answers are red. Leave blue blank to disable it.'
+            )}
+          </p>
           <Label className='grid gap-2'>
             {t('Answer matching')}
             <NativeSelect {...form.register(`probes.${index}.match`)}>

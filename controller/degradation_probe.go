@@ -209,7 +209,7 @@ func executeDegradationProbes(ctx context.Context, task *model.SystemTask, runne
 	}()
 	for _, job := range jobs {
 		record := &model.DegradationWatchRecord{RunId: task.TaskID, ChannelId: job.target.ChannelID, GroupName: job.target.Group, ModelName: job.target.Model, ReasoningEffort: job.target.ReasoningEffort,
-			ProbeID: job.probe.ID, ProbeName: job.probe.Name, ProbeKind: job.probe.Kind, PromptSnapshot: model.LongText(job.probe.Prompt), ExpectedSnapshot: model.LongText(job.probe.Expected), MatchSnapshot: job.probe.Match, Status: "queued", TokensEstimated: true}
+			ProbeID: job.probe.ID, ProbeName: job.probe.Name, ProbeKind: job.probe.Kind, PromptSnapshot: model.LongText(job.probe.Prompt), ExpectedSnapshot: model.LongText(job.probe.Expected), IntermediateExpectedSnapshot: model.LongText(job.probe.IntermediateAnswer()), MatchSnapshot: job.probe.Match, Status: "queued", TokensEstimated: true}
 		if err := model.CreateDegradationWatchRecord(record); err != nil {
 			return summary, err
 		}
@@ -254,6 +254,8 @@ func executeDegradationProbes(ctx context.Context, task *model.SystemTask, runne
 			summary.Tested++
 			if record.Success {
 				summary.Succeeded++
+			} else if record.Verdict == "intermediate" {
+				summary.Intermediate++
 			} else {
 				summary.Failed++
 			}
@@ -311,6 +313,11 @@ func evaluateDegradationProbe(record *model.DegradationWatchRecord, probe operat
 			record.Success = strings.Contains(answer, strings.TrimSpace(probe.Expected))
 		}
 		if !record.Success {
+			intermediate := probe.IntermediateAnswer()
+			if intermediate != "" && (answer == intermediate || (probe.Match == "contains" && strings.Contains(answer, intermediate))) {
+				record.Verdict, record.FailureReason = "intermediate", ""
+				return
+			}
 			record.FailureReason = "answer_mismatch"
 		}
 	}

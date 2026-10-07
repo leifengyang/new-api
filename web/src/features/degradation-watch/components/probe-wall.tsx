@@ -45,9 +45,10 @@ import { ProbeRecordDialog } from './probe-record-dialog'
 
 const verdictClasses = {
   passed: 'bg-emerald-500 hover:bg-emerald-400',
+  intermediate: 'bg-blue-500 hover:bg-blue-400',
   mismatch: 'bg-rose-500 hover:bg-rose-400',
   error: 'bg-amber-400 hover:bg-amber-300',
-  running: 'bg-sky-500 motion-safe:animate-pulse',
+  running: 'bg-violet-500 motion-safe:animate-pulse',
   queued: 'bg-muted-foreground/30',
   cancelled: 'bg-muted-foreground/30',
 }
@@ -59,6 +60,7 @@ export function StatusBlocks(props: {
   const { t } = useTranslation()
   const labels = {
     passed: t('Passed'),
+    intermediate: t('Intermediate result'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -159,7 +161,8 @@ function ProbeStrip(props: {
     ),
   }
   const stats = row.stats
-  const denominator = stats.passed + stats.mismatched
+  const denominator =
+    stats.passed + stats.mismatched + (stats.intermediate ?? 0)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const rate =
     denominator > 0
@@ -179,6 +182,7 @@ function ProbeStrip(props: {
   }, [latest?.id, frozen])
   const latestLabels = {
     passed: row.kind === 'drawing' ? t('Drawing generated') : t('Passed'),
+    intermediate: t('Intermediate result'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -217,6 +221,12 @@ function ProbeStrip(props: {
           {stats.errors > 0 && (
             <span className='text-amber-700 dark:text-amber-400'>
               {t('Exceptions')}: {formatNumber(stats.errors, locale)}
+            </span>
+          )}
+          {(stats.intermediate ?? 0) > 0 && (
+            <span className='text-blue-700 dark:text-blue-300'>
+              {t('Intermediate result')}:{' '}
+              {formatNumber(stats.intermediate, locale)}
             </span>
           )}
         </div>
@@ -447,6 +457,7 @@ export function ProbeWall() {
               <div className='text-muted-foreground flex flex-wrap gap-3 text-xs'>
                 {[
                   [verdictClasses.passed, t('Passed')],
+                  [verdictClasses.intermediate, t('Intermediate result')],
                   [verdictClasses.mismatch, t('Answer or drawing mismatch')],
                   [verdictClasses.error, t('Request error')],
                   [verdictClasses.running, t('Running')],

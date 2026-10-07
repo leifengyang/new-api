@@ -26,7 +26,9 @@ import { Dialog } from '@/components/dialog'
 import { EmptyState } from '@/components/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ProbeAnswerRules } from '@/features/degradation-watch/components/probe-answer-rules'
 import {
+  intermediateAnswer,
   probePlanSchema,
   type ProbePlan,
 } from '@/features/degradation-watch/lib/probes'
@@ -104,17 +106,14 @@ export function ProbeTemplatesEditor({
               {probe.prompt}
             </p>
             {probe.kind === 'text' && (
-              <div className='bg-muted/40 rounded-lg px-3 py-2 text-sm'>
-                <span className='text-muted-foreground mr-2'>
-                  {t('Expected answer')}
-                </span>
-                <span className='font-medium break-all'>{probe.expected}</span>
-                <p className='text-muted-foreground mt-1 text-xs'>
-                  {probe.match === 'exact'
-                    ? t('Exact match (trim whitespace)')
-                    : t('Contains answer')}
-                </p>
-              </div>
+              <ProbeAnswerRules
+                expected={probe.expected}
+                intermediate={intermediateAnswer(
+                  probe.expected,
+                  probe.intermediate_expected
+                )}
+                match={probe.match}
+              />
             )}
             <div className='mt-auto flex items-center justify-between border-t pt-3'>
               <span className='text-muted-foreground text-xs'>

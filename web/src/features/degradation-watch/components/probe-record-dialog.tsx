@@ -39,6 +39,7 @@ import {
 import { probeVerdict } from '../lib/probes'
 import type { DegradationWatchRecord } from '../types'
 import { ArtworkFrame } from './artwork-frame'
+import { ProbeAnswerRules } from './probe-answer-rules'
 import { RecordUsage, TextOutputPreview } from './record-card'
 
 export function ProbeRecordDialog(props: {
@@ -57,6 +58,7 @@ export function ProbeRecordDialog(props: {
   const inputId = useId()
   const labels = {
     passed: drawing ? t('Drawing generated') : t('Passed'),
+    intermediate: t('Intermediate result'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -131,7 +133,9 @@ export function ProbeRecordDialog(props: {
             variant='outline'
             className={cn(
               probeVerdict(record) === 'passed' &&
-                'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+              probeVerdict(record) === 'intermediate' &&
+                'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300'
             )}
           >
             {labels[probeVerdict(record)]}
@@ -174,19 +178,11 @@ export function ProbeRecordDialog(props: {
               input
             )}
             {!drawing && (
-              <section className='rounded-xl border p-3'>
-                <h3 className='mb-2 text-sm font-medium'>
-                  {t('Expected answer')}
-                </h3>
-                <pre className='max-h-40 overflow-auto text-sm break-all whitespace-pre-wrap'>
-                  {detail.data?.expected ?? ''}
-                </pre>
-                <p className='text-muted-foreground mt-2 text-xs'>
-                  {detail.data?.match === 'contains'
-                    ? t('Contains answer')
-                    : t('Exact match (trim whitespace)')}
-                </p>
-              </section>
+              <ProbeAnswerRules
+                expected={detail.data?.expected ?? ''}
+                intermediate={detail.data?.intermediate_expected ?? ''}
+                match={detail.data?.match}
+              />
             )}
             {record.error_details && (
               <section className='rounded-xl border border-amber-400/30 bg-amber-500/5 p-3'>

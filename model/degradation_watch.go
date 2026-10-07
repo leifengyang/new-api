@@ -12,16 +12,17 @@ import (
 // 跑一遍，把画出来的 HTML、耗时和用量原样存下来。失败也落一条，失败本身就是
 // 要看的信号之一。这张表只做展示，不参与计费，也不写使用日志。
 type DegradationWatchRecord struct {
-	GroupName        string   `json:"group_name" gorm:"type:varchar(128);not null;default:'';index"`
-	ProbeID          string   `json:"probe_id" gorm:"type:varchar(64);not null;default:'';index"`
-	ProbeName        string   `json:"probe_name" gorm:"type:varchar(100);not null;default:''"`
-	ProbeKind        string   `json:"probe_kind" gorm:"type:varchar(16);not null;default:''"`
-	Verdict          string   `json:"verdict" gorm:"type:varchar(16);not null;default:''"`
-	PromptSnapshot   LongText `json:"-"`
-	ExpectedSnapshot LongText `json:"-"`
-	MatchSnapshot    string   `json:"match" gorm:"type:varchar(16);not null;default:''"`
-	Id               int      `json:"id"`
-	ChannelId        int      `json:"channel_id" gorm:"index;not null"`
+	GroupName                    string   `json:"group_name" gorm:"type:varchar(128);not null;default:'';index"`
+	ProbeID                      string   `json:"probe_id" gorm:"type:varchar(64);not null;default:'';index"`
+	ProbeName                    string   `json:"probe_name" gorm:"type:varchar(100);not null;default:''"`
+	ProbeKind                    string   `json:"probe_kind" gorm:"type:varchar(16);not null;default:''"`
+	Verdict                      string   `json:"verdict" gorm:"type:varchar(16);not null;default:''"`
+	PromptSnapshot               LongText `json:"-"`
+	ExpectedSnapshot             LongText `json:"-"`
+	IntermediateExpectedSnapshot LongText `json:"-"`
+	MatchSnapshot                string   `json:"match" gorm:"type:varchar(16);not null;default:''"`
+	Id                           int      `json:"id"`
+	ChannelId                    int      `json:"channel_id" gorm:"index;not null"`
 	// RunId ties each model/channel attempt to its background batch. Legacy records may be empty.
 	RunId           string `json:"run_id" gorm:"type:varchar(64);not null;default:'';index"`
 	ModelName       string `json:"model_name" gorm:"type:varchar(128);not null;default:''"`
@@ -115,7 +116,7 @@ func UpdateDegradationWatchProgress(record *DegradationWatchRecord) error {
 }
 
 func FinishDegradationWatchRecord(record *DegradationWatchRecord) error {
-	if record.Success {
+	if record.Success || record.Verdict == "intermediate" {
 		record.Status = "succeeded"
 	} else {
 		record.Status = "failed"

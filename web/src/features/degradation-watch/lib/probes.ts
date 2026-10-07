@@ -32,6 +32,12 @@ export const probePlanSchema = z
             kind: z.enum(['text', 'drawing']),
             prompt: z.string().trim().min(1).max(20000),
             expected: z.string().max(2000),
+            intermediate_expected: z
+              .string()
+              .trim()
+              .max(2000)
+              .nullable()
+              .optional(),
             match: z.string(),
             interval_minutes: z.coerce.number().int().min(1).max(1440),
           })
@@ -39,6 +45,8 @@ export const probePlanSchema = z
             (p) =>
               p.kind === 'drawing' ||
               (p.expected.trim() !== '' &&
+                (!p.intermediate_expected?.trim() ||
+                  p.intermediate_expected.trim() !== p.expected.trim()) &&
                 ['exact', 'contains'].includes(p.match)),
             { path: ['expected'], message: 'Expected answer is required' }
           )
@@ -90,6 +98,13 @@ export const probePlanSchema = z
 export type ProbePlan = z.infer<typeof probePlanSchema>
 export type ProbeTarget = ProbePlan['targets'][number]
 
+export function intermediateAnswer(
+  expected: string,
+  configured?: string | null
+) {
+  return configured?.trim() ?? (expected.trim() === '高市早苗' ? '石破茂' : '')
+}
+
 export function probeVerdict(record: {
   status?: string
   success: boolean
@@ -99,6 +114,7 @@ export function probeVerdict(record: {
   if (record.status === 'queued' || record.status === 'running') {
     return record.status
   }
+  if (record.verdict === 'intermediate') return 'intermediate'
   if (record.success) return 'passed'
   if (
     record.verdict === 'mismatch' ||

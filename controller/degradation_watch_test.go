@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/service"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -718,4 +720,174 @@ func TestSaveDegradationProbePlanRejectsInvalidTargetsAndDatabaseFailure(t *test
 	SaveDegradationProbePlan(c)
 	assert.Contains(t, w.Body.String(), `"success":false`)
 	assert.Equal(t, string(raw), setting.ProbePlan)
+}
+
+func TestDegradationProbeGrades(t *testing.T) {
+	custom, disabled, duplicate := "石破茂", "", "高市早苗"
+	for _, tc := range []struct {
+		name, expected, output, match, verdict string
+		blue                                   *string
+	}{
+		{"green", "高市早苗", " 高市早苗\n", "exact", "passed", nil},
+		{"default blue", "高市早苗", "\n石破茂 ", "exact", "intermediate", nil},
+		{"red", "高市早苗", "uncertain", "exact", "mismatch", nil},
+		{"empty answer", "高市早苗", "", "exact", "mismatch", nil},
+		{"exact blue", "高市早苗", "石破茂。", "exact", "mismatch", nil},
+		{"contains blue", "高市早苗", "答案是石破茂。", "contains", "intermediate", nil},
+		{"green priority", "高市早苗", "石破茂、高市早苗", "contains", "passed", nil},
+		{"explicitly disabled", "高市早苗", "石破茂", "exact", "mismatch", &disabled},
+		{"generic probe", "yes", "石破茂", "exact", "mismatch", nil},
+		{"custom blue", "yes", "石破茂", "exact", "intermediate", &custom},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := operation_setting.DegradationProbe{Kind: "text", Expected: tc.expected, IntermediateExpected: tc.blue, Match: tc.match}
+			record := &model.DegradationWatchRecord{}
+			evaluateDegradationProbe(record, probe, tc.output)
+			assert.Equal(t, tc.verdict, record.Verdict)
+			assert.Equal(t, tc.verdict == "passed", record.Success)
+			if tc.verdict == "intermediate" {
+				assert.Empty(t, record.FailureReason)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		blue  *string
+		valid bool
+	}{{nil, true}, {&disabled, true}, {&custom, true}, {&duplicate, false}} {
+		plan := operation_setting.DegradationProbePlan{Concurrency: 1, TimeoutSeconds: 1200, Probes: []operation_setting.DegradationProbe{{ID: "sanae", Name: "Sanae", Kind: "text", Prompt: "who", Expected: "高市早苗", IntermediateExpected: tc.blue, Match: "exact", IntervalMinutes: 3}}}
+		raw, err := common.Marshal(plan)
+		require.NoError(t, err)
+		_, err = operation_setting.ParseDegradationProbePlan(string(raw))
+		assert.Equal(t, tc.valid, err == nil)
+	}
+}
+
+func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		for _, upgrade := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/upgrade=%t", dialect, upgrade), func(t *testing.T) {
+				db := selfTestDB(t, dialect)
+				var version string
+				if dialect == "sqlite" {
+					require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
+				} else {
+					require.NoError(t, db.Raw("SELECT version()").Scan(&version).Error)
+				}
+				t.Logf("database version: %s", version)
+				schemas := []struct {
+					table string
+					value any
+					added string
+				}{
+					{"degradation_watch_records", &model.DegradationWatchRecord{}, "IntermediateExpectedSnapshot"},
+					{"temporary_monitors", &model.TemporaryMonitor{}, "TextIntermediateExpected"},
+					{"temporary_monitor_attempts", &model.TemporaryMonitorAttempt{}, "IntermediateExpected"},
+				}
+				for _, schema := range schemas {
+					require.NoError(t, db.Migrator().DropTable(schema.value))
+				}
+				now := common.GetTimestamp()
+				secret, err := service.EncryptSelfTestKey(1, "https://example.com/v1:chat", "fixture-key")
+				require.NoError(t, err)
+				monitor := model.TemporaryMonitor{UserID: 1, Name: "existing", Status: "running", CreatedAt: now, EndsAt: now + 86400, BaseURL: "https://example.com/v1", Model: "model", Protocol: "chat", Secret: model.LongText(secret), TextPrompt: "who", TextExpected: "高市早苗"}
+				oldRecord := model.DegradationWatchRecord{ChannelId: 1, GroupName: "a", ModelName: "model", ProbeID: "sanae", ProbeKind: "text", Status: "failed", Verdict: "mismatch", CreatedAt: now, OutputText: "石破茂", PromptSnapshot: "old prompt", ExpectedSnapshot: "高市早苗"}
+				oldAttempt := model.TemporaryMonitorAttempt{Kind: "text", Slot: 1, Verdict: "mismatch", Prompt: "old prompt", Expected: "高市早苗", PromptCaptured: true, SelfTestAttempt: model.SelfTestAttempt{Status: "failed", Output: "石破茂", CreatedAt: now - 300}}
+				if upgrade {
+					// custom-v1.0.0-rc.39.33 has exactly these models without the three new fields.
+					// Retain every released tag, embedded field and index in the upgrade fixture.
+					for _, schema := range schemas {
+						current := reflect.TypeOf(schema.value).Elem()
+						fields := []reflect.StructField{}
+						for i := range current.NumField() {
+							field := current.Field(i)
+							if field.Name != schema.added {
+								fields = append(fields, field)
+							}
+						}
+						released := reflect.New(reflect.StructOf(fields)).Interface()
+						require.NoError(t, db.Table(schema.table).AutoMigrate(released))
+					}
+					require.NoError(t, db.Omit("TextIntermediateExpected").Create(&monitor).Error)
+					require.NoError(t, db.Omit("IntermediateExpectedSnapshot").Create(&oldRecord).Error)
+					oldAttempt.MonitorID = monitor.ID
+					require.NoError(t, db.Omit("IntermediateExpected").Create(&oldAttempt).Error)
+				}
+				for range 2 {
+					require.NoError(t, db.AutoMigrate(&model.DegradationWatchRecord{}, &model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
+				}
+				require.True(t, db.Migrator().HasIndex(&model.TemporaryMonitorAttempt{}, "idx_temp_monitor_slot"))
+				if upgrade {
+					var preserved model.DegradationWatchRecord
+					require.NoError(t, db.First(&preserved, oldRecord.Id).Error)
+					assert.Equal(t, "mismatch", preserved.Verdict)
+					assert.Equal(t, model.LongText("石破茂"), preserved.OutputText)
+					assert.Empty(t, preserved.IntermediateExpectedSnapshot)
+					require.NoError(t, db.First(&monitor, monitor.ID).Error)
+					assert.Nil(t, monitor.TextIntermediateExpected)
+					duplicate := oldAttempt
+					duplicate.ID = 0
+					assert.Error(t, db.Omit("ID").Create(&duplicate).Error, "slot uniqueness survives migration")
+				} else {
+					require.NoError(t, model.CreateTemporaryMonitor(&monitor))
+				}
+				// Exercise the worker: a blue response is completed normally, with snapshotted rules.
+				oldClient := selfTestClient
+				t.Cleanup(func() { selfTestClient = oldClient })
+				selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"石破茂"},"finish_reason":"stop"}]}`))}, nil
+				})}
+				attempt, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "grade-worker", now)
+				require.NoError(t, err)
+				require.NotNil(t, attempt)
+				assert.Equal(t, model.LongText("石破茂"), attempt.IntermediateExpected)
+				runTemporaryMonitorAttempt(context.Background(), monitor, *attempt, "grade-worker")
+				var finished model.TemporaryMonitorAttempt
+				require.NoError(t, db.First(&finished, attempt.ID).Error)
+				assert.Equal(t, "intermediate", finished.Verdict)
+				assert.Equal(t, "succeeded", finished.Status)
+				assert.Empty(t, finished.Error)
+				detail := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, attempt.ID, nil)
+				require.Equal(t, 200, detail.Code)
+				assert.Contains(t, detail.Body.String(), `"intermediate_expected":"石破茂"`)
+				// Updates affect future attempts only; blank explicitly disables the blue grade.
+				disabled := ""
+				require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new prompt", "高市早苗", &disabled, now+1))
+				require.NoError(t, db.First(&monitor, monitor.ID).Error)
+				require.NotNil(t, monitor.TextIntermediateExpected)
+				assert.Empty(t, *monitor.TextIntermediateExpected)
+				require.NoError(t, db.First(&finished, attempt.ID).Error)
+				assert.Equal(t, model.LongText("石破茂"), finished.IntermediateExpected)
+				next, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "text", "grade-worker", now+181)
+				require.NoError(t, err)
+				require.NotNil(t, next)
+				assert.Empty(t, next.IntermediateExpected)
+				custom := "blue"
+				require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new prompt", "green", &custom, now+2))
+				assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new prompt", "blue", nil, now+3), "omitted blue must not bypass collision validation")
+				// Formal history keeps intermediate, passed, mismatch and request errors disjoint.
+				series := model.DegradationProbeSeries{ChannelID: 2, GroupName: "grade", Model: "model", ProbeID: "sanae"}
+				for _, answer := range []string{"高市早苗", "石破茂", "uncertain"} {
+					record := model.DegradationWatchRecord{ChannelId: 2, GroupName: "grade", ModelName: "model", ProbeID: "sanae", ProbeKind: "text", Status: "running", CreatedAt: now, PromptSnapshot: "who", ExpectedSnapshot: "高市早苗", IntermediateExpectedSnapshot: "石破茂", OutputText: model.LongText(answer)}
+					require.NoError(t, model.CreateDegradationWatchRecord(&record))
+					evaluateDegradationProbe(&record, operation_setting.DegradationProbe{Kind: "text", Expected: "高市早苗", Match: "exact"}, answer)
+					require.NoError(t, model.FinishDegradationWatchRecord(&record))
+					content, err := model.GetDegradationProbeContent(record.Id)
+					require.NoError(t, err)
+					assert.Equal(t, model.LongText("石破茂"), content.IntermediateExpectedSnapshot)
+					if answer == "石破茂" {
+						assert.Equal(t, "succeeded", record.Status)
+						assert.False(t, record.Success)
+					}
+				}
+				require.NoError(t, model.CreateDegradationWatchRecord(&model.DegradationWatchRecord{ChannelId: 2, GroupName: "grade", ModelName: "model", ProbeID: "sanae", ProbeKind: "text", Status: "failed", Verdict: "error", FailureReason: "timeout", CreatedAt: now}))
+				records, stats, _, err := model.GetDegradationProbeHistory(series, now-1, 0, 20, true)
+				require.NoError(t, err)
+				require.Len(t, records, 4)
+				assert.Equal(t, int64(1), stats.Passed)
+				assert.Equal(t, int64(1), stats.Intermediate)
+				assert.Equal(t, int64(1), stats.Mismatched)
+				assert.Equal(t, int64(1), stats.Errors)
+			})
+		}
+	}
 }

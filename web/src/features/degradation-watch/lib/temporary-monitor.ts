@@ -39,6 +39,7 @@ export interface TemporaryMonitor {
   drawing_prompt: string
   text_prompt: string
   text_expected: string
+  text_intermediate_expected?: string | null
   text_disabled: boolean
   drawing_disabled: boolean
   text_interval_minutes: number
@@ -52,6 +53,7 @@ export type TemporaryProbeSettings = z.infer<typeof temporaryProbeSchema>
 export const temporaryPromptSchema = z.object({
   prompt: z.string().trim().min(1).max(20000),
   expected: z.string().trim().max(2000),
+  intermediate_expected: z.string().trim().max(2000).optional(),
 })
 export type TemporaryPromptInput = z.infer<typeof temporaryPromptSchema>
 export interface MonitorAttempt extends ComparisonAttempt {
@@ -61,6 +63,7 @@ export interface MonitorAttempt extends ComparisonAttempt {
   subject?: string
   original_prompt?: string
   expected?: string
+  intermediate_expected?: string
   rewrite_prompt?: string
   preparation?: ComparisonAttempt
 }

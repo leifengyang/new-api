@@ -62,6 +62,7 @@ export async function getDegradationWatchRecord(id: number): Promise<
     output: string
     prompt?: string
     expected?: string
+    intermediate_expected?: string
     match?: string
   }>
 > {

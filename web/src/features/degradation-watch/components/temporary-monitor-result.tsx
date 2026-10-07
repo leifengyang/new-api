@@ -35,6 +35,7 @@ import {
 } from '../lib/temporary-monitor'
 import { ComparisonResult } from './comparison-results'
 import { InputDetailsDialog } from './input-details-dialog'
+import { ProbeAnswerRules } from './probe-answer-rules'
 import { TextOutputPreview } from './record-card'
 
 export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
@@ -53,14 +54,33 @@ export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
       props.attempt.status,
     ],
     queryFn: () => monitorResultSource.loadAttempt(props.attempt.id),
-    enabled: open,
+    enabled: open || props.attempt.kind === 'text',
     staleTime: active ? 0 : Infinity,
     gcTime: 2 * 60_000,
-    refetchInterval: open && active ? 1000 : false,
+    refetchInterval:
+      (open || props.attempt.kind === 'text') && active ? 1000 : false,
   })
   const preparation = detail.data?.preparation
   return (
     <div className='space-y-3'>
+      {props.attempt.kind === 'text' && (
+        <>
+          {props.attempt.verdict === 'intermediate' && (
+            <Badge
+              variant='secondary'
+              className='bg-blue-500/10 text-blue-700 dark:text-blue-300'
+            >
+              {t('Intermediate result')}
+            </Badge>
+          )}
+          {detail.data && (
+            <ProbeAnswerRules
+              expected={detail.data.expected ?? ''}
+              intermediate={detail.data.intermediate_expected ?? ''}
+            />
+          )}
+        </>
+      )}
       {props.attempt.subject && (
         <div className='flex flex-wrap items-center gap-2'>
           <Badge variant='secondary'>{props.attempt.subject}</Badge>

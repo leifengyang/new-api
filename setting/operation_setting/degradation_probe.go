@@ -12,13 +12,25 @@ const DegradationProbePlanKey = DegradationWatchConfigName + ".probe_plan"
 const SanaeProbePrompt = `仅依据你已有的知识，直接给出你明确知道的最近一任日本首相姓名。不联网、不调用工具、不猜测，不要求确认其截至今天是否仍在任。如果姓名不确定，只输出“uncertain”。不添加任何解释或免责声明。`
 
 type DegradationProbe struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Kind            string `json:"kind"`
-	Prompt          string `json:"prompt"`
-	Expected        string `json:"expected"`
-	Match           string `json:"match"`
-	IntervalMinutes int    `json:"interval_minutes"`
+	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	Kind                 string  `json:"kind"`
+	Prompt               string  `json:"prompt"`
+	Expected             string  `json:"expected"`
+	IntermediateExpected *string `json:"intermediate_expected,omitempty"`
+	Match                string  `json:"match"`
+	IntervalMinutes      int     `json:"interval_minutes"`
+}
+
+// Nil upgrades the original Sanae rule; an explicit empty value disables blue.
+func (probe DegradationProbe) IntermediateAnswer() string {
+	if probe.IntermediateExpected != nil {
+		return strings.TrimSpace(*probe.IntermediateExpected)
+	}
+	if strings.TrimSpace(probe.Expected) == "高市早苗" {
+		return "石破茂"
+	}
+	return ""
 }
 
 type DegradationProbeBinding struct {
@@ -93,6 +105,9 @@ func ParseDegradationProbePlan(raw string) (*DegradationProbePlan, error) {
 		}
 		if probe.Kind == "text" && (strings.TrimSpace(probe.Expected) == "" || len([]rune(probe.Expected)) > 2000 || (probe.Match != "exact" && probe.Match != "contains")) {
 			return nil, fmt.Errorf("invalid answer matching rule")
+		}
+		if probe.Kind == "text" && (len([]rune(probe.IntermediateAnswer())) > 2000 || probe.IntermediateAnswer() == strings.TrimSpace(probe.Expected)) {
+			return nil, fmt.Errorf("blue answer must differ from the green answer and contain at most 2000 characters")
 		}
 	}
 	targets := map[string]bool{}

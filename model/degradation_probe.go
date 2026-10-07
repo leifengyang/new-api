@@ -52,6 +52,7 @@ func LastDegradationProbeAttempt(series DegradationProbeSeries) (int64, error) {
 
 type DegradationProbeStats struct {
 	Passed       int64   `json:"passed"`
+	Intermediate int64   `json:"intermediate"`
 	Mismatched   int64   `json:"mismatched"`
 	Errors       int64   `json:"errors"`
 	AvgElapsedMs float64 `json:"avg_elapsed_ms"`
@@ -77,8 +78,9 @@ func GetDegradationProbeHistoryForSeries(series []DegradationProbeSeries, since 
 	// Legacy drawing validation failures are mismatches; transport failures are exceptions.
 	err := query.Session(&gorm.Session{}).Where("status NOT IN ?", []string{"queued", "running"}).Select(
 		"COALESCE(SUM(CASE WHEN success = ? THEN 1 ELSE 0 END), 0) AS passed, "+
+			"COALESCE(SUM(CASE WHEN verdict = 'intermediate' THEN 1 ELSE 0 END), 0) AS intermediate, "+
 			"COALESCE(SUM(CASE WHEN success = ? AND (verdict = 'mismatch' OR failure_reason IN ?) THEN 1 ELSE 0 END), 0) AS mismatched, "+
-			"COALESCE(SUM(CASE WHEN success = ? AND verdict <> 'mismatch' AND failure_reason NOT IN ? THEN 1 ELSE 0 END), 0) AS errors, "+
+			"COALESCE(SUM(CASE WHEN success = ? AND verdict NOT IN ('mismatch', 'intermediate') AND failure_reason NOT IN ? THEN 1 ELSE 0 END), 0) AS errors, "+
 			"COALESCE(AVG(CASE WHEN success = ? THEN elapsed_ms ELSE NULL END), 0) AS avg_elapsed_ms, COALESCE(MAX(created_at), 0) AS last_record_at",
 		true, false, []string{"no_html", "no_svg", "empty_content"}, false, []string{"no_html", "no_svg", "empty_content"}, true).Scan(&stats).Error
 	if err != nil {
@@ -117,6 +119,6 @@ func GetDegradationProbeHistoryForSeries(series []DegradationProbeSeries, since 
 
 func GetDegradationProbeContent(id int) (*DegradationWatchRecord, error) {
 	var record DegradationWatchRecord
-	err := DB.Select("id", "prompt_snapshot", "expected_snapshot", "match_snapshot", "output_text", "error_details").First(&record, id).Error
+	err := DB.Select("id", "prompt_snapshot", "expected_snapshot", "intermediate_expected_snapshot", "match_snapshot", "output_text", "error_details").First(&record, id).Error
 	return &record, err
 }
