@@ -8,7 +8,7 @@ import (
 )
 
 func getDegradationProbeActivity() (*SystemTask, []*DegradationWatchRecord, error) {
-	tasks, err := GetLatestSystemTasks([]string{SystemTaskTypeDegradationWatch, "degradation_probe_text"})
+	tasks, err := GetLatestSystemTasks([]string{SystemTaskTypeDegradationWatch, "degradation_probe_text", "degradation_probe_followup"})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -23,7 +23,7 @@ func getDegradationProbeActivity() (*SystemTask, []*DegradationWatchRecord, erro
 	}
 	var records []*DegradationWatchRecord
 	if len(ids) > 0 {
-		err = DB.Select(degradationWatchListColumns).Where("run_id IN ?", ids).Order("id desc").Limit(200).Find(&records).Error
+		err = DB.Select(degradationWatchListColumns).Where("run_id IN ? OR (trigger_record_id IS NOT NULL AND status = ?)", ids, "queued").Order("id desc").Limit(200).Find(&records).Error
 	}
 	return selected, records, err
 }
@@ -46,7 +46,7 @@ func degradationProbeQuery(series DegradationProbeSeries) *gorm.DB {
 
 func LastDegradationProbeAttempt(series DegradationProbeSeries) (int64, error) {
 	var latest int64
-	err := degradationProbeQuery(series).Select("COALESCE(MAX(created_at), 0)").Scan(&latest).Error
+	err := degradationProbeQuery(series).Where("trigger_record_id IS NULL").Select("COALESCE(MAX(created_at), 0)").Scan(&latest).Error
 	return latest, err
 }
 

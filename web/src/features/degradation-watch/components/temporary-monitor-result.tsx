@@ -57,14 +57,36 @@ export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
     enabled: open || props.attempt.kind === 'text',
     staleTime: active ? 0 : Infinity,
     gcTime: 2 * 60_000,
-    refetchInterval:
-      (open || props.attempt.kind === 'text') && active ? 1000 : false,
+    refetchInterval: (query) => {
+      const drawingStatus = query.state.data?.linked_drawing?.status
+      return (open || props.attempt.kind === 'text') &&
+        (active || drawingStatus === 'queued' || drawingStatus === 'running')
+        ? 1000
+        : false
+    },
   })
   const preparation = detail.data?.preparation
   return (
     <div className='space-y-3'>
       {props.attempt.kind === 'text' && (
         <>
+          {props.attempt.verdict === 'intermediate' && (
+            <section className='space-y-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3'>
+              <h3 className='text-sm font-medium text-blue-700 dark:text-blue-300'>
+                {t('Drawing triggered by this blue probe')}
+              </h3>
+              {detail.data?.linked_drawing ? (
+                <TemporaryMonitorResult attempt={detail.data.linked_drawing} />
+              ) : (
+                !detail.isPending &&
+                !detail.isError && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('No linked drawing is available for this record.')}
+                  </p>
+                )
+              )}
+            </section>
+          )}
           {props.attempt.verdict === 'intermediate' && (
             <Badge
               variant='secondary'

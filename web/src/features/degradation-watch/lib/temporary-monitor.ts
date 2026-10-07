@@ -64,6 +64,7 @@ export interface MonitorAttempt extends ComparisonAttempt {
   original_prompt?: string
   expected?: string
   intermediate_expected?: string
+  linked_drawing?: MonitorAttempt
   rewrite_prompt?: string
   preparation?: ComparisonAttempt
 }

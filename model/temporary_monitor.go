@@ -231,6 +231,7 @@ func QueueTemporaryMonitorProbe(id int, kind string, now int64) (*TemporaryMonit
 
 type TemporaryMonitorAttempt struct {
 	SelfTestAttempt      `gorm:"embedded"`
+	TriggerAttemptID     *int     `json:"trigger_attempt_id,omitempty" gorm:"uniqueIndex"`
 	MonitorID            int      `json:"monitor_id" gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
 	Kind                 string   `json:"kind" gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
 	Slot                 int64    `json:"slot" gorm:"uniqueIndex:idx_temp_monitor_slot"`
@@ -244,6 +245,39 @@ type TemporaryMonitorAttempt struct {
 	Subject              string   `json:"subject" gorm:"size:64"`
 	RewritePrompt        LongText `json:"rewrite_prompt"`
 	RewriteResult        LongText `json:"-"`
+}
+
+// Save the terminal blue result and its dedicated follow-up atomically. The
+// monitor lock also serializes manual negative slots and stop/delete actions.
+func UpdateTemporaryMonitorAttempt(attempt TemporaryMonitorAttempt, runner string, updates map[string]any, blue bool) error {
+	if !blue {
+		return DB.Model(&TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates).Error
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var monitor TemporaryMonitor
+		if err := lockForUpdate(tx).First(&monitor, attempt.MonitorID).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(updates)
+		if result.Error != nil || result.RowsAffected == 0 {
+			return result.Error
+		}
+		if attempt.Kind != "text" {
+			return errors.New("only text probes can trigger a drawing")
+		}
+		var previous TemporaryMonitorAttempt
+		err := tx.Where("monitor_id = ? AND kind = ? AND slot < 0", monitor.ID, "drawing").Order("slot").First(&previous).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		followup := monitor.NewProbeAttempt("drawing", common.GetTimestamp())
+		followup.TriggerAttemptID, followup.Slot, followup.Status = &attempt.ID, previous.Slot-1, "queued"
+		followup.BaseURL, followup.Model, followup.Protocol = attempt.BaseURL, attempt.Model, attempt.Protocol
+		if monitor.Status != "running" || monitor.EndsAt <= common.GetTimestamp() {
+			followup.Status, followup.Error = "cancelled", "Monitoring ended"
+		}
+		return tx.Create(&followup).Error
+	})
 }
 
 func CreateTemporaryMonitor(monitor *TemporaryMonitor) error {
@@ -422,6 +456,9 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 		} else {
 			// A queued request starts with the latest configuration; an already
 			// running request keeps the snapshot it originally claimed.
+			if attempt.TriggerAttemptID != nil && (attempt.BaseURL != monitor.BaseURL || attempt.Model != monitor.Model || attempt.Protocol != monitor.Protocol) {
+				return tx.Model(&attempt).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Upstream configuration changed before the linked drawing started"}).Error
+			}
 			fresh := monitor.NewProbeAttempt(kind, now)
 			attempt.Name, attempt.BaseURL, attempt.Model, attempt.Protocol = fresh.Name, fresh.BaseURL, fresh.Model, fresh.Protocol
 			attempt.Effort, attempt.MaxOutputTokens = fresh.Effort, fresh.MaxOutputTokens

@@ -63,6 +63,7 @@ export async function getDegradationWatchRecord(id: number): Promise<
     prompt?: string
     expected?: string
     intermediate_expected?: string
+    linked_drawing?: DegradationWatchRecord | null
     match?: string
   }>
 > {

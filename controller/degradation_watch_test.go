@@ -212,7 +212,7 @@ func TestDegradationWatchRunAllPublishesIndependentLiveJobs(t *testing.T) {
 		*setting = previousSetting
 		_ = sqlDB.Close()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 	user := model.User{Username: "watch-test", Role: common.RoleRootUser, Group: "default", Quota: 10000, Status: 1}
 	require.NoError(t, db.Create(&user).Error)
 	release := make(chan struct{})
@@ -602,6 +602,9 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 			return
 		}
 		output := "高市早苗"
+		if request.Model == "blue" {
+			output = "石破茂"
+		}
 		if len(request.Messages) > 0 {
 			expectedEffort := map[string]string{"who": "low", "draw": "high", "another": ""}[request.Messages[0].Content]
 			assert.Equal(t, expectedEffort, request.ReasoningEffort, "probe override reaches the actual upstream request")
@@ -619,7 +622,7 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	}))
 	defer upstream.Close()
 	base := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "private provider", Type: constant.ChannelTypeOpenAI, Key: "secret-probe-key", BaseURL: &base, Group: "a,b", Models: "sol,broken", Status: 1}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "private provider", Type: constant.ChannelTypeOpenAI, Key: "secret-probe-key", BaseURL: &base, Group: "a,b", Models: "sol,broken,blue", Status: 1}).Error)
 	plan := operation_setting.DegradationProbePlan{Enabled: true, Concurrency: 2, TimeoutSeconds: 30, Probes: []operation_setting.DegradationProbe{
 		{ID: "sanae", Name: "Sanae", Kind: "text", Prompt: "who", Expected: "高市早苗", Match: "exact", IntervalMinutes: 5},
 		{ID: "other", Name: "Other", Kind: "text", Prompt: "another", Expected: "uncertain", Match: "exact", IntervalMinutes: 5},
@@ -674,6 +677,59 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	_, activity, err := model.GetDegradationWatchActivity()
 	require.NoError(t, err)
 	assert.Len(t, activity, 4)
+
+	// A blue result creates its own drawing even with periodic drawing disabled.
+	plan.Targets = plan.Targets[:1]
+	plan.Targets[0].Model = "blue"
+	plan.Targets[0].Probes[1].Enabled = false
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	textTask := &model.SystemTask{TaskID: "blue-text", Type: "degradation_probe_text", Payload: "{}", Status: model.SystemTaskStatusRunning}
+	require.NoError(t, db.Create(textTask).Error)
+	_, err = executeDegradationProbes(ctx, textTask, "test", "text")
+	require.NoError(t, err)
+	var parent, child model.DegradationWatchRecord
+	require.NoError(t, db.Where("model_name = ? AND probe_kind = ?", "blue", "text").First(&parent).Error)
+	assert.Equal(t, "intermediate", parent.Verdict)
+	require.NoError(t, db.Where("trigger_record_id = ?", parent.Id).First(&child).Error)
+	assert.Equal(t, "queued", child.Status)
+	assert.Equal(t, model.LongText("draw"), child.PromptSnapshot)
+	assert.Equal(t, "high", child.ReasoningEffort)
+	var followup model.SystemTask
+	require.NoError(t, db.Where("type = ?", "degradation_probe_followup").First(&followup).Error)
+	require.NoError(t, executeBlueProbeDrawings(ctx, &followup))
+	require.NoError(t, db.First(&child, child.Id).Error)
+	assert.Equal(t, "succeeded", child.Status)
+	assert.Equal(t, model.LongText("<html><svg/></html>"), child.Html)
+	assert.Equal(t, 12, child.PromptTokens)
+	assert.Equal(t, 4, child.CompletionTokens)
+	require.NoError(t, executeBlueProbeDrawings(ctx, &followup))
+	var linkedCount int64
+	require.NoError(t, db.Model(&model.DegradationWatchRecord{}).Where("trigger_record_id = ?", parent.Id).Count(&linkedCount).Error)
+	assert.EqualValues(t, 1, linkedCount)
+	assert.True(t, canViewDegradationProbeRecord(&child))
+	private := false
+	plan.Targets[0].Probes[1].Public = &private
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	assert.False(t, canViewDegradationProbeRecord(&child), "a public blue probe cannot expose a private drawing")
+	plan.Targets[0].Probes[1].Public = nil
+	raw, err = common.Marshal(plan)
+	require.NoError(t, err)
+	setting.ProbePlan = string(raw)
+	require.NoError(t, model.SetDegradationWatchRecordHidden(parent.Id, true))
+	assert.False(t, canViewDegradationProbeRecord(&child), "a hidden source probe cannot expose a linked drawing")
+	parent.Id, parent.Status, parent.Hidden = 0, "running", false
+	require.NoError(t, model.CreateDegradationWatchRecord(&parent))
+	failedDrawing := blueProbeDrawingRecord(&plan, plan.Targets[0], &parent)
+	require.NoError(t, model.FinishDegradationWatchRecordAndQueueDrawing(&parent, failedDrawing))
+	require.NoError(t, db.Model(&model.Channel{}).Where("id = ?", 1).Update("status", 2).Error)
+	require.NoError(t, executeBlueProbeDrawings(ctx, &followup))
+	require.NoError(t, db.First(failedDrawing, failedDrawing.Id).Error)
+	assert.Equal(t, "failed", failedDrawing.Status)
+	assert.Contains(t, string(failedDrawing.ErrorDetails), "source channel")
 }
 
 func TestSaveDegradationProbePlanRejectsInvalidTargetsAndDatabaseFailure(t *testing.T) {
@@ -767,6 +823,7 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 		for _, upgrade := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/upgrade=%t", dialect, upgrade), func(t *testing.T) {
 				db := selfTestDB(t, dialect)
+				require.NoError(t, db.AutoMigrate(&model.Channel{}))
 				var version string
 				if dialect == "sqlite" {
 					require.NoError(t, db.Raw("SELECT sqlite_version()").Scan(&version).Error)
@@ -779,9 +836,9 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 					value any
 					added string
 				}{
-					{"degradation_watch_records", &model.DegradationWatchRecord{}, "IntermediateExpectedSnapshot"},
-					{"temporary_monitors", &model.TemporaryMonitor{}, "TextIntermediateExpected"},
-					{"temporary_monitor_attempts", &model.TemporaryMonitorAttempt{}, "IntermediateExpected"},
+					{"degradation_watch_records", &model.DegradationWatchRecord{}, "TriggerRecordID"},
+					{"temporary_monitors", &model.TemporaryMonitor{}, ""},
+					{"temporary_monitor_attempts", &model.TemporaryMonitorAttempt{}, "TriggerAttemptID"},
 				}
 				for _, schema := range schemas {
 					require.NoError(t, db.Migrator().DropTable(schema.value))
@@ -793,7 +850,7 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 				oldRecord := model.DegradationWatchRecord{ChannelId: 1, GroupName: "a", ModelName: "model", ProbeID: "sanae", ProbeKind: "text", Status: "failed", Verdict: "mismatch", CreatedAt: now, OutputText: "石破茂", PromptSnapshot: "old prompt", ExpectedSnapshot: "高市早苗"}
 				oldAttempt := model.TemporaryMonitorAttempt{Kind: "text", Slot: 1, Verdict: "mismatch", Prompt: "old prompt", Expected: "高市早苗", PromptCaptured: true, SelfTestAttempt: model.SelfTestAttempt{Status: "failed", Output: "石破茂", CreatedAt: now - 300}}
 				if upgrade {
-					// custom-v1.0.0-rc.39.33 has exactly these models without the three new fields.
+					// custom-v1.0.0-rc.39.34 has these models without the trigger link fields.
 					// Retain every released tag, embedded field and index in the upgrade fixture.
 					for _, schema := range schemas {
 						current := reflect.TypeOf(schema.value).Elem()
@@ -808,14 +865,16 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Table(schema.table).AutoMigrate(released))
 					}
 					require.NoError(t, db.Omit("TextIntermediateExpected").Create(&monitor).Error)
-					require.NoError(t, db.Omit("IntermediateExpectedSnapshot").Create(&oldRecord).Error)
+					require.NoError(t, db.Omit("TriggerRecordID").Create(&oldRecord).Error)
 					oldAttempt.MonitorID = monitor.ID
-					require.NoError(t, db.Omit("IntermediateExpected").Create(&oldAttempt).Error)
+					require.NoError(t, db.Omit("TriggerAttemptID").Create(&oldAttempt).Error)
 				}
 				for range 2 {
 					require.NoError(t, db.AutoMigrate(&model.DegradationWatchRecord{}, &model.TemporaryMonitor{}, &model.TemporaryMonitorAttempt{}))
 				}
 				require.True(t, db.Migrator().HasIndex(&model.TemporaryMonitorAttempt{}, "idx_temp_monitor_slot"))
+				require.True(t, db.Migrator().HasIndex(&model.TemporaryMonitorAttempt{}, "idx_temporary_monitor_attempts_trigger_attempt_id"))
+				require.True(t, db.Migrator().HasIndex(&model.DegradationWatchRecord{}, "idx_degradation_watch_records_trigger_record_id"))
 				if upgrade {
 					var preserved model.DegradationWatchRecord
 					require.NoError(t, db.First(&preserved, oldRecord.Id).Error)
@@ -831,6 +890,7 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 					require.NoError(t, model.CreateTemporaryMonitor(&monitor))
 				}
 				// Exercise the worker: a blue response is completed normally, with snapshotted rules.
+				require.NoError(t, db.Model(&monitor).Update("drawing_disabled", true).Error)
 				oldClient := selfTestClient
 				t.Cleanup(func() { selfTestClient = oldClient })
 				selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
@@ -849,6 +909,23 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 				detail := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, attempt.ID, nil)
 				require.Equal(t, 200, detail.Code)
 				assert.Contains(t, detail.Body.String(), `"intermediate_expected":"石破茂"`)
+				assert.Contains(t, detail.Body.String(), `"linked_drawing":`)
+				var linked []model.TemporaryMonitorAttempt
+				require.NoError(t, db.Where("trigger_attempt_id = ?", attempt.ID).Find(&linked).Error)
+				require.Len(t, linked, 1)
+				assert.Equal(t, "queued", linked[0].Status)
+				assert.Negative(t, linked[0].Slot, "does not move the periodic schedule")
+				require.NoError(t, model.UpdateTemporaryMonitorAttempt(*attempt, "grade-worker", map[string]any{"status": "succeeded", "verdict": "intermediate"}, true))
+				var linkCount int64
+				require.NoError(t, db.Model(&model.TemporaryMonitorAttempt{}).Where("trigger_attempt_id = ?", attempt.ID).Count(&linkCount).Error)
+				assert.Equal(t, int64(1), linkCount, "replayed completion cannot duplicate the drawing")
+				drawing, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "grade-worker", now)
+				require.NoError(t, err)
+				require.NotNil(t, drawing)
+				assert.Equal(t, linked[0].ID, drawing.ID, "disabled schedule still runs the dedicated blue follow-up")
+				busy, err := model.ClaimTemporaryMonitorAttempt(monitor.ID, "drawing", "another-worker", now)
+				require.NoError(t, err)
+				assert.Nil(t, busy)
 				// Updates affect future attempts only; blank explicitly disables the blue grade.
 				disabled := ""
 				require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new prompt", "高市早苗", &disabled, now+1))
@@ -877,6 +954,36 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 					if answer == "石破茂" {
 						assert.Equal(t, "succeeded", record.Status)
 						assert.False(t, record.Success)
+						// A blue result and its child commit together; scheduled attempts
+						// never satisfy or replace the one-to-one link.
+						parent := record
+						parent.Id, parent.Status = 0, "running"
+						require.NoError(t, model.CreateDegradationWatchRecord(&parent))
+						child := &model.DegradationWatchRecord{ChannelId: 2, GroupName: "grade", ModelName: "model", ProbeID: "drawing", ProbeKind: "drawing", PromptSnapshot: "draw", CreatedAt: now}
+						require.NoError(t, model.FinishDegradationWatchRecordAndQueueDrawing(&parent, child))
+						require.NoError(t, model.FinishDegradationWatchRecordAndQueueDrawing(&parent, child))
+						var count int64
+						require.NoError(t, db.Model(&model.DegradationWatchRecord{}).Where("trigger_record_id = ?", parent.Id).Count(&count).Error)
+						assert.Equal(t, int64(1), count)
+						require.NoError(t, model.FailInterruptedDegradationWatchRecords())
+						require.NoError(t, db.First(child, child.Id).Error)
+						assert.Equal(t, "queued", child.Status, "queued trigger survives dispatcher downtime")
+						last, err := model.LastDegradationProbeAttempt(model.DegradationProbeSeries{ChannelID: 2, GroupName: "grade", Model: "model", ProbeID: "drawing"})
+						require.NoError(t, err)
+						assert.Zero(t, last, "triggered draws do not postpone scheduled drawing")
+						busyDrawing := model.DegradationWatchRecord{ChannelId: 2, ModelName: "model", ProbeKind: "drawing", Status: "running"}
+						require.NoError(t, db.Create(&busyDrawing).Error)
+						claimed, err := model.ClaimBlueProbeDrawing(child.Id, "drawing-worker")
+						require.NoError(t, err)
+						assert.False(t, claimed, "an existing drawing keeps the follow-up queued")
+						require.NoError(t, db.Delete(&busyDrawing).Error)
+						claimed, err = model.ClaimBlueProbeDrawing(child.Id, "drawing-worker")
+						require.NoError(t, err)
+						assert.True(t, claimed)
+						claimed, err = model.ClaimBlueProbeDrawing(child.Id, "another-worker")
+						require.NoError(t, err)
+						assert.False(t, claimed, "a linked drawing is claimed only once")
+						require.NoError(t, db.Delete(&parent).Error)
 					}
 				}
 				require.NoError(t, model.CreateDegradationWatchRecord(&model.DegradationWatchRecord{ChannelId: 2, GroupName: "grade", ModelName: "model", ProbeID: "sanae", ProbeKind: "text", Status: "failed", Verdict: "error", FailureReason: "timeout", CreatedAt: now}))
