@@ -25,6 +25,7 @@ import { Progress } from '@/components/ui/progress'
 
 import type { DegradationWatchRecord } from '../types'
 import { RecordPlayerDialog } from './artwork-player-dialog'
+import { ProbeRecordDialog } from './probe-record-dialog'
 import { RecordCard } from './record-card'
 
 export function DegradationWatchActivity(props: {
@@ -89,11 +90,18 @@ export function DegradationWatchActivity(props: {
           />
         ))}
       </div>
-      <RecordPlayerDialog
-        record={selected}
-        title={selected?.channel_title ?? ''}
-        onClose={() => setSelected(null)}
-      />
+      {selected?.probe_id ? (
+        <ProbeRecordDialog
+          record={selected}
+          onClose={() => setSelected(null)}
+        />
+      ) : (
+        <RecordPlayerDialog
+          record={selected}
+          title={selected?.channel_title ?? ''}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   )
 }

@@ -285,7 +285,11 @@ export function RecordCard(props: RecordCardProps) {
   let icon = <CircleX className='size-3' />
   let tone =
     'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300'
-  if (record.success) {
+  if (!active && record.verdict === 'intermediate') {
+    status = t('Intermediate result')
+    icon = <CircleAlert className='size-3' />
+    tone = 'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300'
+  } else if (record.success) {
     status = t('Completed')
     icon = <CheckCircle2 className='size-3' />
     tone =
@@ -336,7 +340,7 @@ export function RecordCard(props: RecordCardProps) {
           />
         </div>
       )}
-      {record.success && !showText && (
+      {record.success && record.probe_kind !== 'text' && !showText && (
         <Button
           variant='ghost'
           className={cn(
@@ -372,26 +376,29 @@ export function RecordCard(props: RecordCardProps) {
             : t('Receiving model output...')}
         </div>
       )}
-      {!active && !record.success && !showText && (
-        <div
-          className={cn(
-            'mx-3 mt-3 rounded-lg border border-rose-500/15 bg-rose-500/5',
-            props.previewClassName
-          )}
-        >
-          <div className='flex items-center justify-between px-3 py-1 text-xs text-rose-700 dark:text-rose-300'>
-            <span>{t('Error details')}</span>
-            <CopyButton
-              value={label ? t(label) : error}
-              size='icon'
-              className='size-6'
-            />
+      {!active &&
+        !record.success &&
+        record.verdict !== 'intermediate' &&
+        !showText && (
+          <div
+            className={cn(
+              'mx-3 mt-3 rounded-lg border border-rose-500/15 bg-rose-500/5',
+              props.previewClassName
+            )}
+          >
+            <div className='flex items-center justify-between px-3 py-1 text-xs text-rose-700 dark:text-rose-300'>
+              <span>{t('Error details')}</span>
+              <CopyButton
+                value={label ? t(label) : error}
+                size='icon'
+                className='size-6'
+              />
+            </div>
+            <pre className='max-h-64 overflow-auto px-3 pb-3 text-xs leading-relaxed break-all whitespace-pre-wrap text-rose-700 dark:text-rose-300'>
+              {label ? t(label) : error}
+            </pre>
           </div>
-          <pre className='max-h-64 overflow-auto px-3 pb-3 text-xs leading-relaxed break-all whitespace-pre-wrap text-rose-700 dark:text-rose-300'>
-            {label ? t(label) : error}
-          </pre>
-        </div>
-      )}
+        )}
       <div className='flex flex-col gap-3 p-3'>
         <RecordUsage record={record} onInputClick={props.onInputClick} />
         <div className='text-muted-foreground flex flex-wrap items-center justify-between gap-2 border-t pt-2 text-[11px]'>

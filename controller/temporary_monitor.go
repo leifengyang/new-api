@@ -136,7 +136,7 @@ func StartTemporaryMonitor(c *gin.Context) {
 func ListTemporaryMonitors(c *gin.Context) {
 	monitors := []model.TemporaryMonitor{}
 	before, _ := strconv.Atoi(c.Query("before"))
-	query := model.DB.Omit("secret", "drawing_prompt", "text_prompt", "text_expected").Order("id desc").Limit(21)
+	query := model.DB.Omit("secret", "drawing_prompt", "text_prompt", "text_expected", "text_intermediate_expected").Order("id desc").Limit(21)
 	if before > 0 {
 		query = query.Where("id < ?", before)
 	}
@@ -180,7 +180,7 @@ func GetTemporaryMonitor(c *gin.Context) {
 		query = query.Where("id < ?", before)
 	}
 	attempts := []model.TemporaryMonitorAttempt{}
-	err := query.Omit("secret", "output", "html", "prompt", "original_prompt", "expected", "rewrite_prompt", "rewrite_result").Order("id desc").Limit(limit + 1).Find(&attempts).Error
+	err := query.Omit("secret", "output", "html", "prompt", "original_prompt", "expected", "intermediate_expected", "rewrite_prompt", "rewrite_result").Order("id desc").Limit(limit + 1).Find(&attempts).Error
 	next := 0
 	if len(attempts) > limit {
 		attempts = attempts[:limit]
@@ -227,15 +227,16 @@ func GetTemporaryMonitorAttempt(c *gin.Context) {
 
 func UpdateTemporaryMonitorPrompt(c *gin.Context) {
 	var input struct {
-		Prompt   string `json:"prompt"`
-		Expected string `json:"expected"`
+		Prompt               string  `json:"prompt"`
+		Expected             string  `json:"expected"`
+		IntermediateExpected *string `json:"intermediate_expected"`
 	}
 	if !bindSelfTest(c, &input) {
 		return
 	}
 	id, err := strconv.Atoi(c.Param("id"))
 	if err == nil {
-		err = model.UpdateTemporaryMonitorPrompt(id, c.Param("kind"), input.Prompt, input.Expected, common.GetTimestamp())
+		err = model.UpdateTemporaryMonitorPrompt(id, c.Param("kind"), input.Prompt, input.Expected, input.IntermediateExpected, common.GetTimestamp())
 	}
 	selfTestResponse(c, nil, err)
 }
@@ -304,14 +305,15 @@ func FetchTemporaryMonitorModels(c *gin.Context) {
 func UpdateTemporaryMonitor(c *gin.Context) {
 	var input struct {
 		selfTestGroupInput
-		TextEffort    string                       `json:"text_effort"`
-		DrawingEffort string                       `json:"drawing_effort"`
-		TextProbe     model.TemporaryProbeSettings `json:"text_probe"`
-		DrawingProbe  model.TemporaryProbeSettings `json:"drawing_probe"`
-		TextPrompt    string                       `json:"text_prompt"`
-		TextExpected  string                       `json:"text_expected"`
-		DrawingPrompt string                       `json:"drawing_prompt"`
-		Restart       bool                         `json:"restart"`
+		TextEffort               string                       `json:"text_effort"`
+		DrawingEffort            string                       `json:"drawing_effort"`
+		TextProbe                model.TemporaryProbeSettings `json:"text_probe"`
+		DrawingProbe             model.TemporaryProbeSettings `json:"drawing_probe"`
+		TextPrompt               string                       `json:"text_prompt"`
+		TextExpected             string                       `json:"text_expected"`
+		TextIntermediateExpected *string                      `json:"text_intermediate_expected"`
+		DrawingPrompt            string                       `json:"drawing_prompt"`
+		Restart                  bool                         `json:"restart"`
 	}
 	if !bindSelfTest(c, &input) {
 		return
@@ -325,6 +327,10 @@ func UpdateTemporaryMonitor(c *gin.Context) {
 	input.TextPrompt, input.TextExpected, input.DrawingPrompt = strings.TrimSpace(input.TextPrompt), strings.TrimSpace(input.TextExpected), strings.TrimSpace(input.DrawingPrompt)
 	if input.TextPrompt == "" || input.DrawingPrompt == "" || input.TextExpected == "" || len([]rune(input.TextPrompt)) > operation_setting.MaxDegradationWatchPromptLength || len([]rune(input.DrawingPrompt)) > operation_setting.MaxDegradationWatchPromptLength || len([]rune(input.TextExpected)) > 2000 {
 		selfTestResponse(c, nil, errors.New("invalid probe prompt or expected answer"))
+		return
+	}
+	if input.TextIntermediateExpected != nil && (len([]rune(*input.TextIntermediateExpected)) > 2000 || strings.TrimSpace(*input.TextIntermediateExpected) == input.TextExpected) {
+		selfTestResponse(c, nil, errors.New("blue answer must differ from the green answer and contain at most 2000 characters"))
 		return
 	}
 	var saved model.TemporaryMonitor
@@ -354,7 +360,7 @@ func UpdateTemporaryMonitor(c *gin.Context) {
 	updated := model.TemporaryMonitor{Name: attempts[0].Name, BaseURL: attempts[0].BaseURL, Model: attempts[0].Model, Protocol: attempts[0].Protocol,
 		TextEffort: input.TextEffort, DrawingEffort: input.DrawingEffort, MaxOutputTokens: attempts[0].MaxOutputTokens, Secret: attempts[0].Secret,
 		TextDisabled: !input.TextProbe.Enabled, DrawingDisabled: !input.DrawingProbe.Enabled, TextIntervalMinutes: input.TextProbe.IntervalMinutes, DrawingIntervalMinutes: input.DrawingProbe.IntervalMinutes,
-		TextPrompt: model.LongText(input.TextPrompt), TextExpected: model.LongText(input.TextExpected), DrawingPrompt: model.LongText(input.DrawingPrompt)}
+		TextPrompt: model.LongText(input.TextPrompt), TextExpected: model.LongText(input.TextExpected), TextIntermediateExpected: input.TextIntermediateExpected, DrawingPrompt: model.LongText(input.DrawingPrompt)}
 	err = model.UpdateTemporaryMonitor(saved, &updated, input.Restart, now)
 	// The scheduler also discovers durable running monitors on its next tick.
 	if err == nil && input.Restart {
@@ -543,9 +549,10 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 			verdict := "error"
 			if result.Status == "succeeded" {
 				record := &model.DegradationWatchRecord{}
-				evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: attempt.Kind, Expected: string(attempt.Expected), Match: "exact"}, string(result.Output))
+				intermediate := string(attempt.IntermediateExpected)
+				evaluateDegradationProbe(record, operation_setting.DegradationProbe{Kind: attempt.Kind, Expected: string(attempt.Expected), IntermediateExpected: &intermediate, Match: "exact"}, string(result.Output))
 				verdict = record.Verdict
-				if !record.Success {
+				if !record.Success && record.Verdict != "intermediate" {
 					updates["status"], updates["error"] = "failed", record.FailureReason
 				}
 			}

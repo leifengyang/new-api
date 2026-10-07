@@ -48,6 +48,7 @@ import {
   newTestGroup,
   type ComparisonInput,
 } from '../lib/comparison'
+import { intermediateAnswer } from '../lib/probes'
 import {
   monitorRequest,
   temporaryProbeSchema,
@@ -338,6 +339,12 @@ function CreateTemporaryMonitor(props: {
   const [textEffort, setTextEffort] = useState(monitor?.text_effort ?? '')
   const [textPrompt, setTextPrompt] = useState(monitor?.text_prompt ?? '')
   const [expected, setExpected] = useState(monitor?.text_expected ?? '')
+  const [intermediate, setIntermediate] = useState(
+    intermediateAnswer(
+      monitor?.text_expected ?? '',
+      monitor?.text_intermediate_expected
+    )
+  )
   const [drawingPrompt, setDrawingPrompt] = useState(
     monitor?.drawing_prompt ?? ''
   )
@@ -402,6 +409,7 @@ function CreateTemporaryMonitor(props: {
             ? {
                 text_prompt: textPrompt,
                 text_expected: expected,
+                text_intermediate_expected: intermediate,
                 drawing_prompt: drawingPrompt,
                 restart,
               }
@@ -418,13 +426,24 @@ function CreateTemporaryMonitor(props: {
       ])
       if (valid.some((value) => !value)) return
       if (
+        monitor &&
+        intermediate.trim() &&
+        intermediate.trim() === expected.trim()
+      ) {
+        toast.error(t('Blue and green answers must differ.'))
+        return
+      }
+      if (
         ((!monitor || active || restart) &&
           !values.groups[0].api_key.trim() &&
           !values.groups[0].has_saved_key) ||
         !efforts.includes(textEffort) ||
         (monitor &&
-          (!temporaryPromptSchema.safeParse({ prompt: textPrompt, expected })
-            .success ||
+          (!temporaryPromptSchema.safeParse({
+            prompt: textPrompt,
+            expected,
+            intermediate_expected: intermediate,
+          }).success ||
             !expected.trim() ||
             !temporaryPromptSchema.safeParse({
               prompt: drawingPrompt,
@@ -544,6 +563,25 @@ function CreateTemporaryMonitor(props: {
                 maxLength={2000}
                 onChange={(event) => setExpected(event.target.value)}
               />
+            </div>
+            <div className='space-y-2'>
+              <Label
+                htmlFor='monitor-blue-answer'
+                className='text-blue-700 dark:text-blue-300'
+              >
+                {t('Blue answer (intermediate)')}
+              </Label>
+              <Textarea
+                id='monitor-blue-answer'
+                maxLength={2000}
+                value={intermediate}
+                onChange={(event) => setIntermediate(event.target.value)}
+              />
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Green matches the expected answer; blue is counted separately; other answers are red. Leave blue blank to disable it.'
+                )}
+              </p>
             </div>
             <div className='space-y-2'>
               <Label htmlFor='monitor-drawing-prompt'>

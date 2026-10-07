@@ -48,6 +48,7 @@ export interface ProbeHistory {
   stats: {
     passed: number
     mismatched: number
+    intermediate?: number
     errors: number
     avg_elapsed_ms: number
     last_record_at: number

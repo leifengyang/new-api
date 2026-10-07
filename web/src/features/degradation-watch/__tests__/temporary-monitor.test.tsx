@@ -673,6 +673,9 @@ test('running monitors save text and drawing prompts independently and preserve 
       target: { value: `Updated ${kind}` },
     })
     if (kind === 'Text probes') {
+      fireEvent.change(dialog.getByLabelText('Blue answer (intermediate)'), {
+        target: { value: 'Secondary answer' },
+      })
       fireEvent.change(dialog.getByLabelText('Expected answer'), {
         target: { value: 'Updated answer' },
       })
@@ -682,6 +685,9 @@ test('running monitors save text and drawing prompts independently and preserve 
         expect(api.request).toHaveBeenCalledWith(
           expect.objectContaining({
             url: '/api/degradation_watch/temporary-monitors/1/probes/text/prompt',
+            data: expect.objectContaining({
+              intermediate_expected: 'Secondary answer',
+            }),
           })
         )
       )
@@ -689,6 +695,9 @@ test('running monitors save text and drawing prompts independently and preserve 
         expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled()
       )
       expect(dialog.getByLabelText('Prompt')).toHaveValue('Updated Text probes')
+      expect(dialog.getByLabelText('Blue answer (intermediate)')).toHaveValue(
+        'Secondary answer'
+      )
       expect(monitors[0].text_prompt).toBe(monitor.text_prompt)
       failProbeSave = false
     }

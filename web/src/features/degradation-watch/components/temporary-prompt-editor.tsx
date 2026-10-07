@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { intermediateAnswer } from '../lib/probes'
 import {
   monitorRequest,
   temporaryPromptSchema,
@@ -50,6 +51,13 @@ export function TemporaryPromptEditor(props: {
           ? props.monitor.text_prompt
           : props.monitor.drawing_prompt,
       expected: props.kind === 'text' ? props.monitor.text_expected : '',
+      intermediate_expected:
+        props.kind === 'text'
+          ? intermediateAnswer(
+              props.monitor.text_expected,
+              props.monitor.text_intermediate_expected
+            )
+          : '',
     },
   })
   const save = useMutation({
@@ -69,6 +77,14 @@ export function TemporaryPromptEditor(props: {
   const submit = form.handleSubmit((value) => {
     if (props.kind === 'text' && !value.expected) {
       form.setError('expected', { type: 'required' })
+      return
+    }
+    if (
+      props.kind === 'text' &&
+      value.intermediate_expected &&
+      value.intermediate_expected === value.expected
+    ) {
+      form.setError('intermediate_expected', { type: 'validate' })
       return
     }
     save.mutate(value)
@@ -122,6 +138,28 @@ export function TemporaryPromptEditor(props: {
             )}
             <p className='text-muted-foreground text-xs'>
               {t('Exact match (trim whitespace)')}
+            </p>
+            <Label
+              htmlFor='temporary-blue-answer'
+              className='text-blue-700 dark:text-blue-300'
+            >
+              {t('Blue answer (intermediate)')}
+            </Label>
+            <Textarea
+              id='temporary-blue-answer'
+              maxLength={2000}
+              aria-invalid={!!form.formState.errors.intermediate_expected}
+              {...form.register('intermediate_expected')}
+            />
+            {form.formState.errors.intermediate_expected && (
+              <p role='alert' className='text-destructive text-xs'>
+                {t('Blue and green answers must differ.')}
+              </p>
+            )}
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Green matches the expected answer; blue is counted separately; other answers are red. Leave blue blank to disable it.'
+              )}
             </p>
           </div>
         ) : (

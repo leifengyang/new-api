@@ -84,7 +84,7 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, model.TemporaryProbeSettings{Enabled: true, IntervalMinutes: 10}, drawingDefaults)
 			require.NoError(t, db.Model(&upgraded).Update("status", "running").Error)
-			require.NoError(t, model.UpdateTemporaryMonitorPrompt(upgraded.ID, "drawing", "new template", "", common.GetTimestamp()))
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(upgraded.ID, "drawing", "new template", "", nil, common.GetTimestamp()))
 			legacyDetail := selfTestAPI(t, GetTemporaryMonitorAttempt, 1, legacyAttempt.ID, nil)
 			require.Equal(t, 200, legacyDetail.Code, legacyDetail.Body.String())
 			assert.Equal(t, "retained prompt", gjson.Get(legacyDetail.Body.String(), "data.prompt").String())
@@ -125,8 +125,8 @@ func TestTemporaryMonitorDatabaseMatrix(t *testing.T) {
 			require.NotNil(t, drawing)
 			assert.Equal(t, "low", text.Effort)
 			assert.Equal(t, "high", drawing.Effort)
-			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new question for later checks", "new answer", now))
-			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "new drawing template", "", now))
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "new question for later checks", "new answer", nil, now))
+			require.NoError(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "new drawing template", "", nil, now))
 			var storedAttempt model.TemporaryMonitorAttempt
 			require.NoError(t, db.First(&storedAttempt, text.ID).Error)
 			assert.Empty(t, storedAttempt.Secret)
@@ -355,11 +355,11 @@ func TestTemporaryMonitorEditablePromptSnapshots(t *testing.T) {
 			require.NotNil(t, secondDrawing)
 			assert.NotEqual(t, drawing.Subject, secondDrawing.Subject)
 			for _, tc := range []struct{ kind, prompt, expected string }{{"text", "", "answer"}, {"text", "question", " "}, {"unknown", "question", "answer"}, {"drawing", strings.Repeat("a", 20001), ""}} {
-				assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, tc.kind, tc.prompt, tc.expected, now))
+				assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, tc.kind, tc.prompt, tc.expected, nil, now))
 			}
-			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "expired", "", monitor.EndsAt))
+			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "drawing", "expired", "", nil, monitor.EndsAt))
 			require.NoError(t, model.StopTemporaryMonitor(monitor.ID))
-			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "ended", "answer", now))
+			assert.Error(t, model.UpdateTemporaryMonitorPrompt(monitor.ID, "text", "ended", "answer", nil, now))
 		})
 	}
 }

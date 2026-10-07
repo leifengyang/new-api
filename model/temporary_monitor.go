@@ -47,26 +47,32 @@ func SaveTemporaryMonitorRewriter(profile SelfTestProfile) error {
 
 // Temporary monitors never create routable channels or public wall records.
 type TemporaryMonitor struct {
-	ID                     int      `json:"id"`
-	UserID                 int      `json:"-" gorm:"index"`
-	Name                   string   `json:"name" gorm:"size:128"`
-	BaseURL                string   `json:"base_url" gorm:"size:1024"`
-	Model                  string   `json:"model" gorm:"size:128"`
-	Protocol               string   `json:"protocol" gorm:"size:32"`
-	TextEffort             string   `json:"text_effort" gorm:"size:32"`
-	DrawingEffort          string   `json:"drawing_effort" gorm:"size:32"`
-	MaxOutputTokens        *uint    `json:"max_output_tokens"`
-	Secret                 LongText `json:"-"`
-	DrawingPrompt          LongText `json:"drawing_prompt"`
-	Status                 string   `json:"status" gorm:"size:16;index"`
-	CreatedAt              int64    `json:"created_at"`
-	EndsAt                 int64    `json:"ends_at" gorm:"index"`
-	TextDisabled           bool     `json:"text_disabled"`
-	DrawingDisabled        bool     `json:"drawing_disabled"`
-	TextIntervalMinutes    int      `json:"text_interval_minutes"`
-	DrawingIntervalMinutes int      `json:"drawing_interval_minutes"`
-	TextPrompt             LongText `json:"text_prompt"`
-	TextExpected           LongText `json:"text_expected"`
+	ID                       int      `json:"id"`
+	UserID                   int      `json:"-" gorm:"index"`
+	Name                     string   `json:"name" gorm:"size:128"`
+	BaseURL                  string   `json:"base_url" gorm:"size:1024"`
+	Model                    string   `json:"model" gorm:"size:128"`
+	Protocol                 string   `json:"protocol" gorm:"size:32"`
+	TextEffort               string   `json:"text_effort" gorm:"size:32"`
+	DrawingEffort            string   `json:"drawing_effort" gorm:"size:32"`
+	MaxOutputTokens          *uint    `json:"max_output_tokens"`
+	Secret                   LongText `json:"-"`
+	DrawingPrompt            LongText `json:"drawing_prompt"`
+	Status                   string   `json:"status" gorm:"size:16;index"`
+	CreatedAt                int64    `json:"created_at"`
+	EndsAt                   int64    `json:"ends_at" gorm:"index"`
+	TextDisabled             bool     `json:"text_disabled"`
+	DrawingDisabled          bool     `json:"drawing_disabled"`
+	TextIntervalMinutes      int      `json:"text_interval_minutes"`
+	DrawingIntervalMinutes   int      `json:"drawing_interval_minutes"`
+	TextPrompt               LongText `json:"text_prompt"`
+	TextExpected             LongText `json:"text_expected"`
+	TextIntermediateExpected *string  `json:"text_intermediate_expected" gorm:"type:text"`
+}
+
+func (monitor TemporaryMonitor) IntermediateAnswer() string {
+	_, expected := monitor.ProbePrompt("text")
+	return (operation_setting.DegradationProbe{Expected: string(expected), IntermediateExpected: monitor.TextIntermediateExpected}).IntermediateAnswer()
 }
 
 func (monitor TemporaryMonitor) ProbePrompt(kind string) (LongText, LongText) {
@@ -83,13 +89,16 @@ func (monitor TemporaryMonitor) ProbePrompt(kind string) (LongText, LongText) {
 	return prompt, expected
 }
 
-func UpdateTemporaryMonitorPrompt(id int, kind, prompt, expected string, now int64) error {
+func UpdateTemporaryMonitorPrompt(id int, kind, prompt, expected string, intermediate *string, now int64) error {
 	prompt, expected = strings.TrimSpace(prompt), strings.TrimSpace(expected)
 	if (kind != "text" && kind != "drawing") || prompt == "" || len([]rune(prompt)) > operation_setting.MaxDegradationWatchPromptLength {
 		return errors.New("invalid probe prompt")
 	}
 	if kind == "text" && (expected == "" || len([]rune(expected)) > 2000) {
 		return errors.New("expected answer must contain 1 to 2000 characters")
+	}
+	if kind == "text" && intermediate != nil && (len([]rune(*intermediate)) > 2000 || strings.TrimSpace(*intermediate) == expected) {
+		return errors.New("blue answer must differ from the green answer and contain at most 2000 characters")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var monitor TemporaryMonitor
@@ -98,6 +107,15 @@ func UpdateTemporaryMonitorPrompt(id int, kind, prompt, expected string, now int
 		}
 		if monitor.Status != "running" || now >= monitor.EndsAt {
 			return errors.New("monitoring has ended")
+		}
+		if kind == "text" {
+			configured := monitor.TextIntermediateExpected
+			if intermediate != nil {
+				configured = intermediate
+			}
+			if (operation_setting.DegradationProbe{Expected: expected, IntermediateExpected: configured}).IntermediateAnswer() == expected {
+				return errors.New("blue answer must differ from the green answer")
+			}
 		}
 		// Older releases used the current monitor prompt and did not store snapshots.
 		// Freeze those historical inputs before the first edit changes their source.
@@ -108,6 +126,9 @@ func UpdateTemporaryMonitorPrompt(id int, kind, prompt, expected string, now int
 		updates := map[string]any{kind + "_prompt": prompt}
 		if kind == "text" {
 			updates["text_expected"] = expected
+			if intermediate != nil {
+				updates["text_intermediate_expected"] = strings.TrimSpace(*intermediate)
+			}
 		}
 		return tx.Model(&monitor).Updates(updates).Error
 	})
@@ -209,19 +230,20 @@ func QueueTemporaryMonitorProbe(id int, kind string, now int64) (*TemporaryMonit
 }
 
 type TemporaryMonitorAttempt struct {
-	SelfTestAttempt `gorm:"embedded"`
-	MonitorID       int      `json:"monitor_id" gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
-	Kind            string   `json:"kind" gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
-	Slot            int64    `json:"slot" gorm:"uniqueIndex:idx_temp_monitor_slot"`
-	Verdict         string   `json:"verdict" gorm:"size:16"`
-	Prompt          LongText `json:"prompt"`
-	OriginalPrompt  LongText `json:"original_prompt"`
-	Expected        LongText `json:"expected"`
-	PromptCaptured  bool     `json:"prompt_captured"`
-	Phase           string   `json:"phase" gorm:"size:16"`
-	Subject         string   `json:"subject" gorm:"size:64"`
-	RewritePrompt   LongText `json:"rewrite_prompt"`
-	RewriteResult   LongText `json:"-"`
+	SelfTestAttempt      `gorm:"embedded"`
+	MonitorID            int      `json:"monitor_id" gorm:"uniqueIndex:idx_temp_monitor_slot;index"`
+	Kind                 string   `json:"kind" gorm:"size:16;uniqueIndex:idx_temp_monitor_slot"`
+	Slot                 int64    `json:"slot" gorm:"uniqueIndex:idx_temp_monitor_slot"`
+	Verdict              string   `json:"verdict" gorm:"size:16"`
+	Prompt               LongText `json:"prompt"`
+	OriginalPrompt       LongText `json:"original_prompt"`
+	Expected             LongText `json:"expected"`
+	IntermediateExpected LongText `json:"intermediate_expected"`
+	PromptCaptured       bool     `json:"prompt_captured"`
+	Phase                string   `json:"phase" gorm:"size:16"`
+	Subject              string   `json:"subject" gorm:"size:64"`
+	RewritePrompt        LongText `json:"rewrite_prompt"`
+	RewriteResult        LongText `json:"-"`
 }
 
 func CreateTemporaryMonitor(monitor *TemporaryMonitor) error {
@@ -306,7 +328,14 @@ func UpdateTemporaryMonitor(original TemporaryMonitor, updated *TemporaryMonitor
 			}
 		}
 		updated.ID, updated.UserID = current.ID, current.UserID
-		if err := tx.Model(&current).Select("name", "base_url", "model", "protocol", "text_effort", "drawing_effort", "max_output_tokens", "secret", "text_disabled", "drawing_disabled", "text_interval_minutes", "drawing_interval_minutes", "text_prompt", "text_expected", "drawing_prompt", "status", "created_at", "ends_at").Updates(updated).Error; err != nil {
+		if updated.TextIntermediateExpected == nil {
+			updated.TextIntermediateExpected = current.TextIntermediateExpected
+		}
+		_, expected := updated.ProbePrompt("text")
+		if updated.IntermediateAnswer() == strings.TrimSpace(string(expected)) {
+			return errors.New("blue answer must differ from the green answer")
+		}
+		if err := tx.Model(&current).Select("name", "base_url", "model", "protocol", "text_effort", "drawing_effort", "max_output_tokens", "secret", "text_disabled", "drawing_disabled", "text_interval_minutes", "drawing_interval_minutes", "text_prompt", "text_expected", "text_intermediate_expected", "drawing_prompt", "status", "created_at", "ends_at").Updates(updated).Error; err != nil {
 			return err
 		}
 		if restart {
@@ -402,6 +431,9 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 			}
 		}
 		attempt.OriginalPrompt, attempt.Expected = monitor.ProbePrompt(kind)
+		if kind == "text" {
+			attempt.IntermediateExpected = LongText(monitor.IntermediateAnswer())
+		}
 		attempt.Prompt, attempt.PromptCaptured, attempt.Phase = attempt.OriginalPrompt, true, "detecting"
 		if kind == "drawing" {
 			subjects := []string{"Tibo", "小恐龙", "乌龟", "企鹅", "浣熊", "水豚", "小狐狸", "机器人"}
@@ -421,7 +453,7 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 			}
 			attempt.Subject, attempt.Phase, attempt.Prompt = choices[rand.IntN(len(choices))], "rewriting", ""
 		}
-		if err := tx.Model(&attempt).Updates(map[string]any{"prompt": attempt.Prompt, "original_prompt": attempt.OriginalPrompt, "expected": attempt.Expected, "prompt_captured": true, "subject": attempt.Subject, "phase": attempt.Phase}).Error; err != nil {
+		if err := tx.Model(&attempt).Updates(map[string]any{"prompt": attempt.Prompt, "original_prompt": attempt.OriginalPrompt, "expected": attempt.Expected, "intermediate_expected": attempt.IntermediateExpected, "prompt_captured": true, "subject": attempt.Subject, "phase": attempt.Phase}).Error; err != nil {
 			return err
 		}
 		// Only the session stores the encrypted key. Worker copies stay in memory.

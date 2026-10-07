@@ -97,10 +97,11 @@ type degradationWatchTaskPayload struct {
 }
 
 type degradationWatchSummary struct {
-	Tested    int   `json:"tested"`
-	Succeeded int   `json:"succeeded"`
-	Failed    int   `json:"failed"`
-	Pruned    int64 `json:"pruned"`
+	Tested       int   `json:"tested"`
+	Succeeded    int   `json:"succeeded"`
+	Intermediate int   `json:"intermediate"`
+	Failed       int   `json:"failed"`
+	Pruned       int64 `json:"pruned"`
 }
 
 func (degradationWatchHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
@@ -974,7 +975,7 @@ func GetDegradationWatchRecord(c *gin.Context) {
 	if !visibility.admin {
 		output = publicDegradationProbeError(output, record.ChannelId)
 	}
-	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output, "prompt": string(content.PromptSnapshot), "expected": string(content.ExpectedSnapshot), "match": content.MatchSnapshot})
+	common.ApiSuccess(c, gin.H{"record": toDegradationWatchRecordItem(record, visibility.admin, visibility.aliases), "output": output, "prompt": string(content.PromptSnapshot), "expected": string(content.ExpectedSnapshot), "intermediate_expected": string(content.IntermediateExpectedSnapshot), "match": content.MatchSnapshot})
 }
 
 func GetDegradationWatchActivity(c *gin.Context) {
