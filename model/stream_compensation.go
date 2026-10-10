@@ -53,20 +53,22 @@ type StreamCompensationBatch struct {
 // The primary DB owns both this immutable charge snapshot and the wallet credit.
 // The log DB can be separate or ClickHouse; no cross-database transaction is assumed.
 type StreamCompensation struct {
-	ID            int64  `json:"id" gorm:"primaryKey"`
-	SourceKey     string `json:"-" gorm:"type:varchar(64);uniqueIndex"`
-	BatchID       int64  `json:"batch_id" gorm:"index"`
-	UserID        int    `json:"user_id" gorm:"index:idx_comp_user_status,priority:1"`
-	RequestID     string `json:"request_id" gorm:"type:varchar(64);index"`
-	ModelName     string `json:"model_name" gorm:"type:varchar(255)"`
-	ConsumedAt    int64  `json:"consumed_at" gorm:"index"`
-	OriginalQuota int    `json:"original_quota"`
-	Quota         int    `json:"quota"`
-	Reason        string `json:"reason" gorm:"type:varchar(32)"`
-	Status        string `json:"status" gorm:"type:varchar(24);index:idx_comp_user_status,priority:2"`
-	Note          string `json:"note" gorm:"type:varchar(255)"`
-	CreditedAt    int64  `json:"credited_at"`
-	ReviewedBy    int    `json:"reviewed_by"`
+	Dimensions      CompensationDimensions `json:"-" gorm:"embedded;embeddedPrefix:dimension_"`
+	SnapshotVersion int                    `json:"-" gorm:"index"`
+	ID              int64                  `json:"id" gorm:"primaryKey"`
+	SourceKey       string                 `json:"-" gorm:"type:varchar(64);uniqueIndex"`
+	BatchID         int64                  `json:"batch_id" gorm:"index"`
+	UserID          int                    `json:"user_id" gorm:"index:idx_comp_user_status,priority:1"`
+	RequestID       string                 `json:"request_id" gorm:"type:varchar(64);index"`
+	ModelName       string                 `json:"model_name" gorm:"type:varchar(255)"`
+	ConsumedAt      int64                  `json:"consumed_at" gorm:"index"`
+	OriginalQuota   int                    `json:"original_quota"`
+	Quota           int                    `json:"quota"`
+	Reason          string                 `json:"reason" gorm:"type:varchar(32)"`
+	Status          string                 `json:"status" gorm:"type:varchar(24);index:idx_comp_user_status,priority:2"`
+	Note            string                 `json:"note" gorm:"type:varchar(255)"`
+	CreditedAt      int64                  `json:"credited_at" gorm:"index"`
+	ReviewedBy      int                    `json:"reviewed_by"`
 }
 
 // One durable inbox item per user and batch; read state is shared across devices.
@@ -245,7 +247,9 @@ func ListStreamCompensations(userID int, status string, batchID int64, startAt, 
 	if userID > 0 {
 		query = query.Where("user_id = ?", userID)
 	}
-	if status != "" {
+	if status == "unsettled" {
+		query = query.Where("status <> ?", "credited")
+	} else if status != "" {
 		query = query.Where("status = ?", status)
 	}
 	if batchID > 0 {

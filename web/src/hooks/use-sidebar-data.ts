@@ -191,6 +191,11 @@ export function useSidebarData(): SidebarData {
             icon: HandCoins,
           },
           {
+            title: t('Compensation overview'),
+            url: '/compensation',
+            icon: HandCoins,
+          },
+          {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,

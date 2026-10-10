@@ -41,10 +41,13 @@ import {
   type Compensation,
   type CompensationPage,
 } from './api'
+import { fundingLabels, beijingTime } from './report-api'
 
 export function CompensationRecords(props: {
   admin?: boolean
   batchID?: number
+  reportFilters?: Record<string, string | number | boolean>
+  pendingOnly?: boolean
 }) {
   const { t } = useTranslation()
   const userID = useAuthStore((s) => s.auth.user?.id)
@@ -57,6 +60,8 @@ export function CompensationRecords(props: {
     approve: boolean
   } | null>(null)
   const mutation = useCompensationMutation()
+  let endpoint = props.admin ? '/admin' : ''
+  if (props.reportFilters) endpoint = '/admin/report/records'
   const query = useQuery({
     queryKey: [
       'stream-compensation',
@@ -68,12 +73,17 @@ export function CompensationRecords(props: {
       status,
       filterUser,
       dates,
+      props.reportFilters,
+      props.pendingOnly,
     ],
     queryFn: () =>
-      getCompensationData<CompensationPage>(props.admin ? '/admin' : '', {
+      getCompensationData<
+        Omit<CompensationPage, 'totals'> &
+          Partial<Pick<CompensationPage, 'totals'>>
+      >(endpoint, {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
-        status,
+        status: status || (props.pendingOnly ? 'unsettled' : ''),
         user_id: props.admin ? filterUser : '',
         batch_id: props.batchID || 0,
         start_at: dates.start
@@ -82,6 +92,7 @@ export function CompensationRecords(props: {
         end_at: dates.end
           ? dayjs(`${dates.end}T00:00:00+08:00`).add(1, 'day').unix()
           : 0,
+        ...props.reportFilters,
       }),
     enabled: !!userID,
     refetchInterval: 30_000,
@@ -112,69 +123,71 @@ export function CompensationRecords(props: {
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }))
   return (
     <div className='space-y-4'>
-      <div className='flex flex-wrap items-end gap-3'>
-        <div className='space-y-1'>
-          <Label htmlFor='compensation-start'>{t('Start date')}</Label>
-          <Input
-            id='compensation-start'
-            type='date'
-            value={dates.start}
-            onChange={(e) => {
-              setDates({ ...dates, start: e.target.value })
-              resetPage()
-            }}
-          />
-        </div>
-        <div className='space-y-1'>
-          <Label htmlFor='compensation-end'>{t('End date')}</Label>
-          <Input
-            id='compensation-end'
-            type='date'
-            value={dates.end}
-            onChange={(e) => {
-              setDates({ ...dates, end: e.target.value })
-              resetPage()
-            }}
-          />
-        </div>
-        {props.admin && (
+      {!props.reportFilters && (
+        <div className='flex flex-wrap items-end gap-3'>
           <div className='space-y-1'>
-            <Label htmlFor='compensation-user'>{t('User ID')}</Label>
+            <Label htmlFor='compensation-start'>{t('Start date')}</Label>
             <Input
-              id='compensation-user'
-              type='number'
-              min={1}
-              className='w-32'
-              value={filterUser}
+              id='compensation-start'
+              type='date'
+              value={dates.start}
               onChange={(e) => {
-                setFilterUser(e.target.value)
+                setDates({ ...dates, start: e.target.value })
                 resetPage()
               }}
             />
           </div>
-        )}
-        <div className='flex flex-wrap gap-1'>
-          {[
-            ['', t('All')],
-            ['credited', t('Credited')],
-            ['review', t('Pending review')],
-            ['failed', t('Failed')],
-            ['skipped', t('Skipped')],
-          ].map(([value, label]) => (
-            <Button
-              key={value}
-              size='sm'
-              variant={status === value ? 'secondary' : 'ghost'}
-              onClick={() => {
-                setStatus(value)
+          <div className='space-y-1'>
+            <Label htmlFor='compensation-end'>{t('End date')}</Label>
+            <Input
+              id='compensation-end'
+              type='date'
+              value={dates.end}
+              onChange={(e) => {
+                setDates({ ...dates, end: e.target.value })
                 resetPage()
               }}
-            >
-              {label}
-            </Button>
-          ))}
+            />
+          </div>
+          {props.admin && (
+            <div className='space-y-1'>
+              <Label htmlFor='compensation-user'>{t('User ID')}</Label>
+              <Input
+                id='compensation-user'
+                type='number'
+                min={1}
+                className='w-32'
+                value={filterUser}
+                onChange={(e) => {
+                  setFilterUser(e.target.value)
+                  resetPage()
+                }}
+              />
+            </div>
+          )}
+          <div className='flex flex-wrap gap-1'>
+            {[
+              ['', t('All')],
+              ...(!props.pendingOnly ? [['credited', t('Credited')]] : []),
+              ['review', t('Pending review')],
+              ['failed', t('Failed')],
+              ['skipped', t('Skipped')],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                size='sm'
+                variant={status === value ? 'secondary' : 'ghost'}
+                onClick={() => {
+                  setStatus(value)
+                  resetPage()
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
       <p className='text-muted-foreground text-xs'>
         {t(
           'Dates use Beijing time. Totals cover the filtered compensation records.'
@@ -184,23 +197,25 @@ export function CompensationRecords(props: {
       {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
       {query.isSuccess && (
         <>
-          <div className='grid gap-3 sm:grid-cols-3'>
-            {[
-              [t('Original charges'), query.data.totals.original_quota],
-              [t('Stream credits'), query.data.totals.credited_quota],
-              [t('Net charges'), query.data.totals.net_quota],
-            ].map(([label, value]) => (
-              <div key={label} className='bg-muted/40 rounded-xl border p-4'>
-                <p className='text-muted-foreground text-xs'>{label}</p>
-                <p className='mt-2 text-xl font-semibold tabular-nums'>
-                  {formatQuotaWithCurrency(Number(value), {
-                    digitsSmall: 6,
-                    digitsLarge: 6,
-                  })}
-                </p>
-              </div>
-            ))}
-          </div>
+          {!props.reportFilters && !props.pendingOnly && query.data.totals && (
+            <div className='grid gap-3 sm:grid-cols-3'>
+              {[
+                [t('Original charges'), query.data.totals.original_quota],
+                [t('Stream credits'), query.data.totals.credited_quota],
+                [t('Net charges'), query.data.totals.net_quota],
+              ].map(([label, value]) => (
+                <div key={label} className='bg-muted/40 rounded-xl border p-4'>
+                  <p className='text-muted-foreground text-xs'>{label}</p>
+                  <p className='mt-2 text-xl font-semibold tabular-nums'>
+                    {formatQuotaWithCurrency(Number(value), {
+                      digitsSmall: 6,
+                      digitsLarge: 6,
+                    })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
           <StaticDataTable
             data={query.data.items}
             getRowKey={(r) => r.id}
@@ -215,7 +230,7 @@ export function CompensationRecords(props: {
                       {r.model_name || '—'}
                     </div>
                     <div className='text-muted-foreground text-xs'>
-                      {dayjs.unix(r.consumed_at).format('YYYY-MM-DD HH:mm:ss')}
+                      {beijingTime(r.consumed_at)}
                     </div>
                     <div className='flex items-center gap-1'>
                       <span className='max-w-44 truncate text-xs'>
@@ -243,6 +258,47 @@ export function CompensationRecords(props: {
                   </div>
                 ),
               },
+              ...(props.reportFilters
+                ? [
+                    {
+                      id: 'snapshot',
+                      header: t('Source details'),
+                      cell: (r: Compensation) => (
+                        <div className='max-w-64 space-y-1 text-xs break-words whitespace-normal'>
+                          <p>
+                            {r.snapshot?.username || t('Unknown')} · #
+                            {r.user_id}
+                          </p>
+                          <p>
+                            {r.snapshot?.channel_name || t('Unknown')} · #
+                            {r.snapshot?.channel_id || '—'}
+                          </p>
+                          <p>{r.snapshot?.use_group || t('Unknown')}</p>
+                          <Badge variant='outline'>
+                            {t(
+                              fundingLabels[r.snapshot?.funding || ''] ||
+                                'Unknown'
+                            )}
+                          </Badge>
+                          {r.snapshot?.funding === 'mixed' && (
+                            <p>
+                              {t('Enterprise')}:{' '}
+                              {formatQuotaWithCurrency(
+                                r.snapshot.enterprise_quota,
+                                { digitsSmall: 6, digitsLarge: 6 }
+                              )}{' '}
+                              / {t('Personal')}:{' '}
+                              {formatQuotaWithCurrency(
+                                r.snapshot.personal_quota,
+                                { digitsSmall: 6, digitsLarge: 6 }
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
               {
                 id: 'reason',
                 header: t('Reason'),
@@ -286,15 +342,13 @@ export function CompensationRecords(props: {
                     </Badge>
                     {r.credited_at > 0 && (
                       <p className='text-muted-foreground text-xs'>
-                        {dayjs
-                          .unix(r.credited_at)
-                          .format('YYYY-MM-DD HH:mm:ss')}
+                        {beijingTime(r.credited_at)}
                       </p>
                     )}
                   </div>
                 ),
               },
-              ...(props.admin
+              ...(props.admin && !props.reportFilters
                 ? [
                     {
                       id: 'actions',

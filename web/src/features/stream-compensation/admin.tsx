@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
-import dayjs from 'dayjs'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -38,8 +37,9 @@ import {
   type Page,
 } from './api'
 import { CompensationRecords } from './records'
+import { beijingTime } from './report-api'
 
-export function CompensationAdmin() {
+export function CompensationAdmin(props: { batchesOnly?: boolean } = {}) {
   const { t } = useTranslation()
   const mutation = useCompensationMutation()
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 })
@@ -119,10 +119,14 @@ export function CompensationAdmin() {
         </Button>
       </div>
       <Tabs defaultValue='batches'>
-        <TabsList>
-          <TabsTrigger value='batches'>{t('Settlement batches')}</TabsTrigger>
-          <TabsTrigger value='records'>{t('Compensation ledger')}</TabsTrigger>
-        </TabsList>
+        {!props.batchesOnly && (
+          <TabsList>
+            <TabsTrigger value='batches'>{t('Settlement batches')}</TabsTrigger>
+            <TabsTrigger value='records'>
+              {t('Compensation ledger')}
+            </TabsTrigger>
+          </TabsList>
+        )}
         <TabsContent value='batches' className='space-y-3 pt-4'>
           {batches.isPending && <LoadingState />}
           {batches.isError && (
@@ -139,7 +143,7 @@ export function CompensationAdmin() {
                     id: 'period',
                     header: t('Period'),
                     cell: (r) =>
-                      `${dayjs.unix(r.start_at).format('YYYY-MM-DD')} – ${dayjs.unix(r.end_at - 1).format('YYYY-MM-DD')}`,
+                      `${beijingTime(r.start_at).slice(0, 10)} – ${beijingTime(r.end_at - 1).slice(0, 10)}`,
                   },
                   {
                     id: 'status',
@@ -159,11 +163,7 @@ export function CompensationAdmin() {
                     id: 'time',
                     header: t('Completed at'),
                     cell: (r) =>
-                      r.completed_at
-                        ? dayjs
-                            .unix(r.completed_at)
-                            .format('YYYY-MM-DD HH:mm:ss')
-                        : '—',
+                      r.completed_at ? beijingTime(r.completed_at) : '—',
                   },
                   {
                     id: 'actions',

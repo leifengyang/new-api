@@ -17,6 +17,10 @@ func (streamCompensationHandler) Type() string            { return model.StreamC
 func (streamCompensationHandler) Interval() time.Duration { return 5 * time.Minute }
 func (streamCompensationHandler) NewPayload() any         { return nil }
 func (streamCompensationHandler) Enabled() bool {
+	var snapshot model.StreamCompensation
+	if result := model.DB.Where("COALESCE(snapshot_version, 0) = 0").Limit(1).Find(&snapshot); result.Error == nil && result.RowsAffected > 0 {
+		return true
+	}
 	cfg, err := model.GetStreamCompensationConfig()
 	if err != nil || !cfg.Enabled {
 		return false
