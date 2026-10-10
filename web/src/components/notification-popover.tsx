@@ -62,6 +62,7 @@ interface NotificationPopoverProps {
   announcements: AnnouncementItem[]
   loading: boolean
   className?: string
+  personalContent?: React.ReactNode
 }
 
 /**
@@ -300,6 +301,7 @@ export function NotificationPopover({
   announcements,
   loading,
   className,
+  personalContent,
 }: NotificationPopoverProps) {
   const { t } = useTranslation()
   return (
@@ -365,6 +367,7 @@ export function NotificationPopover({
           </TabsContent>
         </Tabs>
 
+        {personalContent}
         <div className='flex justify-end'>
           <Button size='sm' onClick={() => onOpenChange(false)}>
             {t('Close')}

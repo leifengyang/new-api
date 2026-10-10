@@ -218,6 +218,11 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other *model.LogOther)
 		"status":     status,
 		"end_reason": string(ss.EndReason),
 	}
+	outcome := ss.OutcomeSnapshot()
+	streamInfo["expects_terminal"] = outcome.ExpectsTerminal
+	if outcome.IncompleteReason != "" {
+		streamInfo["incomplete_reason"] = outcome.IncompleteReason
+	}
 	if outcome := ss.ResponseOutcome(); outcome != "" {
 		streamInfo["response_status"] = outcome
 	}

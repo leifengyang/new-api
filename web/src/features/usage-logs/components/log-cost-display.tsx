@@ -22,6 +22,7 @@ import {
   Wrench01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -44,6 +45,7 @@ interface LogCostDisplayProps {
   quota: number
   other: LogOtherData | null
   showBillingSource?: boolean
+  compensation?: { id: number; quota: number }
 }
 
 function ToolSurchargeMarker() {
@@ -147,6 +149,15 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
           <span className='whitespace-nowrap'>{formatLogQuota(quota)}</span>
         </StatusBadge>
         {showToolSurcharge ? <ToolSurchargeMarker /> : null}
+        {props.compensation && (
+          <Link
+            to='/wallet'
+            className='rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-300'
+            title={t('View compensation ledger')}
+          >
+            {t('Credited')} {formatLogQuota(props.compensation.quota)}
+          </Link>
+        )}
       </div>
     </TooltipProvider>
   )

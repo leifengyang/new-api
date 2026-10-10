@@ -21,6 +21,8 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
+import { useCompensationMessages } from '@/features/stream-compensation/api'
+import { CompensationInboxLink } from '@/features/stream-compensation/messages'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
@@ -110,6 +112,7 @@ export function AppHeader({
 
   // Notifications hook
   const notifications = useNotifications()
+  const compensationMessages = useCompensationMessages(true)
 
   return (
     <Header>
@@ -136,7 +139,11 @@ export function AppHeader({
             <NotificationPopover
               open={notifications.popoverOpen}
               onOpenChange={notifications.setPopoverOpen}
-              unreadCount={notifications.unreadCount}
+              unreadCount={
+                notifications.unreadCount +
+                (compensationMessages.data?.total ?? 0)
+              }
+              personalContent={<CompensationInboxLink />}
               activeTab={notifications.activeTab}
               onTabChange={notifications.setActiveTab}
               notice={notifications.notice}
