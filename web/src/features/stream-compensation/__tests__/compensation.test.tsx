@@ -27,6 +27,7 @@ import { api } from '@/lib/api'
 import { CompensationAdmin } from '../admin'
 import { CompensationNotice } from '../messages'
 import { CompensationRecords } from '../records'
+import { CompensationReport } from '../report'
 import {
   initialReportFilter,
   beijingTime,
@@ -316,3 +317,51 @@ test('pending workspace excludes credited records by default and retains review 
   )
   client.clear()
 })
+
+test.each(['Overview', 'Compensation ledger'])(
+  '%s keeps one filter panel after consecutive date presets and applying filters',
+  async (tab) => {
+    vi.mocked(api.get).mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data: url.endsWith('/overview')
+          ? { quota: 0, count: 0, users: 0, trend: [], rankings: {} }
+          : { items: [], total: 0, enabled: false },
+      },
+    }))
+    const { user, client } = setup(<CompensationReport />)
+    await user.click(screen.getByRole('tab', { name: tab }))
+    for (const name of [
+      'Yesterday',
+      'Today',
+      'Last 7 days',
+      'Last 30 days',
+      'All',
+    ]) {
+      await user.click(screen.getByRole('button', { name }))
+      expect(
+        screen.getAllByRole('button', { name: 'Apply filters' })
+      ).toHaveLength(1)
+      expect(screen.getAllByLabelText('Start date')).toHaveLength(1)
+    }
+    await user.type(screen.getByLabelText('User ID'), '724')
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+    expect(
+      screen.getAllByRole('button', { name: 'Apply filters' })
+    ).toHaveLength(1)
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        expect.stringContaining('/admin/report/'),
+        expect.objectContaining({
+          params: expect.objectContaining({ user: '724' }),
+        })
+      )
+    )
+    await user.click(screen.getByRole('button', { name: 'Reset' }))
+    expect(screen.getByLabelText('User ID')).toHaveValue('')
+    expect(
+      screen.getAllByRole('button', { name: 'Apply filters' })
+    ).toHaveLength(1)
+    client.clear()
+  }
+)
