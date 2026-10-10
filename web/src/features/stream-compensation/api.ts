@@ -24,6 +24,15 @@ import { useAuthStore } from '@/stores/auth-store'
 
 export const compensationPath = '/api/user/stream-compensation'
 export type Compensation = {
+  snapshot?: {
+    username: string
+    channel_id: number
+    channel_name: string
+    use_group: string
+    funding: string
+    enterprise_quota: number
+    personal_quota: number
+  }
   id: number
   batch_id: number
   user_id: number

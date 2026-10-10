@@ -36,6 +36,7 @@ import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
+import { Route as AuthenticatedCompensationIndexRouteImport } from './routes/_authenticated/compensation/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
 import { Route as AuthenticatedDegradationWatchIndexRouteImport } from './routes/_authenticated/degradation-watch/index'
@@ -213,6 +214,12 @@ const AuthenticatedChatChatIdRoute = AuthenticatedChatChatIdRouteImport.update({
   path: '/chat/$chatId',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCompensationIndexRoute =
+  AuthenticatedCompensationIndexRouteImport.update({
+    id: '/compensation/',
+    path: '/compensation/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDashboardIndexRoute =
   AuthenticatedDashboardIndexRouteImport.update({
     id: '/dashboard/',
@@ -490,6 +497,7 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/compensation/': typeof AuthenticatedCompensationIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/degradation-watch/': typeof AuthenticatedDegradationWatchIndexRoute
   '/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
@@ -557,6 +565,7 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
+  '/compensation': typeof AuthenticatedCompensationIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/degradation-watch': typeof AuthenticatedDegradationWatchIndexRoute
   '/enterprise': typeof AuthenticatedEnterpriseIndexRoute
@@ -628,6 +637,7 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
+  '/_authenticated/compensation/': typeof AuthenticatedCompensationIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/degradation-watch/': typeof AuthenticatedDegradationWatchIndexRoute
   '/_authenticated/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
@@ -698,6 +708,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/channels/'
+    | '/compensation/'
     | '/dashboard/'
     | '/degradation-watch/'
     | '/enterprise/'
@@ -765,6 +776,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/usage-logs/audit'
     | '/channels'
+    | '/compensation'
     | '/dashboard'
     | '/degradation-watch'
     | '/enterprise'
@@ -835,6 +847,7 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
     | '/_authenticated/channels/'
+    | '/_authenticated/compensation/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/degradation-watch/'
     | '/_authenticated/enterprise/'
@@ -1079,6 +1092,13 @@ declare module '@tanstack/react-router' {
       path: '/chat/$chatId'
       fullPath: '/chat/$chatId'
       preLoaderRoute: typeof AuthenticatedChatChatIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/compensation/': {
+      id: '/_authenticated/compensation/'
+      path: '/compensation'
+      fullPath: '/compensation/'
+      preLoaderRoute: typeof AuthenticatedCompensationIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/dashboard/': {
@@ -1472,6 +1492,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
+  AuthenticatedCompensationIndexRoute: typeof AuthenticatedCompensationIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedDegradationWatchIndexRoute: typeof AuthenticatedDegradationWatchIndexRoute
   AuthenticatedEnterpriseIndexRoute: typeof AuthenticatedEnterpriseIndexRoute
@@ -1503,6 +1524,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
+  AuthenticatedCompensationIndexRoute: AuthenticatedCompensationIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedDegradationWatchIndexRoute:
     AuthenticatedDegradationWatchIndexRoute,

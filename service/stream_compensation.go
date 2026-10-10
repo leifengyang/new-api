@@ -61,6 +61,9 @@ func ClassifyStreamCompensation(log *model.Log) (status, reason string) {
 }
 
 func RunStreamCompensation(ctx context.Context, now time.Time) error {
+	if err := model.BackfillCompensationDimensions(ctx); err != nil {
+		return err
+	}
 	cfg, err := model.GetStreamCompensationConfig()
 	if err != nil || !cfg.Enabled {
 		return err
@@ -138,6 +141,11 @@ func runStreamCompensationBatch(ctx context.Context, batch *model.StreamCompensa
 				return err
 			}
 			record := model.StreamCompensation{SourceKey: model.CompensationSourceKey(log), BatchID: batch.ID, UserID: log.UserId, RequestID: log.RequestId, ModelName: log.ModelName, ConsumedAt: log.CreatedAt, OriginalQuota: log.Quota, Quota: log.Quota, Reason: reason, Status: status}
+			record.Dimensions, err = model.CaptureCompensationDimensions(ctx, log)
+			if err != nil {
+				return err
+			}
+			record.SnapshotVersion = 1
 			if status == "review" {
 				record.Note = "cache_unknown"
 			}

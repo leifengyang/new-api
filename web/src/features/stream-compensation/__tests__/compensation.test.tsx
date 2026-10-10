@@ -27,6 +27,14 @@ import { api } from '@/lib/api'
 import { CompensationAdmin } from '../admin'
 import { CompensationNotice } from '../messages'
 import { CompensationRecords } from '../records'
+import {
+  initialReportFilter,
+  beijingTime,
+  drillFilter,
+  type Aggregate,
+} from '../report-api'
+import { ReportFilters } from '../report-filters'
+import { ReportTable } from '../report-table'
 
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: (selector: (state: unknown) => unknown) =>
@@ -186,5 +194,125 @@ test('disabled compensation prevents manual settlement and shows an empty batch 
     await screen.findByRole('button', { name: 'Settle / retry now' })
   ).toBeDisabled()
   expect(await screen.findByText('No settlement batches')).toBeVisible()
+  client.clear()
+})
+
+test('report defaults to thirty Beijing calendar days and credited time across UTC midnight', () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-10T20:30:00Z'))
+  const filter = initialReportFilter()
+  expect(filter.time_basis).toBe('credited')
+  expect(Number(filter.end_at) - Number(filter.start_at)).toBe(30 * 86400)
+  expect(beijingTime(Number(filter.end_at))).toBe('2026-10-12 00:00:00')
+})
+
+test('changing report filters applies consumed time and an inclusive Beijing end date', async () => {
+  const onChange = vi.fn()
+  const { user, client } = setup(
+    <ReportFilters
+      value={{ time_basis: 'credited', start_at: 0, end_at: 0 }}
+      onChange={onChange}
+    />
+  )
+  await user.selectOptions(screen.getByLabelText('Time basis'), 'consumed')
+  await user.type(screen.getByLabelText('End date'), '2026-10-03')
+  expect(onChange).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Apply filters' }))
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({
+      time_basis: 'consumed',
+      end_at: Date.parse('2026-10-04T00:00:00+08:00') / 1000,
+    })
+  )
+  client.clear()
+})
+
+test('aggregate details retain combined and unknown dimensions when drilling into credited records', async () => {
+  const aggregate: Aggregate = {
+    d0: '9',
+    d1: '',
+    d2: 'mixed',
+    l0: 'Channel nine',
+    l1: '',
+    l2: '',
+    quota: 100,
+    count: 1,
+    users: 1,
+  }
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { items: [aggregate], total: 1 } },
+  })
+  const onDrill = vi.fn()
+  const filter = { time_basis: 'consumed', start_at: 100, end_at: 200 }
+  const dimensions = ['channel', 'group', 'funding']
+  const { user, client } = setup(
+    <ReportTable
+      filter={filter}
+      dimensions={dimensions}
+      onDimensions={vi.fn()}
+      onDrill={onDrill}
+      onExport={vi.fn()}
+      exporting={false}
+    />
+  )
+  await user.click(await screen.findByRole('button', { name: 'Details' }))
+  expect(onDrill).toHaveBeenCalledWith(dimensions, aggregate)
+  expect(drillFilter(filter, dimensions, aggregate)).toEqual({
+    ...filter,
+    channel: '9',
+    group: '',
+    funding: 'mixed',
+  })
+  client.clear()
+})
+
+test('report details reuse ledger rows with the mixed source split and no pending review controls', async () => {
+  const item = {
+    ...record,
+    status: 'credited',
+    snapshot: {
+      username: 'Alice',
+      channel_id: 9,
+      channel_name: 'Channel nine',
+      use_group: 'group-a',
+      funding: 'mixed',
+      enterprise_quota: 6000,
+      personal_quota: 4000,
+    },
+  }
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { items: [item], total: 1 } },
+  })
+  const { client } = setup(
+    <CompensationRecords
+      admin
+      reportFilters={{ time_basis: 'credited', funding: 'mixed' }}
+    />
+  )
+  expect(await screen.findByText('Enterprise + personal')).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Approve' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByText('Net charges')).not.toBeInTheDocument()
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/user/stream-compensation/admin/report/records',
+    expect.objectContaining({
+      params: expect.objectContaining({ funding: 'mixed' }),
+    })
+  )
+  client.clear()
+})
+
+test('pending workspace excludes credited records by default and retains review actions', async () => {
+  const { client } = setup(<CompensationRecords admin pendingOnly />)
+  expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled()
+  expect(
+    screen.queryByRole('button', { name: 'Credited' })
+  ).not.toBeInTheDocument()
+  expect(api.get).toHaveBeenCalledWith(
+    '/api/user/stream-compensation/admin',
+    expect.objectContaining({
+      params: expect.objectContaining({ status: 'unsettled' }),
+    })
+  )
   client.clear()
 })

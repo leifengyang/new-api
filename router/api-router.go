@@ -160,6 +160,8 @@ func SetApiRouter(router *gin.Engine) {
 				compensationRoute.GET("/settings", controller.GetStreamCompensationSettings)
 				compensationRoute.PUT("/settings", controller.UpdateStreamCompensationSettings)
 				compensationRoute.GET("/batches", controller.GetStreamCompensationBatches)
+				compensationRoute.GET("/report/:view", controller.GetCompensationReport)
+				compensationRoute.GET("/export", middleware.CriticalRateLimit(), controller.ExportCompensationReport)
 				compensationRoute.POST("/run", middleware.CriticalRateLimit(), controller.StartStreamCompensation)
 				compensationRoute.POST("/:id/review", middleware.CriticalRateLimit(), controller.ReviewStreamCompensation)
 				adminRoute.GET("/search", controller.SearchUsers)

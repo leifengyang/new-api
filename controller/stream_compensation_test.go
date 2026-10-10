@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,137 @@ import (
 	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
+
+// The released compensation table before administrative dimension snapshots.
+type releasedCompensationLedger struct {
+	ID            int64  `gorm:"primaryKey"`
+	SourceKey     string `gorm:"type:varchar(64);uniqueIndex"`
+	BatchID       int64  `gorm:"index"`
+	UserID        int
+	RequestID     string `gorm:"type:varchar(64)"`
+	ModelName     string `gorm:"type:varchar(255)"`
+	ConsumedAt    int64
+	OriginalQuota int
+	Quota         int
+	Reason        string `gorm:"type:varchar(32)"`
+	Status        string `gorm:"type:varchar(24)"`
+	Note          string `gorm:"type:varchar(255)"`
+	CreditedAt    int64
+	ReviewedBy    int
+}
+
+func (releasedCompensationLedger) TableName() string { return "stream_compensations" }
+
+func TestCompensationReportDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			previousLogDB, previousType := model.LOG_DB, common.LogDatabaseType()
+			model.LOG_DB = db
+			common.SetLogDatabaseType(common.DatabaseType(dialect))
+			t.Cleanup(func() { model.LOG_DB = previousLogDB; common.SetLogDatabaseType(previousType) })
+			require.NoError(t, db.Migrator().DropTable(&model.StreamCompensation{}, &model.Log{}, &model.Channel{}, &model.EnterpriseWalletCharge{}))
+			require.NoError(t, db.AutoMigrate(&releasedCompensationLedger{}, &model.Log{}, &model.Channel{}, &model.EnterpriseWalletCharge{}))
+			base := model.CompensationStart()
+			require.NoError(t, db.Create(&model.Channel{Id: 9, Name: "=unsafe channel"}).Error)
+			logs := []model.Log{
+				{UserId: 1, Username: "first", ChannelId: 9, Group: "g", ModelName: "m1", RequestId: "report-one", CreatedAt: base, Type: model.LogTypeConsume, Quota: 100, Other: `{"billing_source":"wallet"}`},
+				{UserId: 2, Username: "second", ChannelId: 9, Group: "g", ModelName: "m2", RequestId: "report-two", CreatedAt: base + 86400, Type: model.LogTypeConsume, Quota: 200, Other: `{"billing_source":"wallet"}`},
+			}
+			require.NoError(t, db.Create(&logs).Error)
+			require.NoError(t, db.Create(&model.EnterpriseWalletCharge{UserId: 2, RequestId: "report-two", Enterprise: 120, Personal: 80}).Error)
+			legacy := []releasedCompensationLedger{
+				{ID: 1, SourceKey: model.CompensationSourceKey(&logs[0]), UserID: 1, RequestID: logs[0].RequestId, ConsumedAt: base, CreditedAt: base + 2*86400 - 1, Quota: 100, OriginalQuota: 100, ModelName: "m1", Status: "credited", Reason: "client_gone"},
+				{ID: 2, SourceKey: model.CompensationSourceKey(&logs[1]), UserID: 2, RequestID: logs[1].RequestId, ConsumedAt: base + 86400, CreditedAt: base + 2*86400, Quota: 200, OriginalQuota: 200, ModelName: "m2", Status: "credited", Reason: "abnormal_eof"},
+				{ID: 3, SourceKey: "deleted-log", UserID: 1, ConsumedAt: base, CreditedAt: base + 2*86400, Quota: 50, OriginalQuota: 50, Status: "credited"},
+				{ID: 4, SourceKey: "failed-record", UserID: 1, Quota: 900, OriginalQuota: 900, Status: "failed"},
+			}
+			require.NoError(t, db.Create(&legacy).Error)
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.StreamCompensation{}))
+			}
+			require.NoError(t, model.BackfillCompensationDimensions(context.Background()))
+			filter := model.CompensationReportFilter{TimeBasis: "credited"}
+			overview, err := model.CompensationOverview(context.Background(), filter)
+			require.NoError(t, err)
+			assert.EqualValues(t, 350, overview.Quota)
+			assert.EqualValues(t, 3, overview.Count)
+			assert.EqualValues(t, 2, overview.Users)
+			require.Len(t, overview.Trend, 2)
+			assert.Equal(t, "2026-10-02", overview.Trend[0].D0)
+			assert.Equal(t, "2026-10-03", overview.Trend[1].D0)
+			assert.EqualValues(t, 250, overview.Trend[1].Quota)
+			rows, count, err := model.CompensationAggregates(context.Background(), filter, []string{"channel", "model", "funding"}, 0, 1)
+			require.NoError(t, err)
+			assert.EqualValues(t, 3, count)
+			require.Len(t, rows, 1)
+			assert.Equal(t, "mixed", rows[0].D2)
+			assert.EqualValues(t, 200, rows[0].Quota)
+			_, _, err = model.CompensationAggregates(context.Background(), filter, []string{"user;DROP TABLE users"}, 0, 20)
+			assert.Error(t, err)
+			_, _, err = model.CompensationAggregates(context.Background(), filter, []string{"user", "user"}, 0, 20)
+			assert.Error(t, err)
+			_, _, err = model.CompensationAggregates(context.Background(), filter, []string{"user", "channel", "model", "reason"}, 0, 20)
+			assert.Error(t, err)
+			empty := ""
+			unknownFilter := filter
+			unknownFilter.Funding = &empty
+			unknown, _, err := model.CompensationReportRecords(context.Background(), unknownFilter, 0, 20)
+			require.NoError(t, err)
+			require.Len(t, unknown, 1)
+			assert.EqualValues(t, 50, unknown[0].Quota)
+			consumed := filter
+			consumed.TimeBasis = "consumed"
+			consumed.Start = base
+			consumed.End = base + 86400
+			firstDay, err := model.CompensationOverview(context.Background(), consumed)
+			require.NoError(t, err)
+			assert.EqualValues(t, 150, firstDay.Quota)
+			filter.Channel = "9"
+			items, _, err := model.CompensationReportRecords(context.Background(), filter, 0, 20)
+			require.NoError(t, err)
+			require.Len(t, items, 2)
+			assert.Equal(t, "mixed", items[0].Snapshot.Funding)
+			assert.Equal(t, 120, items[0].Snapshot.EnterpriseQuota)
+			assert.Equal(t, 80, items[0].Snapshot.PersonalQuota)
+			encoded, err := common.Marshal(items[0].StreamCompensation)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "channel")
+			assert.NotContains(t, string(encoded), "snapshot")
+			// Export ignores UI pagination and neutralizes spreadsheet formulas.
+			for _, kind := range []string{"records", "aggregate"} {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest("GET", "/?kind="+kind+"&dimensions=model,funding&channel=9&page_size=1", nil)
+				ExportCompensationReport(c)
+				require.Contains(t, recorder.Header().Get("Content-Type"), "text/csv")
+				csvRows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(recorder.Body.String(), "\ufeff"))).ReadAll()
+				require.NoError(t, err)
+				assert.Len(t, csvRows, 3)
+				if kind == "records" {
+					assert.Equal(t, "'=unsafe channel", csvRows[1][4])
+				}
+			}
+			// Query binding preserves an explicitly empty dimension during drill-down.
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Params = gin.Params{{Key: "view", Value: "records"}}
+			c.Request = httptest.NewRequest("GET", "/?funding="+url.QueryEscape(""), nil)
+			GetCompensationReport(c)
+			assert.EqualValues(t, 1, gjson.Get(recorder.Body.String(), "data.total").Int())
+			require.NoError(t, db.Where("1=1").Delete(&model.Log{}).Error)
+			require.NoError(t, db.Model(&model.Channel{}).Where("id = 9").Update("name", "renamed").Error)
+			require.NoError(t, model.BackfillCompensationDimensions(context.Background()))
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.StreamCompensation{}))
+			}
+			retained, _, err := model.CompensationReportRecords(context.Background(), filter, 0, 20)
+			require.NoError(t, err)
+			require.Len(t, retained, 2)
+			assert.Equal(t, "=unsafe channel", retained[0].Snapshot.ChannelName)
+		})
+	}
+}
 
 func TestStreamCompensationClassification(t *testing.T) {
 	for _, tc := range []struct{ name, other, want string }{
@@ -56,6 +189,7 @@ func TestStreamCompensationDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := selfTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.EnterpriseWalletCharge{}))
 			if dialect != "sqlite" {
 				connection, err := db.DB()
 				require.NoError(t, err)
@@ -199,6 +333,7 @@ func TestStreamCompensationIndependentLogStores(t *testing.T) {
 				t.Skip(tc.env + " not configured")
 			}
 			db := selfTestDB(t, "sqlite")
+			require.NoError(t, db.AutoMigrate(&model.EnterpriseWalletCharge{}))
 			require.NoError(t, db.AutoMigrate(&model.StreamCompensationConfig{}, &model.StreamCompensationBatch{}, &model.StreamCompensation{}, &model.StreamCompensationMessage{}))
 			logDB, _ := newAuditTestDatabase(t, tc.kind, dsn)
 			oldLogDB, oldType, oldRedis := model.LOG_DB, common.LogDatabaseType(), common.RedisEnabled
