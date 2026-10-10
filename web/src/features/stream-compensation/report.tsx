@@ -77,13 +77,13 @@ export function CompensationReport() {
           </TabsList>
           <TabsContent value='overview' className='space-y-5'>
             <ReportFilters
-              key={JSON.stringify(filter)}
+              key={`filters:${JSON.stringify(filter)}`}
               value={filter}
               onChange={setFilter}
             />
             <ReportOverview filter={filter} onDrill={onDrill} />
             <ReportTable
-              key={JSON.stringify(filter)}
+              key={`aggregate:${JSON.stringify(filter)}`}
               filter={filter}
               dimensions={dimensions}
               onDimensions={setDimensions}
@@ -94,7 +94,7 @@ export function CompensationReport() {
           </TabsContent>
           <TabsContent value='records' className='space-y-4'>
             <ReportFilters
-              key={JSON.stringify(filter)}
+              key={`filters:${JSON.stringify(filter)}`}
               value={filter}
               onChange={setFilter}
             />
@@ -108,7 +108,7 @@ export function CompensationReport() {
               </Button>
             </div>
             <CompensationRecords
-              key={JSON.stringify(filter)}
+              key={`records:${JSON.stringify(filter)}`}
               admin
               reportFilters={filter}
             />
