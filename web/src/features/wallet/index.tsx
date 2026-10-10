@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { SelfRebateCard } from '@/features/invite-rebates/components/self-rebate-card'
+import { WalletCompensation } from '@/features/stream-compensation/wallet'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -323,6 +324,7 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
+            <WalletCompensation />
             <SelfRebateCard
               affiliateLink={affiliateLink}
               inviteCount={user?.aff_count ?? 0}

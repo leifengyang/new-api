@@ -760,6 +760,7 @@ export function useCommonLogsColumns(
           return (
             <LogCostDisplay
               quota={quota}
+              compensation={log.compensation}
               other={other}
               showBillingSource={showBillingSource}
             />

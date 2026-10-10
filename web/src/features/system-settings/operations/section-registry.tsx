@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { CompensationAdmin } from '@/features/stream-compensation/admin'
+
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
@@ -28,6 +30,11 @@ import { createSectionRegistry } from '../utils/section-registry'
 import { ProbeSettingsSection } from './probe-settings-section'
 
 const OPERATIONS_SECTIONS = [
+  {
+    id: 'stream-compensation',
+    titleKey: 'Stream compensation',
+    build: () => <CompensationAdmin />,
+  },
   {
     id: 'behavior',
     titleKey: 'System Behavior',

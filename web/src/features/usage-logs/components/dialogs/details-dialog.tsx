@@ -667,6 +667,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
         {isConsume && !isViolation && (
           <TabsContent value='billing' className='space-y-4'>
+            {props.log.compensation && (
+              <div className='rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300'>
+                {t('Stream compensation')}: +
+                {formatLogQuota(props.log.compensation.quota)} · {t('Credited')}{' '}
+                · #{props.log.compensation.id}
+              </div>
+            )}
             <LogBillingFormula
               log={props.log}
               other={other ?? {}}
