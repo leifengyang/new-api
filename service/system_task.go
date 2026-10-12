@@ -150,6 +150,9 @@ func StartSystemTaskRunner() {
 				// Retention runs independently of whether scheduled detection is enabled.
 				if now.Sub(lastWatchCleanup) >= time.Minute {
 					lastWatchCleanup = now
+					if err := model.PruneRequestPrompts(now.Unix()); err != nil {
+						common.SysError("request prompt retention cleanup failed")
+					}
 					if err := model.FailInterruptedDegradationWatchRecords(); err != nil {
 						logger.LogWarn(context.Background(), fmt.Sprintf("degradation watch interruption cleanup failed: %v", err))
 					}
