@@ -74,6 +74,11 @@ func main() {
 	kitutil.Debug.Store(common.DebugEnabled)
 
 	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := service.FlushRequestPrompts(ctx); err != nil {
+			common.SysError("request prompt shutdown flush timed out")
+		}
 		err := model.CloseDB()
 		if err != nil {
 			common.FatalLog("failed to close database: " + err.Error())

@@ -80,6 +80,7 @@ import {
   logTypeBadgeClassName,
 } from '../log-table-style'
 import { ModelBadge } from '../model-badge'
+import { RequestPromptButton } from '../request-prompt'
 import { TimingMetricsCell, StreamTpsCell } from '../timing-metrics-cell'
 import { TokenUsageCell } from '../token-usage-cell'
 import { useUsageLogsContext } from '../usage-logs-provider'
@@ -869,6 +870,13 @@ export function useCommonLogsColumns(
                 open={dialogOpen}
                 onOpenChange={setDialogOpen}
               />
+              {isRoot && (log.type === 2 || log.type === 5) && (
+                <RequestPromptButton
+                  key={log.request_id}
+                  requestId={log.request_id}
+                  isRoot={isRoot}
+                />
+              )}
             </>
           )
         },

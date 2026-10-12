@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/alicebob/miniredis/v2"
@@ -73,6 +74,9 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 	}
 	setting.ModelRequestRateLimitEnabled = false
 	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, service.FlushRequestPrompts(ctx))
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
 		common.SetDatabaseTypes(previousType, previousLogType)
@@ -88,7 +92,8 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		setting.ModelRequestRateLimitMutex.Unlock()
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.RequestPrompt{}))
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	// The shared in-memory limiter outlives each database fixture. Give every
 	// user a separate quota bucket, including when the tests run with -count.
 	user := &model.User{Id: 5062000 + int(responsesWSTestUserSequence.Add(1)), Username: "responses-ws-user", Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AuthVersion: 1}
@@ -180,8 +185,11 @@ func TestResponsesWSRequestRunnerRefreshesBillingContextAndCleansBody(t *testing
 		assert.Equal(t, "ws-second", c.GetString(common.RequestIdKey))
 		_, leaked := c.Get("previous_turn")
 		assert.False(t, leaked)
-		_, leaked = c.Get(common.KeyBodyStorage)
-		assert.False(t, leaked)
+		// Prompt capture may already have buffered this turn. Its bytes must
+		// belong to the new turn, never the preceding request.
+		body, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"input":"second"}`, string(body))
 		return nil
 	}))
 }

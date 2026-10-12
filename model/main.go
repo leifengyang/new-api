@@ -379,6 +379,7 @@ func migrateDB() error {
 		&TemporaryMonitor{},
 		&TemporaryMonitorAttempt{},
 		&StreamCompensationConfig{},
+		&RequestPrompt{},
 		&StreamCompensationBatch{},
 		&StreamCompensation{},
 		&StreamCompensationMessage{},
