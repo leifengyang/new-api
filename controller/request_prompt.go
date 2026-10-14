@@ -1,31 +1,17 @@
 package controller
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 func GetLogRequestPrompt(c *gin.Context) {
-	id := c.Query("request_id")
-	if id == "" || len(id) > 64 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid request ID"})
-		return
-	}
-	prompt, err := model.GetRequestPrompt(id, common.GetTimestamp())
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"status": "unavailable"}})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Unable to load request prompt"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": prompt})
+	// Keep an explicit tombstone for older clients. Saved prompts are only
+	// available through database investigation, never through an HTTP response.
+	c.JSON(http.StatusGone, gin.H{"success": false, "message": "Request prompt viewing is disabled"})
 }
 
 func GetRequestPromptCapture(c *gin.Context) {

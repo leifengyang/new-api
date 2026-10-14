@@ -14,8 +14,8 @@ const RequestPromptCaptureKey = "RequestPromptCaptureEnabled"
 const RequestPromptRetention = 7 * 24 * time.Hour
 
 // RequestPrompt deliberately lives in the primary database, separate from all
-// log projections (including external ClickHouse logs). Only the root detail
-// endpoint reads its content. No response or request headers are stored here.
+// log projections (including external ClickHouse logs), for database-only
+// investigation. No response or request headers are stored here.
 type RequestPrompt struct {
 	RequestID   string `json:"-" gorm:"primaryKey;type:varchar(64)"`
 	CreatedAt   int64  `json:"created_at" gorm:"not null;index"`
@@ -64,7 +64,7 @@ func GetRequestPrompt(requestID string, now int64) (*RequestPrompt, error) {
 
 func PruneRequestPrompts(now int64) error {
 	// Bound each deletion to avoid a large transaction after downtime. Repeated
-	// passes drain the backlog; the read endpoint enforces expiry immediately.
+	// passes drain the backlog.
 	var ids []string
 	if err := DB.Model(&RequestPrompt{}).Where("created_at <= ?", now-int64(RequestPromptRetention/time.Second)).
 		Order("created_at").Limit(1000).Pluck("request_id", &ids).Error; err != nil {

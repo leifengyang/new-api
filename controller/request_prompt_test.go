@@ -20,7 +20,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
 
@@ -132,6 +131,13 @@ func TestRequestPromptRootBoundaryAndSettings(t *testing.T) {
 		common.OptionMapRWMutex.Unlock()
 	})
 	require.NoError(t, model.SaveRequestPrompt(&model.RequestPrompt{RequestID: "private-question", CreatedAt: time.Now().Unix(), Text: "root-only question", Status: "captured"}))
+	promptReads := 0
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("count_prompt_reads", func(tx *gorm.DB) {
+		if tx.Statement.Table == "request_prompts" {
+			promptReads++
+		}
+	}))
+	t.Cleanup(func() { db.Callback().Query().Remove("count_prompt_reads") })
 	router := gin.New()
 	router.GET("/prompt", middleware.RootAuth(), middleware.DisableCache(), GetLogRequestPrompt)
 	router.GET("/capture", middleware.RootAuth(), middleware.DisableCache(), GetRequestPromptCapture)
@@ -156,17 +162,17 @@ func TestRequestPromptRootBoundaryAndSettings(t *testing.T) {
 				}
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)
-				assert.Equal(t, tc.code, response.Code, response.Body.String())
-				if tc.role != 100 {
-					assert.NotContains(t, response.Body.String(), "root-only question")
-				}
+				code := tc.code
 				if tc.role == 100 && strings.HasPrefix(endpoint.path, "/prompt") {
-					assert.Equal(t, "root-only question", gjson.GetBytes(response.Body.Bytes(), "data.text").String())
+					code = 410
 					assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
 				}
+				assert.Equal(t, code, response.Code, response.Body.String())
+				assert.NotContains(t, response.Body.String(), "root-only question")
 			}
 		})
 	}
+	assert.Zero(t, promptReads, "HTTP endpoints must not query saved prompt content")
 	assert.False(t, model.RequestPromptCaptureEnabled())
 	var option model.Option
 	require.NoError(t, db.Where("key = ?", model.RequestPromptCaptureKey).First(&option).Error)
