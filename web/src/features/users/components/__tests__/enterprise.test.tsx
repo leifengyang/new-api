@@ -134,12 +134,15 @@ function UsersPage() {
 
 async function renderUsersList(users: User[]) {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'admin', role: 100 })
-  const get = vi.spyOn(api, 'get').mockResolvedValue({
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: {
       success: true,
-      data: { items: users, total: users.length, page: 1, page_size: 20 },
+      data:
+        url === '/api/group/'
+          ? ['default']
+          : { items: users, total: users.length, page: 1, page_size: 20 },
     },
-  })
+  }))
   const root = createRootRoute()
   const auth = createRoute({ getParentRoute: () => root, id: '_authenticated' })
   const usersRoute = createRoute({

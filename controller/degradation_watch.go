@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/tokenkit"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -401,7 +402,7 @@ func requestDegradationProbe(ctx context.Context, channel *model.Channel, testUs
 	}
 	info.IsChannelTest = true
 	info.ShouldIncludeUsage = true
-	info.SetEstimatePromptTokens(service.CountTextToken(prompt, modelName))
+	info.SetEstimatePromptTokens(tokenkit.Count(modelName, prompt))
 	info.InitChannelMeta(c)
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
 		return "", nil, err

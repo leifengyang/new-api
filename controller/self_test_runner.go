@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/tidwall/gjson"
 )
 
@@ -237,7 +238,7 @@ func runDiagnosticAttempt(parent context.Context, round model.SelfTestRound, att
 	if runErr != nil {
 		return
 	}
-	attempt.InputTokens = service.CountTextToken(string(round.Prompt), attempt.Model)
+	attempt.InputTokens = tokenkit.Count(attempt.Model, string(round.Prompt))
 	attempt.TokensEstimated = true
 	if err := save(attempt, false); err != nil {
 		runErr = errors.New("could not save initial progress")
@@ -543,7 +544,7 @@ func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt st
 		}
 	}
 	if !hasOutputUsage {
-		progress.CompletionTokens = service.CountTextToken(string(progress.OutputText), attempt.Model)
+		progress.CompletionTokens = tokenkit.Count(attempt.Model, string(progress.OutputText))
 	}
 	attempt.Output, attempt.InputTokens, attempt.OutputTokens = progress.OutputText, progress.PromptTokens, progress.CompletionTokens
 	attempt.ReasoningTokens, attempt.TokensEstimated = progress.ReasoningTokens, progress.TokensEstimated
@@ -561,7 +562,7 @@ func applySelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, prompt st
 			}
 		}
 		if reasoning.Len() > 0 {
-			attempt.ReasoningTokens = service.CountTextToken(reasoning.String(), attempt.Model)
+			attempt.ReasoningTokens = tokenkit.Count(attempt.Model, reasoning.String())
 			attempt.OutputTokens += attempt.ReasoningTokens
 		}
 	}
@@ -616,12 +617,12 @@ func applyAnthropicSelfTestProgress(attempt *model.SelfTestAttempt, raw []byte, 
 	output, hasOutput := counts["output_tokens"]
 	reasoning, hasReasoning := counts["output_tokens_details.thinking_tokens"]
 	attempt.Output = model.LongText(text.String())
-	attempt.InputTokens = service.CountTextToken(prompt, attempt.Model)
+	attempt.InputTokens = tokenkit.Count(attempt.Model, prompt)
 	attempt.ReasoningTokens = int(reasoning)
 	if !hasReasoning && thinking.Len() > 0 {
-		attempt.ReasoningTokens = service.CountTextToken(thinking.String(), attempt.Model)
+		attempt.ReasoningTokens = tokenkit.Count(attempt.Model, thinking.String())
 	}
-	attempt.OutputTokens = service.CountTextToken(text.String(), attempt.Model) + attempt.ReasoningTokens
+	attempt.OutputTokens = tokenkit.Count(attempt.Model, text.String()) + attempt.ReasoningTokens
 	if hasInput {
 		attempt.InputTokens = int(min(int64(math.MaxInt32), input+counts["cache_creation_input_tokens"]+counts["cache_read_input_tokens"]))
 	}

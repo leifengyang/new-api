@@ -31,7 +31,7 @@ func useEnterpriseDB(t *testing.T) *gorm.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}, &EnterpriseWalletCharge{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserAccessToken{}, &UserSession{}, &EnterpriseWalletCharge{}))
 	// lockForUpdate 靠这个判定决定要不要发 FOR UPDATE，SQLite 上必须跳过。
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	// 注册在 t.TempDir() 之后：cleanup 后进先出，先关连接再删目录。
@@ -141,8 +141,10 @@ func TestUnmarkEnterpriseRequiresExplicitMemberRemoval(t *testing.T) {
 	assert.Zero(t, released)
 	requireQuotaValue(t, owner.Id, 5000)
 	requireQuotaValue(t, member.Id, 1200)
-	require.ErrorIs(t, owner.Delete(), ErrEnterpriseMembersRemain)
-	require.ErrorIs(t, member.Delete(), ErrEnterpriseMemberMustExit)
+	_, err = owner.Delete()
+	require.ErrorIs(t, err, ErrEnterpriseMembersRemain)
+	_, err = member.Delete()
+	require.ErrorIs(t, err, ErrEnterpriseMemberMustExit)
 	member.Role = common.RoleAdminUser
 	require.ErrorIs(t, member.Update(false), ErrEnterpriseMemberMustExit)
 	returned, err := RemoveEnterpriseMember(owner.Id, member.Id)

@@ -92,7 +92,7 @@ func TestEnterpriseBehaviorAcrossDatabases(t *testing.T) {
 func resetEnterpriseTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	require.NoError(t, db.Migrator().DropTable("users", "user_sessions", "enterprise_wallet_charges"))
-	require.NoError(t, db.AutoMigrate(&User{}, &UserSession{}, &EnterpriseWalletCharge{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserAccessToken{}, &UserSession{}, &EnterpriseWalletCharge{}))
 }
 
 // useEnterpriseGlobalsFor 把包级 DB 指向给定连接，并按方言设置主库类型
@@ -177,7 +177,8 @@ func testEnterpriseOrphanedRefund(t *testing.T) {
 	require.NoError(t, err)
 	_, err = RemoveEnterpriseMember(owner.Id, member.Id)
 	require.NoError(t, err)
-	require.NoError(t, owner.Delete())
+	_, err = owner.Delete()
+	require.NoError(t, err)
 	for range 2 {
 		_, err = SetEnterpriseWalletCharge(member.Id, "pending", 0, false)
 		require.NoError(t, err)
@@ -185,7 +186,8 @@ func testEnterpriseOrphanedRefund(t *testing.T) {
 	require.NoError(t, DB.First(member, member.Id).Error)
 	assert.Zero(t, member.Quota)
 	assert.Equal(t, 100, member.EnterpriseFrozenQuota)
-	require.ErrorIs(t, member.Delete(), ErrEnterpriseFrozenQuota)
+	_, err = member.Delete()
+	require.ErrorIs(t, err, ErrEnterpriseFrozenQuota)
 	// Unknown task refunds must respect the combined available/frozen cap.
 	require.NoError(t, DB.Model(member).Update("quota", common.MaxWalletQuota-100).Error)
 	_, err = SetEnterpriseTaskWalletCharge(member.Id, "over-cap", 1, 0)

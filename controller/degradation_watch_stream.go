@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/tidwall/gjson"
 )
 
@@ -61,7 +61,7 @@ func (w *degradationWatchStreamRecorder) snapshot() []byte {
 // this path never consumes quota or writes a billing log.
 func degradationWatchProgress(body []byte, prompt, modelName string) model.DegradationWatchRecord {
 	text := collectDegradationWatchStreamText(body)
-	record := model.DegradationWatchRecord{OutputText: model.LongText(text), PromptTokens: service.CountTextToken(prompt, modelName), CompletionTokens: service.CountTextToken(text, modelName), TokensEstimated: true}
+	record := model.DegradationWatchRecord{OutputText: model.LongText(text), PromptTokens: tokenkit.Count(modelName, prompt), CompletionTokens: tokenkit.Count(modelName, text), TokensEstimated: true}
 	for line := range bytes.SplitSeq(body, []byte{'\n'}) {
 		payload, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
 		if !ok || !gjson.ValidBytes(bytes.TrimSpace(payload)) {

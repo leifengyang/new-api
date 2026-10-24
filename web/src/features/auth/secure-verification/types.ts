@@ -33,6 +33,7 @@ export type SecurityProofScope =
   | '2fa.disable'
   | '2fa.backup_codes.regenerate'
   | 'access_token.generate'
+  | 'access_token.update'
   | 'access_token.revoke'
   | 'account.binding.bind'
   | 'account.binding.unbind'
@@ -40,6 +41,16 @@ export type SecurityProofScope =
   | 'account.password.change'
   | 'account.delete'
   | 'user.delete_batch'
+  | 'admin.user.create'
+  | 'admin.user.update'
+  | 'admin.user.delete'
+  | 'admin.user.manage'
+  | 'admin.user.passkey.reset'
+  | 'admin.user.2fa.disable'
+  | 'admin.user.binding.clear'
+
+/** ManageUser actions that change a user's status or role and need step-up. */
+export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
   | {
@@ -66,6 +77,37 @@ export type VerificationOperation =
   // The proof is bound to the exact selection, so a verification made for one
   // set of accounts cannot be spent on another.
   | { scope: 'user.delete_batch'; context: { user_ids: number[] } }
+  | { scope: 'admin.user.create'; context: { role: number } }
+  | {
+      scope:
+        | 'admin.user.update'
+        | 'admin.user.delete'
+        | 'admin.user.passkey.reset'
+        | 'admin.user.2fa.disable'
+      context: { user_id: number }
+    }
+  | {
+      scope: 'admin.user.manage'
+      context: { user_id: number; action: AdminUserManageAction }
+    }
+  | {
+      scope: 'admin.user.binding.clear'
+      context:
+        | { user_id: number; binding_type: string }
+        | { user_id: number; provider_id: number }
+    }
+  | {
+      scope: 'access_token.generate'
+      context: { scopes: string[]; expires_at: number }
+    }
+  | {
+      scope: 'access_token.update'
+      context: { token_id: number; scopes: string[] }
+    }
+  | {
+      scope: 'access_token.revoke'
+      context: { token_id: number } | { legacy: true }
+    }
   | {
       scope: Exclude<
         SecurityProofScope,
@@ -74,6 +116,10 @@ export type VerificationOperation =
         | 'account.binding.unbind'
         | 'user.delete_batch'
         | 'enterprise.member.manage'
+        | 'access_token.generate'
+        | 'access_token.update'
+        | 'access_token.revoke'
+        | `admin.user.${string}`
       >
       context?: Record<string, never>
     }

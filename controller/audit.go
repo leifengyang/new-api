@@ -29,8 +29,10 @@ var auditContentTemplates = map[string]string{
 	"user.binding_clear":        "Cleared ${bindingType} binding for user ${username}",
 	"user.2fa_disable":          "Force-disabled two-factor authentication for the user",
 	"user.passkey_register":     "Registered a passkey",
-	"access_token.generate":     "Generated a system access token",
-	"access_token.revoke":       "Revoked the system access token",
+	"access_token.generate":     "Generated an access token",
+	"access_token.revoke":       "Revoked an access token",
+	"access_token.rename":       "Renamed an access token",
+	"access_token.update":       "Changed access token permissions",
 	"user.2fa_setup":            "Started two-factor authentication setup",
 	"user.2fa_enable":           "Enabled two-factor authentication",
 	"user.2fa_disable_self":     "Disabled two-factor authentication",
@@ -78,14 +80,15 @@ var auditContentTemplates = map[string]string{
 
 	// 企业空间：平台管理员对企业账号打标记，以及企业管理员在企业控制台里的动作。
 	// 后者由普通用户触发，但走的是同一条管理审计链路，管理员能在审计日志里看到。
-	"user.enterprise_mark":       "Marked user ${username} (ID: ${target_user_id}) as an enterprise account; member limit ${member_limit}",
-	"user.enterprise_unmark":     "Removed the enterprise account mark from user ${username} (ID: ${target_user_id}); released ${released} members",
-	"enterprise.member_create":   "Enterprise ${enterprise_id} created member ${username} (ID: ${target_user_id})",
-	"enterprise.member_enable":   "Enterprise ${enterprise_id} enabled member (ID: ${target_user_id})",
-	"enterprise.member_disable":  "Enterprise ${enterprise_id} disabled member (ID: ${target_user_id}); returned ${returned} quota",
-	"enterprise.member_quota":    "Enterprise ${enterprise_id} transferred ${quota} quota to member (ID: ${target_user_id})",
-	"enterprise.member_limits":   "Enterprise ${enterprise_id} set member (ID: ${target_user_id}) scope: groups ${groups}, models ${models}",
-	"enterprise.member_password": "Enterprise ${enterprise_id} reset the password of member (ID: ${target_user_id})",
+	"user.enterprise_mark":          "Marked user ${username} (ID: ${target_user_id}) as an enterprise account; member limit ${member_limit}",
+	"user.enterprise_unmark":        "Removed the enterprise account mark from user ${username} (ID: ${target_user_id}); released ${released} members",
+	"enterprise.member_create":      "Enterprise ${enterprise_id} created member ${username} (ID: ${target_user_id})",
+	"enterprise.member_enable":      "Enterprise ${enterprise_id} enabled member (ID: ${target_user_id})",
+	"enterprise.member_disable":     "Enterprise ${enterprise_id} disabled member (ID: ${target_user_id}); returned ${returned} quota",
+	"enterprise.member_quota":       "Enterprise ${enterprise_id} transferred ${quota} quota to member (ID: ${target_user_id})",
+	"enterprise.member_limits":      "Enterprise ${enterprise_id} set member (ID: ${target_user_id}) scope: groups ${groups}, models ${models}",
+	"enterprise.member_password":    "Enterprise ${enterprise_id} reset the password of member (ID: ${target_user_id})",
+	"subscription.user_quota_reset": "Administrator reset the quota of subscription plan ${plan_title} (ID: ${plan_id})",
 }
 
 func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {
@@ -180,6 +183,12 @@ func recordUserSecurityAudit(c *gin.Context, userId int, action string, params m
 			params = map[string]any{}
 		}
 		params["code"] = code
+	}
+	if c.GetBool("use_access_token") {
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["token_ref"] = c.GetString("access_token_ref")
 	}
 	var auditInfo *model.AuditRequestInfo
 	if success, ok := params["success"].(bool); ok {

@@ -30,9 +30,12 @@ import {
 } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  requireServerSuccess,
+} from '@/lib/server-error-message'
 
-import { getUsers, searchUsers } from '../api'
+import { getGroups, getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserMemberLevelOptions,
@@ -84,7 +87,7 @@ export function UsersTable() {
     columnFilters: [
       { columnId: 'status', searchKey: 'status', type: 'array' },
       { columnId: 'role', searchKey: 'role', type: 'array' },
-      { columnId: 'group', searchKey: 'group', type: 'string' },
+      { columnId: 'group', searchKey: 'group', type: 'array' },
       { columnId: 'member_level', searchKey: 'member_level', type: 'array' },
       { columnId: 'enterprise', searchKey: 'enterprise', type: 'array' },
       {
@@ -103,8 +106,16 @@ export function UsersTable() {
       | string[]
       | undefined) ?? []
   const groupFilter =
-    (columnFilters.find((filter) => filter.id === 'group')?.value as string) ??
-    ''
+    (columnFilters.find((filter) => filter.id === 'group')?.value as
+      | string[]
+      | undefined) ?? []
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: async () => requireServerSuccess(await getGroups()),
+    staleTime: 5 * 60 * 1000,
+  })
+
   const memberLevelFilter =
     (columnFilters.find((filter) => filter.id === 'member_level')?.value as
       | string[]
@@ -160,7 +171,7 @@ export function UsersTable() {
       const hasColumnFilter =
         statusFilter.length > 0 ||
         roleFilter.length > 0 ||
-        Boolean(groupFilter) ||
+        groupFilter.length > 0 ||
         memberLevelFilter.length > 0 ||
         enterpriseFilter.length > 0 ||
         rebateReviewFilter.length > 0
@@ -177,7 +188,7 @@ export function UsersTable() {
               keyword: globalFilter,
               status: statusFilter[0] ?? '',
               role: roleFilter[0] ?? '',
-              group: groupFilter,
+              group: groupFilter[0] ?? '',
               member_level: memberLevelFilter[0] ?? '',
               is_enterprise: enterpriseFilter[0] ?? '',
               rebate_review_status: rebateReviewFilter[0] ?? '',
@@ -285,6 +296,15 @@ export function UsersTable() {
             columnId: 'rebate_review_status',
             title: t('Rebate Review'),
             options: getUserRebateReviewOptions(t),
+            singleSelect: true,
+          },
+          {
+            columnId: 'group',
+            title: t('User Group'),
+            options: (groupsData?.data ?? []).map((group) => ({
+              label: group,
+              value: group,
+            })),
             singleSelect: true,
           },
         ],

@@ -19,7 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: 'Public Sans', sans-serif;
+  --font-sans: var(--font-ui-sans);
+  --font-public-sans: 'Public Sans Variable', 'Public Sans', sans-serif;
   /* Editorial serif token — the body face used by the `serif` font axis
    * and by presets that opt in (currently Anthropic). Lora carries only
    * Latin glyphs, so the stack walks through CJK serifs (Noto / Source Han
@@ -110,11 +111,12 @@ For commercial licensing, please contact support@quantumnous.com
   /* Static build-channel fallback consumed when JS hasn't booted yet. */
   --app-rev: '2k6e8r7p';
   /* Currently active body font. The font axis swaps this between
-   * `--font-sans` and `--font-serif` via `[data-theme-font='...']` blocks
+   * `--font-public-sans` and `--font-serif` via `[data-theme-font='...']` blocks
    * in theme-presets.css. The `default` preset resolves to sans (see
    * `PRESET_DEFAULT_FONT`), so the pre-hydration value mirrors it and the
    * body face does not swap once the provider mounts. */
-  --font-body: var(--font-sans);
+  --font-ui-sans: var(--font-public-sans);
+  --font-body: var(--font-ui-sans);
   /* Native form controls, scrollbars and the canvas follow the app theme
    * rather than the OS setting. */
   color-scheme: light;

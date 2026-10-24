@@ -396,9 +396,10 @@ func finalizeInviteRebate(credits []*inviteRebateCredit) {
 		}
 		syncCreditUserQuotaCache(credit.InviterId, credit.Quota, "invite rebate")
 		// 带上流水号，便于从用户日志直接定位到后台的返现记录。
-		RecordLog(credit.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现 #%d：下线用户 %d 充值 %s，按 %.2f%% 返现 %s",
-			credit.RebateId, credit.InviteeId, logger.LogQuota(credit.BaseQuota),
-			float64(credit.RateBasisPoints)/100, logger.LogQuota(credit.Quota)))
+		RecordLog(credit.InviterId, LogTypeSystem, common.NewMessage("Invite rebate #{{id}}: user {{user}} topped up {{base}}, credited {{quota}} at {{rate}}%", map[string]any{
+			"id": credit.RebateId, "user": credit.InviteeId, "base": logger.FormatQuota(credit.BaseQuota),
+			"rate": fmt.Sprintf("%.2f", float64(credit.RateBasisPoints)/100), "quota": logger.FormatQuota(credit.Quota),
+		}))
 	}
 }
 
@@ -480,9 +481,10 @@ func releaseFrozenInviteRebates(userId int) (int, error) {
 
 	for _, leg := range released {
 		syncCreditUserQuotaCache(userId, leg.quota, "invite rebate release")
-		RecordLog(userId, LogTypeSystem, fmt.Sprintf("邀请返现 #%d 审核通过，解冻到账：下线用户 %d 充值 %s，按 %.2f%% 返现 %s",
-			leg.rebateId, leg.inviteeId, logger.LogQuota(leg.baseQuota),
-			float64(leg.rate)/100, logger.LogQuota(leg.quota)))
+		RecordLog(userId, LogTypeSystem, common.NewMessage("Invite rebate #{{id}} approved and released: user {{user}} topped up {{base}}, credited {{quota}} at {{rate}}%", map[string]any{
+			"id": leg.rebateId, "user": leg.inviteeId, "base": logger.FormatQuota(leg.baseQuota),
+			"rate": fmt.Sprintf("%.2f", float64(leg.rate)/100), "quota": logger.FormatQuota(leg.quota),
+		}))
 	}
 	return len(released), nil
 }
@@ -565,9 +567,10 @@ func ReverseInviteRebate(rebateId int, operatorId int, reason string) ([]Reverse
 		if err := cacheDecrUserQuota(leg.Rebate.InviterId, int64(leg.Deducted)); err != nil {
 			common.SysLog(fmt.Sprintf("failed to sync invite rebate reversal to user quota cache: %s", err.Error()))
 		}
-		RecordLog(leg.Rebate.InviterId, LogTypeSystem, fmt.Sprintf("邀请返现被撤销：应扣 %s，实扣 %s，原因：%s",
-			logger.LogQuota(leg.Rebate.RebateQuota-leg.Rebate.ReversedQuota+leg.Deducted),
-			logger.LogQuota(leg.Deducted), reason))
+		RecordLog(leg.Rebate.InviterId, LogTypeSystem, common.NewMessage("Invite rebate reversed: expected {{expected}}, recovered {{recovered}}, reason: {{reason}}", map[string]any{
+			"expected":  logger.FormatQuota(leg.Rebate.RebateQuota - leg.Rebate.ReversedQuota + leg.Deducted),
+			"recovered": logger.FormatQuota(leg.Deducted), "reason": reason,
+		}))
 	}
 	return reversed, nil
 }
