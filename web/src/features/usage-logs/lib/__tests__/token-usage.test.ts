@@ -21,6 +21,20 @@ import { describe, expect, test } from 'vitest'
 import { getLogTokenUsage } from '../token-usage'
 
 describe('log token accounting', () => {
+  test('12h cache writes are a subset of the total writes', () => {
+    expect(
+      getLogTokenUsage(12000, 100, {
+        cache_tokens: 4000,
+        cache_creation_tokens: 7000,
+        cache_creation_tokens_12h: 4000,
+      })
+    ).toMatchObject({
+      input: 1000,
+      cacheWrite: 7000,
+      write12h: 4000,
+      total: 12100,
+    })
+  })
   test('OpenAI totals split cache without counting it twice', () => {
     expect(getLogTokenUsage(97598, 77, { cache_tokens: 97280 })).toMatchObject({
       input: 318,

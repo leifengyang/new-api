@@ -33,9 +33,14 @@ export function getLogTokenUsage(
   const cacheRead = count(other?.cache_tokens)
   const write5m = count(other?.cache_creation_tokens_5m) ?? 0
   const write1h = count(other?.cache_creation_tokens_1h) ?? 0
+  const reportedWrite12h = count(other?.cache_creation_tokens_12h) ?? 0
   const cacheWrite =
     count(other?.cache_write_tokens) ??
-    Math.max(count(other?.cache_creation_tokens) ?? 0, write5m + write1h)
+    Math.max(
+      count(other?.cache_creation_tokens) ?? 0,
+      write5m + write1h + reportedWrite12h
+    )
+  const write12h = Math.min(cacheWrite, reportedWrite12h)
   const rawInput = count(prompt) ?? 0
   const output = count(completion) ?? 0
   const separateCache =
@@ -53,6 +58,8 @@ export function getLogTokenUsage(
     cacheWrite,
     write5m,
     write1h,
+    write12h,
+    separateCache,
     hitRate:
       cacheRead !== null && totalInput > 0 && cacheRead <= totalInput
         ? (cacheRead / totalInput) * 100

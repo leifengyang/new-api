@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   BILLING_PRICING_VARS,
+  CLAUDE_CACHE_CREATION_1H_MULTIPLIER,
+  OPENAI_CACHE_CREATION_12H_MULTIPLIER,
   parseTaskTiersFromExpr,
   splitBillingExprAndRequestRules,
 } from '@/features/pricing/lib/billing-expr'
@@ -124,8 +126,9 @@ export function buildLogBilling(
         p: usage.totalInput,
         c: usage.output,
         cr: usage.cacheRead ?? 0,
-        cc: Math.max(0, usage.cacheWrite - usage.write1h),
+        cc: Math.max(0, usage.cacheWrite - usage.write1h - usage.write12h),
         cc1h: usage.write1h,
+        cc12h: usage.write12h,
         ai: other.audio_input ?? other.audio_input_token_count ?? 0,
         ao: other.audio_output ?? 0,
         img: other.image_output ?? 0,
@@ -141,17 +144,35 @@ export function buildLogBilling(
         ) {
           complete = false
         }
-        for (const variable of BILLING_PRICING_VARS) {
-          if (
-            variable.key === 'p' ||
-            variable.key === 'c' ||
-            !compiled.variables.has(variable.key as BillingVariable)
-          ) {
-            continue
-          }
-          const base = variable.side === 'output' ? 'c' : 'p'
-          counts[base] = Math.max(0, counts[base] - (counts[variable.key] ?? 0))
+        // Match settlement's long-cache fallback, retaining physical counts
+        // for subtraction from OpenAI's inclusive input total.
+        const longWrite = usage.separateCache ? 'cc1h' : 'cc12h'
+        const multiplier = usage.separateCache
+          ? CLAUDE_CACHE_CREATION_1H_MULTIPLIER
+          : OPENAI_CACHE_CREATION_12H_MULTIPLIER
+        let shortWriteTokens = counts.cc
+        if (!compiled.variables.has(longWrite)) {
+          shortWriteTokens += counts[longWrite]
+          counts.cc += counts[longWrite] * multiplier
+          counts[longWrite] = 0
         }
+        if (usage.separateCache) {
+          counts.p = usage.totalInput - counts.cr - usage.cacheWrite
+          if (!compiled.variables.has('cr')) counts.p += counts.cr
+          if (!compiled.variables.has('cc')) counts.p += counts.cc
+        } else {
+          if (compiled.variables.has('cr')) counts.p -= counts.cr
+          counts.p -= counts[longWrite]
+          if (compiled.variables.has('cc')) counts.p -= shortWriteTokens
+          else counts.p += counts.cc - shortWriteTokens
+          for (const key of ['img', 'ai', 'ao'] as const) {
+            if (compiled.variables.has(key)) {
+              counts[key === 'ao' ? 'c' : 'p'] -= counts[key]
+            }
+          }
+        }
+        counts.p = Math.max(0, counts.p)
+        counts.c = Math.max(0, counts.c)
       }
       for (const variable of BILLING_PRICING_VARS) {
         if (
@@ -188,7 +209,7 @@ export function buildLogBilling(
       )
     }
     if (usage.cacheWrite) {
-      const split = other.usage_semantic === 'anthropic' || other.claude
+      const split = usage.separateCache
       if (split) {
         add(
           'Cache Write',
@@ -217,10 +238,17 @@ export function buildLogBilling(
         }
       } else {
         add(
-          'Cache Write',
-          usage.cacheWrite,
+          usage.write12h > 0 ? 'Cache Write (30m)' : 'Cache Write',
+          usage.cacheWrite - usage.write12h,
           valid(other.cache_creation_ratio)
             ? price * other.cache_creation_ratio
+            : undefined
+        )
+        add(
+          'Cache Write (12h)',
+          usage.write12h,
+          valid(other.cache_creation_ratio_12h)
+            ? price * other.cache_creation_ratio_12h
             : undefined
         )
       }

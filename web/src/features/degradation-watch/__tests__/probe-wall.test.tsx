@@ -76,8 +76,11 @@ beforeEach(() => {
     record,
   ]
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    const params = config?.params as
+      | { model?: string; probe_id?: string; before?: number }
+      | undefined
     if (url === '/api/degradation_watch/monitor') {
-      if (!config?.params?.model) {
+      if (!params?.model) {
         return {
           data: {
             success: true,
@@ -85,11 +88,7 @@ beforeEach(() => {
           },
         }
       }
-      if (
-        config.params.probe_id === 'drawing' &&
-        config.params.before &&
-        failOlderDrawings
-      ) {
+      if (params.probe_id === 'drawing' && params.before && failOlderDrawings) {
         throw new Error('offline')
       }
       return {
@@ -113,11 +112,10 @@ beforeEach(() => {
                         avg_elapsed_ms: 1200,
                       },
                       records:
-                        config.params.before &&
-                        config.params.probe_id === 'drawing'
+                        params.before && params.probe_id === 'drawing'
                           ? [{ ...drawings[0], id: 90 }]
                           : drawings,
-                      next_before: config.params.before ? 0 : 95,
+                      next_before: params.before ? 0 : 95,
                     },
                   ]
                 : []),
@@ -136,10 +134,8 @@ beforeEach(() => {
                   errors: 1,
                   avg_elapsed_ms: 1000,
                 },
-                records: config.params.before
-                  ? [{ ...record, id: 4 }]
-                  : records,
-                next_before: config.params.before ? 0 : 5,
+                records: params.before ? [{ ...record, id: 4 }] : records,
+                next_before: params.before ? 0 : 5,
               },
             ],
           },

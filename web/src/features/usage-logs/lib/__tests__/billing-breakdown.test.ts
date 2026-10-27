@@ -21,6 +21,81 @@ import { expect, test } from 'vitest'
 import { buildLogBilling } from '../billing-breakdown'
 
 const log = { prompt_tokens: 1000, completion_tokens: 100, quota: 1400 }
+test.each([
+  ['p * 10 + cr * 1 + cc * 12.5 + cc12h * 25', 0.1515],
+  ['p * 10 + cr * 1 + cc * 12.5', 0.1515],
+  ['p * 10 + cr * 1 + cc12h * 25', 0.144],
+  ['p * 10 + cr * 1', 0.124],
+])(
+  'reconstructs long cache writes using the recorded expression %s',
+  (expr, cost) => {
+    const result = buildLogBilling(
+      {
+        prompt_tokens: 12000,
+        completion_tokens: 0,
+        quota: Math.round(cost * 500000),
+      },
+      {
+        billing_mode: 'tiered_expr',
+        expr_b64: btoa(`tier("base", ${expr})`),
+        matched_tier: 'base',
+        cache_tokens: 4000,
+        cache_creation_tokens: 7000,
+        cache_creation_tokens_12h: 4000,
+        group_ratio: 1,
+      },
+      500000
+    )
+    expect(result.calculated).toBeCloseTo(cost)
+    expect(result.complete).toBe(true)
+  }
+)
+
+test('legacy pricing separates 12h cache writes from short writes', () => {
+  const result = buildLogBilling(
+    { prompt_tokens: 12000, completion_tokens: 0, quota: 75750 },
+    {
+      model_ratio: 5,
+      cache_tokens: 4000,
+      cache_ratio: 0.1,
+      cache_creation_tokens: 7000,
+      cache_creation_tokens_12h: 4000,
+      cache_creation_ratio: 1.25,
+      cache_creation_ratio_12h: 2.5,
+      group_ratio: 1,
+    },
+    500000
+  )
+  expect(
+    result.lines.map((line) => [line.label, line.quantity, line.price])
+  ).toEqual([
+    ['Input', 1000, 10],
+    ['Cache Read', 4000, 1],
+    ['Cache Write (30m)', 3000, 12.5],
+    ['Cache Write (12h)', 4000, 25],
+  ])
+  expect(result.calculated).toBeCloseTo(0.1515)
+  expect(result.complete).toBe(true)
+})
+
+test('Claude 1h writes without a separate price use the short-write multiplier', () => {
+  const result = buildLogBilling(
+    { prompt_tokens: 100, completion_tokens: 0, quota: 30150 },
+    {
+      usage_semantic: 'anthropic',
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa('tier("base", p * 3 + c * 15 + cr * .3 + cc * 3.75)'),
+      matched_tier: 'base',
+      cache_creation_tokens: 10000,
+      cache_creation_tokens_1h: 10000,
+      group_ratio: 1,
+    },
+    500000
+  )
+  expect(result.calculated).toBeCloseTo(0.0603)
+  expect(result.complete).toBe(true)
+})
+
 test('expands recorded input, cache and output prices with group ratio', () => {
   const result = buildLogBilling(
     log,

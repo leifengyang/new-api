@@ -26,6 +26,8 @@ export const STATIC_I18N_KEYS = [
   'Original funding source',
   'Date',
   'Enterprise + personal',
+  'The adjusted price is outside the supported range.',
+  'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
   'This expression cannot be expanded into a price table. View the original expression below.',
   'This operation is only supported for vLLM or SGLang channels',

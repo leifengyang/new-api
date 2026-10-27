@@ -244,6 +244,34 @@ it('shows the established empty state when no logs exist', () => {
   expect(screen.getByText('No Logs Found')).toBeVisible()
 })
 
+it('opens 30m and 12h cache quantities without double-counting the total', async () => {
+  const user = userEvent.setup()
+  renderLogs({
+    logs: [
+      {
+        ...log,
+        prompt_tokens: 12000,
+        completion_tokens: 100,
+        other: JSON.stringify({
+          cache_tokens: 4000,
+          cache_creation_tokens: 7000,
+          cache_creation_tokens_12h: 4000,
+        }),
+      },
+    ],
+  })
+  await user.click(screen.getByRole('button', { name: 'Token Breakdown' }))
+  expect(
+    screen.getByText('Cache Write (30m)').nextElementSibling
+  ).toHaveTextContent('3,000')
+  expect(
+    screen.getByText('Cache Write (12h)').nextElementSibling
+  ).toHaveTextContent('4,000')
+  expect(screen.getByText('Total Tokens').nextElementSibling).toHaveTextContent(
+    '12,100'
+  )
+})
+
 it.each([false, true])(
   'keeps timing in the right column for streaming=%s',
   (streaming) => {

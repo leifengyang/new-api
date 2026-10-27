@@ -52,6 +52,12 @@ export function TokenUsageCell(props: { log: UsageLog }) {
     [t('Cache Write'), usage.cacheWrite],
     ...(usage.write5m > 0 ? [[t('Cache Write (5m)'), usage.write5m]] : []),
     ...(usage.write1h > 0 ? [[t('Cache Write (1h)'), usage.write1h]] : []),
+    ...(usage.write12h > 0
+      ? [
+          [t('Cache Write (30m)'), usage.cacheWrite - usage.write12h],
+          [t('Cache Write (12h)'), usage.write12h],
+        ]
+      : []),
     [t('Full input length'), usage.totalInput],
   ] as [string, number | null][]
   return (
