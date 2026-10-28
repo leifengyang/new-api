@@ -33,7 +33,6 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ProbeWall } from '@/features/degradation-watch/components/probe-wall'
 import { TemporaryMonitorPanel } from '@/features/degradation-watch/components/temporary-monitor-panel'
-import { TemporaryRewriterEditor } from '@/features/degradation-watch/components/temporary-rewriter-editor'
 import {
   useDegradationWatchChannels,
   useDegradationWatchActivity,
@@ -114,7 +113,6 @@ function ProbeSettingsForm(props: {
   )
   const [tab, setTab] = useState('targets')
   const [runtime, setRuntime] = useState(false)
-  const [rewriter, setRewriter] = useState(false)
   const [revision, setRevision] = useState(0)
   const dirty = form.formState.isDirty || !configured
   const busy = save.isPending || form.formState.isSubmitting
@@ -173,15 +171,6 @@ function ProbeSettingsForm(props: {
               {t('Unsaved changes')}
             </Badge>
           )}
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={() => setRewriter(true)}
-          >
-            <Settings2 />
-            {t('Configure wall rewrite model')}
-          </Button>
           <Button
             type='button'
             variant='outline'
@@ -276,12 +265,6 @@ function ProbeSettingsForm(props: {
           'Detection records and their content are automatically deleted after 7 days. Errors and timeouts are excluded from the pass rate.'
         )}
       </p>
-      {rewriter && (
-        <TemporaryRewriterEditor
-          scope='wall'
-          onClose={() => setRewriter(false)}
-        />
-      )}
       {runtime && (
         <ProbeRuntimeDialog
           plan={plan}

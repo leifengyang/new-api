@@ -17,86 +17,6 @@ import (
 
 const temporaryMonitorTaskType = "temporary_upstream_monitor"
 
-type drawingRewriterSettings struct {
-	load func() (model.SelfTestProfile, error)
-	save func(model.SelfTestProfile) error
-}
-
-var temporaryRewriterSettings = drawingRewriterSettings{model.GetTemporaryMonitorRewriter, model.SaveTemporaryMonitorRewriter}
-var wallRewriterSettings = drawingRewriterSettings{model.GetDegradationWatchRewriter, model.SaveDegradationWatchRewriter}
-
-func GetTemporaryMonitorRewriter(c *gin.Context)         { temporaryRewriterSettings.Get(c) }
-func UpdateTemporaryMonitorRewriter(c *gin.Context)      { temporaryRewriterSettings.Update(c) }
-func FetchTemporaryMonitorRewriterModels(c *gin.Context) { temporaryRewriterSettings.Models(c) }
-func GetDegradationWatchRewriter(c *gin.Context)         { wallRewriterSettings.Get(c) }
-func UpdateDegradationWatchRewriter(c *gin.Context)      { wallRewriterSettings.Update(c) }
-func FetchDegradationWatchRewriterModels(c *gin.Context) { wallRewriterSettings.Models(c) }
-
-func (settings drawingRewriterSettings) Get(c *gin.Context) {
-	profile, err := settings.load()
-	selfTestResponse(c, profile, err)
-}
-
-// Never forward a stored key to a newly entered destination. A different root
-// administrator can retain it at its original endpoint, sealed under the new owner.
-func (settings drawingRewriterSettings) prepareInput(input selfTestGroupInput) (selfTestGroupInput, error) {
-	input.ID, input.RememberKey = 0, true
-	if input.Name == "" {
-		input.Name = "Drawing prompt rewriter"
-	}
-	base, err := service.NormalizeSelfTestURL(input.BaseURL)
-	if err != nil {
-		return input, err
-	}
-	input.BaseURL = base
-	if strings.TrimSpace(input.APIKey) != "" {
-		return input, nil
-	}
-	saved, err := settings.load()
-	if err != nil {
-		return input, err
-	}
-	if saved.BaseURL != base || saved.Secret == "" {
-		return input, errors.New("enter an API key for the rewrite model endpoint")
-	}
-	input.APIKey, err = service.DecryptSelfTestKey(saved.UserID, saved.BaseURL+":"+saved.Protocol, string(saved.Secret))
-	return input, err
-}
-
-func (settings drawingRewriterSettings) Update(c *gin.Context) {
-	var input selfTestGroupInput
-	if !bindSelfTest(c, &input) {
-		return
-	}
-	input, err := settings.prepareInput(input)
-	if err != nil {
-		selfTestResponse(c, nil, err)
-		return
-	}
-	profiles, _, err := prepareSelfTestGroups(c.GetInt("id"), []selfTestGroupInput{input}, true)
-	if err == nil {
-		err = settings.save(profiles[0])
-	}
-	if err != nil {
-		selfTestResponse(c, nil, err)
-		return
-	}
-	settings.Get(c)
-}
-
-func (settings drawingRewriterSettings) Models(c *gin.Context) {
-	var input selfTestGroupInput
-	if !bindSelfTest(c, &input) {
-		return
-	}
-	input, err := settings.prepareInput(input)
-	if err != nil {
-		selfTestResponse(c, nil, err)
-		return
-	}
-	fetchDiagnosticModels(c, input)
-}
-
 func StartTemporaryMonitor(c *gin.Context) {
 	var input struct {
 		selfTestGroupInput
@@ -229,10 +149,6 @@ func GetTemporaryMonitorAttempt(c *gin.Context) {
 			attempt.OriginalPrompt = attempt.Prompt
 		}
 	}
-	var preparation *model.SelfTestAttempt
-	if attempt.RewriteResult != "" {
-		err = common.UnmarshalJsonStr(string(attempt.RewriteResult), &preparation)
-	}
 	var drawing *model.TemporaryMonitorAttempt
 	if err == nil && attempt.Kind == "text" && attempt.Verdict == "intermediate" {
 		var linked []model.TemporaryMonitorAttempt
@@ -243,9 +159,8 @@ func GetTemporaryMonitorAttempt(c *gin.Context) {
 	}
 	selfTestResponse(c, struct {
 		model.TemporaryMonitorAttempt
-		Preparation   *model.SelfTestAttempt         `json:"preparation,omitempty"`
 		LinkedDrawing *model.TemporaryMonitorAttempt `json:"linked_drawing,omitempty"`
-	}{attempt, preparation, drawing}, err)
+	}{attempt, drawing}, err)
 }
 
 func UpdateTemporaryMonitorPrompt(c *gin.Context) {
@@ -521,29 +436,6 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 	}
 	if !active(0) {
 		return
-	}
-	if attempt.Kind == "drawing" && attempt.Subject != "" {
-		attempt.RewritePrompt = drawingRewritePrompt(attempt.OriginalPrompt, attempt.Subject)
-		prompt, err := rewriteDrawingPrompt(ctx, model.GetTemporaryMonitorRewriter, attempt.ID, attempt.RewritePrompt, attempt.Subject, func(result model.SelfTestAttempt, final bool) error {
-			encoded, err := common.Marshal(result)
-			if err != nil {
-				return err
-			}
-			return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"rewrite_prompt": attempt.RewritePrompt, "rewrite_result": string(encoded)}).Error
-		}, active)
-		if err != nil {
-			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": err.Error()})
-			return
-		}
-		if !active(0) {
-			return
-		}
-		attempt.Prompt = model.LongText(prompt)
-		if err := model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"prompt": attempt.Prompt, "phase": "detecting", "elapsed_ms": 0}).Error; err != nil {
-			common.SysError("temporary monitor prompt persistence failed")
-			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Could not save rewritten prompt"})
-			return
-		}
 	}
 	round := model.SelfTestRound{Prompt: attempt.Prompt, TimeoutSeconds: 1200}
 	runDiagnosticAttempt(ctx, round, attempt.SelfTestAttempt, func(result model.SelfTestAttempt, final bool) error {

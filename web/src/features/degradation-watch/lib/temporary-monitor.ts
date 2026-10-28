@@ -60,13 +60,10 @@ export interface MonitorAttempt extends ComparisonAttempt {
   kind: 'text' | 'drawing'
   verdict: string
   phase?: string
-  subject?: string
   original_prompt?: string
   expected?: string
   intermediate_expected?: string
   linked_drawing?: MonitorAttempt
-  rewrite_prompt?: string
-  preparation?: ComparisonAttempt
 }
 export interface MonitorHistory {
   monitor: TemporaryMonitor
