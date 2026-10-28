@@ -668,3 +668,16 @@ test('a failed save retains the draft for retry', async () => {
   view.unmount()
   client.clear()
 })
+
+test('wall settings expose prompt templates without rewrite configuration', async () => {
+  const { view, client } = setup()
+  await screen.findByRole('button', { name: 'Runtime settings' })
+  expect(
+    screen.queryByRole('button', { name: 'Configure wall rewrite model' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('tab', { name: 'Probe templates' })
+  ).toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})

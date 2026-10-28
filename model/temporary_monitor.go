@@ -2,65 +2,12 @@ package model
 
 import (
 	"errors"
-	"math/rand/v2"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"gorm.io/gorm"
 )
-
-// Keep the entire connection envelope out of the generic options response.
-const TemporaryMonitorRewriterOption = "TemporaryMonitorRewriterSecret"
-const DegradationWatchRewriterOption = "DegradationWatchRewriterSecret"
-
-type temporaryMonitorRewriterEnvelope struct {
-	Profile SelfTestProfile `json:"profile"`
-	UserID  int             `json:"owner_id"`
-	Secret  LongText        `json:"secret"`
-}
-
-func GetTemporaryMonitorRewriter() (SelfTestProfile, error) {
-	return getDrawingRewriter(TemporaryMonitorRewriterOption)
-}
-
-func GetDegradationWatchRewriter() (SelfTestProfile, error) {
-	return getDrawingRewriter(DegradationWatchRewriterOption)
-}
-
-func getDrawingRewriter(key string) (SelfTestProfile, error) {
-	var option Option
-	err := DB.Where(&Option{Key: key}).First(&option).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return SelfTestProfile{}, nil
-	}
-	if err != nil {
-		return SelfTestProfile{}, err
-	}
-	var saved temporaryMonitorRewriterEnvelope
-	if err := common.UnmarshalJsonStr(option.Value, &saved); err != nil {
-		return SelfTestProfile{}, err
-	}
-	saved.Profile.UserID, saved.Profile.Secret = saved.UserID, saved.Secret
-	saved.Profile.HasSavedKey = saved.Secret != ""
-	return saved.Profile, nil
-}
-
-func SaveTemporaryMonitorRewriter(profile SelfTestProfile) error {
-	return saveDrawingRewriter(TemporaryMonitorRewriterOption, profile)
-}
-
-func SaveDegradationWatchRewriter(profile SelfTestProfile) error {
-	return saveDrawingRewriter(DegradationWatchRewriterOption, profile)
-}
-
-func saveDrawingRewriter(key string, profile SelfTestProfile) error {
-	encoded, err := common.Marshal(temporaryMonitorRewriterEnvelope{Profile: profile, UserID: profile.UserID, Secret: profile.Secret})
-	if err != nil {
-		return err
-	}
-	return DB.Save(&Option{Key: key, Value: string(encoded)}).Error
-}
 
 // Temporary monitors never create routable channels or public wall records.
 type TemporaryMonitor struct {
@@ -259,9 +206,10 @@ type TemporaryMonitorAttempt struct {
 	IntermediateExpected LongText `json:"intermediate_expected"`
 	PromptCaptured       bool     `json:"prompt_captured"`
 	Phase                string   `json:"phase" gorm:"size:16"`
-	Subject              string   `json:"subject" gorm:"size:64"`
-	RewritePrompt        LongText `json:"rewrite_prompt"`
-	RewriteResult        LongText `json:"-"`
+	// Retained columns preserve historical rows; prompt rewriting is retired.
+	Subject       string   `json:"-" gorm:"size:64"`
+	RewritePrompt LongText `json:"-"`
+	RewriteResult LongText `json:"-"`
 }
 
 // Save the terminal blue result and its dedicated follow-up atomically. The
@@ -489,25 +437,7 @@ func ClaimTemporaryMonitorAttempt(id int, kind, runner string, now int64) (*Temp
 			attempt.IntermediateExpected = LongText(monitor.IntermediateAnswer())
 		}
 		attempt.Prompt, attempt.PromptCaptured, attempt.Phase = attempt.OriginalPrompt, true, "detecting"
-		if kind == "drawing" {
-			subjects := []string{"Tibo", "小恐龙", "乌龟", "企鹅", "浣熊", "水豚", "小狐狸", "机器人"}
-			var previous TemporaryMonitorAttempt
-			err := tx.Select("subject").Where("monitor_id = ? AND kind = ? AND id < ?", id, kind, attempt.ID).Order("id desc").First(&previous).Error
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			choices := make([]string, 0, len(subjects))
-			for _, subject := range subjects {
-				if subject != previous.Subject && !strings.Contains(strings.ToLower(string(attempt.OriginalPrompt)), strings.ToLower(subject)) {
-					choices = append(choices, subject)
-				}
-			}
-			if len(choices) == 0 {
-				choices = []string{"戴红帽子的机械小熊"}
-			}
-			attempt.Subject, attempt.Phase, attempt.Prompt = choices[rand.IntN(len(choices))], "rewriting", ""
-		}
-		if err := tx.Model(&attempt).Updates(map[string]any{"prompt": attempt.Prompt, "original_prompt": attempt.OriginalPrompt, "expected": attempt.Expected, "intermediate_expected": attempt.IntermediateExpected, "prompt_captured": true, "subject": attempt.Subject, "phase": attempt.Phase}).Error; err != nil {
+		if err := tx.Model(&attempt).Updates(map[string]any{"prompt": attempt.Prompt, "original_prompt": attempt.OriginalPrompt, "expected": attempt.Expected, "intermediate_expected": attempt.IntermediateExpected, "prompt_captured": true, "phase": attempt.Phase}).Error; err != nil {
 			return err
 		}
 		// Only the session stores the encrypted key. Worker copies stay in memory.

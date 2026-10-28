@@ -59,7 +59,6 @@ import {
 import { ComparisonGroupEditor } from './comparison-group-editor'
 import { TemporaryMonitorHistory } from './temporary-monitor-history'
 import { TemporaryProbeFields } from './temporary-probe-controls'
-import { TemporaryRewriterEditor } from './temporary-rewriter-editor'
 
 export function TemporaryMonitorPanel() {
   const { t } = useTranslation()
@@ -76,7 +75,6 @@ export function TemporaryMonitorPanel() {
     restart: boolean
   } | null>(null)
   const [deleting, setDeleting] = useState<TemporaryMonitor | null>(null)
-  const [editingRewriter, setEditingRewriter] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
   const key = ['temporary-monitor', userID]
   const history = useInfiniteQuery({
@@ -135,9 +133,6 @@ export function TemporaryMonitorPanel() {
           <Badge variant='secondary'>{t('Administrators only')}</Badge>
         </div>
         <div className='flex flex-wrap gap-2'>
-          <Button variant='outline' onClick={() => setEditingRewriter(true)}>
-            {t('Configure rewrite model')}
-          </Button>
           <Button onClick={() => setCreating(true)}>
             <Plus />
             {t('Start temporary monitoring')}
@@ -246,9 +241,6 @@ export function TemporaryMonitorPanel() {
             void client.invalidateQueries({ queryKey: key })
           }}
         />
-      )}
-      {editingRewriter && (
-        <TemporaryRewriterEditor onClose={() => setEditingRewriter(false)} />
       )}
       {editing && (
         <EditTemporaryMonitor

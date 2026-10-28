@@ -43,7 +43,6 @@ export function ComparisonGroupEditor(props: {
   removable: boolean
   onRemove: () => void
   temporaryMonitor?: boolean
-  rewriter?: boolean
   loadModels?: (group: TestGroup) => Promise<string[]>
 }) {
   const { t } = useTranslation()
@@ -79,7 +78,7 @@ export function ComparisonGroupEditor(props: {
           {...props.form.register(`${prefix}.name`)}
           className='focus-visible:border-input h-8 border-transparent font-medium shadow-none'
         />
-        {!props.temporaryMonitor && !props.rewriter && (
+        {!props.temporaryMonitor && (
           <Button
             type='button'
             variant='ghost'
@@ -117,7 +116,7 @@ export function ComparisonGroupEditor(props: {
             {...props.form.register(`${prefix}.api_key`)}
           />
         </div>
-        {!props.temporaryMonitor && !props.rewriter && (
+        {!props.temporaryMonitor && (
           <Controller
             control={props.form.control}
             name={`${prefix}.remember_key`}
@@ -222,13 +221,11 @@ export function ComparisonGroupEditor(props: {
               valueAsNumber: true,
             })}
           />
-          {!props.rewriter && (
-            <p className='text-muted-foreground text-xs leading-relaxed'>
-              {t(
-                'Default: 32,768. Increase for long output; the model and channel may impose a lower limit.'
-              )}
-            </p>
-          )}
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'Default: 32,768. Increase for long output; the model and channel may impose a lower limit.'
+            )}
+          </p>
           {props.form.formState.errors.groups?.[props.index]
             ?.max_output_tokens && (
             <p role='alert' className='text-destructive text-xs'>

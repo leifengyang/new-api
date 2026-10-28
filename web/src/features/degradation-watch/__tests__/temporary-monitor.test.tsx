@@ -31,8 +31,6 @@ import { api } from '@/lib/api'
 
 import { TemporaryMonitorPanel } from '../components/temporary-monitor-panel'
 import { TemporaryMonitorResult } from '../components/temporary-monitor-result'
-import { TemporaryRewriterEditor } from '../components/temporary-rewriter-editor'
-import { newTestGroup, type TestGroup } from '../lib/comparison'
 import type { MonitorAttempt, TemporaryMonitor } from '../lib/temporary-monitor'
 
 const monitor: TemporaryMonitor = {
@@ -82,18 +80,9 @@ let monitors: TemporaryMonitor[]
 let failCreate: boolean
 let failProbeSave: boolean
 let queuedKinds: Set<string>
-let rewriter: TestGroup
 let textIntermediate = false
 beforeEach(() => {
   textIntermediate = false
-  rewriter = {
-    ...newTestGroup(),
-    name: 'Dedicated rewrite model',
-    base_url: 'https://rewrite.example.com/v1',
-    model: 'rewrite-model',
-    api_key: '',
-    has_saved_key: true,
-  }
   monitors = [{ ...monitor }]
   failCreate = false
   failProbeSave = false
@@ -101,20 +90,6 @@ beforeEach(() => {
   vi.spyOn(api, 'request').mockImplementation(async (config) => {
     const url = String(config.url)
     const response = (data: unknown) => ({ data: { success: true, data } })
-    if (url.endsWith('/rewriter/models')) {
-      return response(['rewrite-model', 'replacement-model'])
-    }
-    if (url.endsWith('/rewriter')) {
-      if (config.method === 'post') {
-        if (failProbeSave) throw new Error('could not save rewriter')
-        rewriter = {
-          ...(config.data as TestGroup),
-          api_key: '',
-          has_saved_key: true,
-        }
-      }
-      return response(rewriter)
-    }
     if (url.endsWith('/temporary-monitors') && config.method === 'post') {
       if (failCreate) throw new Error('upstream invalid')
       monitors = [{ ...monitor, name: 'New trial' }]
@@ -192,12 +167,6 @@ beforeEach(() => {
         output: 'Full saved upstream answer',
         prompt: 'Historical actual input',
         original_prompt: 'Original drawing template',
-        rewrite_prompt: 'Replace the subject with a turtle',
-        preparation: {
-          ...attempt,
-          input_tokens: 123,
-          output: 'Draw a turtle in SVG',
-        },
         html: url.endsWith('/7') ? '' : '<html><svg/></html>',
       })
     }
@@ -213,7 +182,6 @@ beforeEach(() => {
           ...attempt,
           id,
           kind: 'drawing',
-          subject: '乌龟',
           phase: 'detecting',
         }))
       }
@@ -765,114 +733,22 @@ test('running monitors save text and drawing prompts independently and preserve 
   client.clear()
 })
 
-test('drawing details show rewrite usage and the immutable actual input', async () => {
+test('drawing details keep the actual input without rewrite controls', async () => {
   const { view, client } = setup()
   const drawing = within(
     await screen.findByRole('region', { name: 'Drawing checks' })
   )
-  fireEvent.click(
-    (await drawing.findAllByRole('button', { name: 'Prompt rewrite' }))[0]
-  )
-  const rewrite = within(
-    await screen.findByRole('dialog', { name: 'Prompt rewrite' })
-  )
-  expect(await rewrite.findByText('Draw a turtle in SVG')).toBeInTheDocument()
   expect(
-    rewrite.getByRole('button', { name: 'Input tokens: 123' })
-  ).toBeInTheDocument()
-  fireEvent.click(rewrite.getByRole('button', { name: 'Close' }))
+    screen.queryByRole('button', { name: /Configure.*rewrite model/ })
+  ).not.toBeInTheDocument()
+  expect(
+    drawing.queryByRole('button', { name: 'Prompt rewrite' })
+  ).not.toBeInTheDocument()
   fireEvent.click(
     (await drawing.findAllByRole('button', { name: 'View input details' }))[0]
   )
   expect(await screen.findByText('Historical actual input')).toBeInTheDocument()
   expect(screen.queryByText(monitor.drawing_prompt)).not.toBeInTheDocument()
-  view.unmount()
-  client.clear()
-})
-
-test('dedicated rewrite model retains its saved key and discovers models through its own endpoint', async () => {
-  const { view, client } = setup()
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Configure rewrite model' })
-  )
-  const dialog = within(
-    await screen.findByRole('dialog', { name: 'Configure rewrite model' })
-  )
-  expect(await dialog.findByLabelText('API key')).toHaveValue('')
-  fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
-  await waitFor(() =>
-    expect(api.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/degradation_watch/temporary-monitors/rewriter/models',
-        method: 'post',
-        data: expect.objectContaining({
-          base_url: 'https://rewrite.example.com/v1',
-          api_key: '',
-        }),
-      })
-    )
-  )
-  fireEvent.change(dialog.getByLabelText('Model'), {
-    target: { value: 'replacement-model' },
-  })
-  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  expect(rewriter.model).toBe('replacement-model')
-  expect(monitors[0].model).toBe('trial-model')
-  view.unmount()
-  client.clear()
-})
-
-test('wall rewrite editor uses its own configuration and model endpoint', async () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
-  client.setQueryData(['drawing-rewriter', undefined, 'temporary'], {
-    ...rewriter,
-    model: 'cached-temporary-model',
-  })
-  const onClose = vi.fn()
-  const view = render(
-    <QueryClientProvider client={client}>
-      <TemporaryRewriterEditor scope='wall' onClose={onClose} />
-    </QueryClientProvider>
-  )
-  const dialog = within(
-    await screen.findByRole('dialog', { name: 'Configure wall rewrite model' })
-  )
-  expect(await dialog.findByLabelText('Model')).toHaveValue('rewrite-model')
-  expect(api.request).toHaveBeenCalledWith(
-    expect.objectContaining({
-      url: '/api/degradation_watch/rewriter',
-      method: 'get',
-    })
-  )
-  fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
-  await waitFor(() =>
-    expect(api.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/api/degradation_watch/rewriter/models',
-        method: 'post',
-      })
-    )
-  )
-  fireEvent.change(dialog.getByLabelText('Model'), {
-    target: { value: 'wall-rewrite-model' },
-  })
-  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
-  await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
-  expect(api.request).toHaveBeenCalledWith(
-    expect.objectContaining({
-      url: '/api/degradation_watch/rewriter',
-      method: 'post',
-      data: expect.objectContaining({ model: 'wall-rewrite-model' }),
-    })
-  )
-  expect(
-    client.getQueryData(['drawing-rewriter', undefined, 'temporary'])
-  ).toEqual(expect.objectContaining({ model: 'cached-temporary-model' }))
   view.unmount()
   client.clear()
 })
