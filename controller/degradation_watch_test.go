@@ -1015,6 +1015,9 @@ func wallRewriterFixture(t *testing.T) {
 	t.Helper()
 	t.Setenv("SELF_TEST_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32))))
 	temporaryRewriterFixture(t)
+	profile, err := model.GetTemporaryMonitorRewriter()
+	require.NoError(t, err)
+	require.NoError(t, model.SaveDegradationWatchRewriter(profile))
 	oldClient := selfTestClient
 	t.Cleanup(func() { selfTestClient = oldClient })
 	selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
@@ -1076,7 +1079,7 @@ func TestDegradationDrawingRewriteDatabaseMatrix(t *testing.T) {
 					selfTestClient = rewritingClient
 					before := draws.Load()
 					if scenario == "missing config" {
-						require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).Delete(&model.Option{}).Error)
+						require.NoError(t, db.Where(&model.Option{Key: model.DegradationWatchRewriterOption}).Delete(&model.Option{}).Error)
 					} else if scenario == "upstream failure" || scenario == "empty" || scenario == "unchanged" || scenario == "html" || scenario == "incomplete" {
 						selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
 							if scenario == "upstream failure" {
@@ -1127,6 +1130,76 @@ func TestDegradationDrawingRewriteDatabaseMatrix(t *testing.T) {
 					}
 				})
 			}
+		})
+	}
+}
+
+func TestDrawingRewriterScopesDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Option{}))
+			require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).Or(&model.Option{Key: model.DegradationWatchRewriterOption}).Delete(&model.Option{}).Error)
+			t.Setenv("SELF_TEST_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32))))
+			temporaryRewriterFixture(t)
+			missing := selfTestAPI(t, GetDegradationWatchRewriter, 1, 0, nil)
+			require.Equal(t, 200, missing.Code)
+			assert.False(t, gjson.Get(missing.Body.String(), "data.has_saved_key").Bool())
+			input := map[string]any{"name": "wall", "base_url": "https://example.org/v1", "model": "wall-model", "protocol": "chat", "effort": "low", "api_key": "", "max_output_tokens": 4096}
+			assert.Equal(t, 400, selfTestAPI(t, UpdateDegradationWatchRewriter, 1, 0, input).Code, "must not borrow temporary key even at same endpoint")
+			input["api_key"] = "wall-private-key"
+			saved := selfTestAPI(t, UpdateDegradationWatchRewriter, 1, 0, input)
+			require.Equal(t, 200, saved.Code, saved.Body.String())
+			assert.NotContains(t, saved.Body.String(), "wall-private-key")
+			input["api_key"], input["effort"] = "", "high"
+			require.Equal(t, 200, selfTestAPI(t, UpdateDegradationWatchRewriter, 2, 0, input).Code)
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.Option{}))
+			}
+			wall, err := model.GetDegradationWatchRewriter()
+			require.NoError(t, err)
+			temporary, err := model.GetTemporaryMonitorRewriter()
+			require.NoError(t, err)
+			assert.Equal(t, "rewriter-model", temporary.Model)
+			assert.Equal(t, "minimal", temporary.Effort)
+			assert.Equal(t, "high", wall.Effort)
+			key, err := service.DecryptSelfTestKey(wall.UserID, wall.BaseURL+":"+wall.Protocol, string(wall.Secret))
+			require.NoError(t, err)
+			assert.Equal(t, "wall-private-key", key)
+			var option model.Option
+			require.NoError(t, db.Where(&model.Option{Key: model.DegradationWatchRewriterOption}).First(&option).Error)
+			assert.NotContains(t, option.Value, "wall-private-key")
+			oldClient := selfTestClient
+			t.Cleanup(func() { selfTestClient = oldClient })
+			expectedKey, expectedModel := "wall-private-key", "wall-model"
+			selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+				assert.Equal(t, "Bearer "+expectedKey, req.Header.Get("Authorization"))
+				body := `{"data":[{"id":"wall-model"}]}`
+				if req.Method == http.MethodPost {
+					payload, err := io.ReadAll(req.Body)
+					require.NoError(t, err)
+					assert.Equal(t, expectedModel, gjson.GetBytes(payload, "model").String())
+					body = `{"choices":[{"message":{"content":"Draw Tibo riding a bicycle"},"finish_reason":"stop"}]}`
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			models := selfTestAPI(t, FetchDegradationWatchRewriterModels, 2, 0, input)
+			require.Equal(t, 200, models.Code, models.Body.String())
+			assert.Equal(t, "wall-model", gjson.Get(models.Body.String(), "data.0").String())
+			rewritten, err := rewriteDrawingPrompt(context.Background(), model.GetDegradationWatchRewriter, 0, "Rewrite drawing", "Tibo", nil, func(int64) bool { return true })
+			require.NoError(t, err)
+			assert.Equal(t, "Draw Tibo riding a bicycle", rewritten)
+			expectedKey, expectedModel = "rewrite-private-key", "rewriter-model"
+			_, err = rewriteDrawingPrompt(context.Background(), model.GetTemporaryMonitorRewriter, 0, "Rewrite drawing", "Tibo", nil, func(int64) bool { return true })
+			require.NoError(t, err)
+			input["base_url"] = "https://example.com/v1"
+			assert.Equal(t, 400, selfTestAPI(t, UpdateDegradationWatchRewriter, 2, 0, input).Code)
+			assert.Equal(t, 400, selfTestAPI(t, FetchDegradationWatchRewriterModels, 2, 0, input).Code)
+			input["base_url"], input["model"] = "https://example.org/v1", "temporary-updated"
+			require.Equal(t, 200, selfTestAPI(t, UpdateTemporaryMonitorRewriter, 2, 0, input).Code)
+			wallAfter, err := model.GetDegradationWatchRewriter()
+			require.NoError(t, err)
+			assert.Equal(t, wall, wallAfter, "temporary edits cannot change wall settings")
 		})
 	}
 }

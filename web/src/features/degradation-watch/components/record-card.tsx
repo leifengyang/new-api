@@ -286,9 +286,10 @@ export function RecordCard(props: RecordCardProps) {
   let tone =
     'border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300'
   if (!active && record.verdict === 'intermediate') {
-    status = t('Intermediate result')
-    icon = <CircleAlert className='size-3' />
-    tone = 'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300'
+    status = t('Passed')
+    icon = <CheckCircle2 className='size-3' />
+    tone =
+      'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
   } else if (record.success) {
     status = t('Completed')
     icon = <CheckCircle2 className='size-3' />

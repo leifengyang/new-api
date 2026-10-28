@@ -567,9 +567,9 @@ function CreateTemporaryMonitor(props: {
             <div className='space-y-2'>
               <Label
                 htmlFor='monitor-blue-answer'
-                className='text-blue-700 dark:text-blue-300'
+                className='text-emerald-700 dark:text-emerald-300'
               >
-                {t('Blue answer (intermediate)')}
+                {t('Passed answer (triggers drawing)')}
               </Label>
               <Textarea
                 id='monitor-blue-answer'

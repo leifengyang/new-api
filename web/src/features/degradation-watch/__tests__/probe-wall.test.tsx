@@ -189,7 +189,7 @@ function setup() {
   return { client, view }
 }
 
-test('blue grades have a separate count and open the recorded grading rules', async () => {
+test('former blue grades count as passed and open the recorded grading rules', async () => {
   records = [
     { ...record, id: 7, success: false, verdict: 'intermediate' },
     { ...record, id: 6, success: false, status: 'running', verdict: '' },
@@ -199,16 +199,19 @@ test('blue grades have a separate count and open the recorded grading rules', as
   const section = within(
     await screen.findByRole('region', { name: 'Text probes' })
   )
-  const blue = await section.findByRole('button', {
-    name: /· Intermediate result$/,
-  })
-  expect(blue).toHaveClass('bg-blue-500')
+  const blue = (
+    await section.findAllByRole('button', {
+      name: /· Passed$/,
+    })
+  )[1]
+  expect(blue).toHaveClass('bg-emerald-500')
   expect(blue).toBeEmptyDOMElement()
   expect(section.getByRole('button', { name: /· Running$/ })).toHaveClass(
     'bg-violet-500'
   )
-  expect(section.getByText('Intermediate result: 1')).toBeInTheDocument()
-  expect(section.getByText('1/3 Passed')).toBeInTheDocument()
+  expect(section.queryByText('Intermediate result: 1')).not.toBeInTheDocument()
+  expect(section.getByText('66.7%')).toBeInTheDocument()
+  expect(section.getByText('2/3 Passed')).toBeInTheDocument()
   expect(section.getByText('Exceptions: 1')).toBeInTheDocument()
   fireEvent.click(blue)
   const dialog = within(
@@ -216,7 +219,7 @@ test('blue grades have a separate count and open the recorded grading rules', as
   )
   expect(await dialog.findByText('historic blue answer')).toBeInTheDocument()
   expect(dialog.getByText('expected answer')).toBeInTheDocument()
-  expect(dialog.getByText('Intermediate result')).toHaveClass('text-blue-700')
+  expect(dialog.getByText('Passed')).toHaveClass('text-emerald-700')
   expect(dialog.getByText('full model response')).toBeInTheDocument()
   view.unmount()
   client.clear()
@@ -232,14 +235,12 @@ test('a blue probe opens its own drawing and updates from queued to a finished p
   const section = within(
     await screen.findByRole('region', { name: 'Text probes' })
   )
-  fireEvent.click(
-    await section.findByRole('button', { name: /· Intermediate result$/ })
-  )
+  fireEvent.click(await section.findByRole('button', { name: /· Passed$/ }))
   const dialog = within(
     await screen.findByRole('dialog', { name: 'Probe details' })
   )
   expect(
-    await dialog.findByText('Drawing triggered by this blue probe')
+    await dialog.findByText('Drawing triggered by this probe')
   ).toBeInTheDocument()
   expect(dialog.getByText('Queued')).toBeInTheDocument()
   expect(

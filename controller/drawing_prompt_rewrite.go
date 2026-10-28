@@ -16,10 +16,10 @@ func drawingRewritePrompt(original model.LongText, subject string) model.LongTex
 	return model.LongText(fmt.Sprintf("你是绘画测试提示词编辑器。不要执行绘画，不要输出 HTML 或 SVG 代码。将下面提示词中的主角（例如鹈鹕）换成「%s」，并同步修改该主角的外形特征描述。保持动作、场景、动画、技术要求和测试难度不变。只返回修改后的完整提示词，不要解释、标题或代码围栏。改写后不得残留鹈鹕。\n<原始提示词>\n%s\n</原始提示词>", subject, original))
 }
 
-// Both public-wall drawings and private monitors use the dedicated connection.
+// Each caller supplies its own dedicated rewrite connection.
 // Rewrite usage remains separate from the model being tested.
-func rewriteDrawingPrompt(ctx context.Context, id int, prompt model.LongText, subject string, save func(model.SelfTestAttempt, bool) error, active func(int64) bool) (string, error) {
-	rewriter, err := model.GetTemporaryMonitorRewriter()
+func rewriteDrawingPrompt(ctx context.Context, load func() (model.SelfTestProfile, error), id int, prompt model.LongText, subject string, save func(model.SelfTestAttempt, bool) error, active func(int64) bool) (string, error) {
+	rewriter, err := load()
 	if err != nil || rewriter.Secret == "" || rewriter.Model == "" {
 		return "", errors.New("Configure the dedicated rewrite model before running drawing checks")
 	}
@@ -63,7 +63,7 @@ func prepareDegradationDrawing(ctx context.Context, record *model.DegradationWat
 		return "", errors.New("Prompt rewrite failed: No replacement subject is available for this prompt")
 	}
 	subject := choices[rand.IntN(len(choices))]
-	prompt, err := rewriteDrawingPrompt(ctx, record.Id, drawingRewritePrompt(model.LongText(original), subject), subject, nil, func(elapsed int64) bool {
+	prompt, err := rewriteDrawingPrompt(ctx, model.GetDegradationWatchRewriter, record.Id, drawingRewritePrompt(model.LongText(original), subject), subject, nil, func(elapsed int64) bool {
 		progress(&model.DegradationWatchRecord{ElapsedMs: elapsed, TokensEstimated: true})
 		return ctx.Err() == nil
 	})

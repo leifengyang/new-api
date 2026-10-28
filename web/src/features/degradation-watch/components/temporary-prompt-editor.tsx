@@ -141,9 +141,9 @@ export function TemporaryPromptEditor(props: {
             </p>
             <Label
               htmlFor='temporary-blue-answer'
-              className='text-blue-700 dark:text-blue-300'
+              className='text-emerald-700 dark:text-emerald-300'
             >
-              {t('Blue answer (intermediate)')}
+              {t('Passed answer (triggers drawing)')}
             </Label>
             <Textarea
               id='temporary-blue-answer'

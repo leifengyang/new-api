@@ -44,12 +44,12 @@ export function ProbeAnswerRules(props: {
           </pre>
         </div>
         {props.intermediate && (
-          <div className='min-w-0 rounded-lg bg-blue-500/5 p-3'>
+          <div className='min-w-0 rounded-lg bg-emerald-500/5 p-3'>
             <Badge
               variant='secondary'
-              className='bg-blue-500/10 text-blue-700 dark:text-blue-300'
+              className='bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
             >
-              {t('Blue answer (intermediate)')}
+              {t('Passed answer (triggers drawing)')}
             </Badge>
             <pre className='mt-2 max-h-32 overflow-auto text-sm break-all whitespace-pre-wrap'>
               {props.intermediate}
@@ -65,7 +65,7 @@ export function ProbeAnswerRules(props: {
       {props.intermediate && (
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Blue results are counted separately. Unmatched answers are red; request errors are exceptions.'
+            'Matching either answer counts as passed. The drawing-trigger answer also starts a drawing check.'
           )}
         </p>
       )}

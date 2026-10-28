@@ -71,9 +71,9 @@ export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
       {props.attempt.kind === 'text' && (
         <>
           {props.attempt.verdict === 'intermediate' && (
-            <section className='space-y-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3'>
-              <h3 className='text-sm font-medium text-blue-700 dark:text-blue-300'>
-                {t('Drawing triggered by this blue probe')}
+            <section className='space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3'>
+              <h3 className='text-sm font-medium text-emerald-700 dark:text-emerald-300'>
+                {t('Drawing triggered by this probe')}
               </h3>
               {detail.data?.linked_drawing ? (
                 <TemporaryMonitorResult attempt={detail.data.linked_drawing} />
@@ -90,9 +90,9 @@ export function TemporaryMonitorResult(props: { attempt: MonitorAttempt }) {
           {props.attempt.verdict === 'intermediate' && (
             <Badge
               variant='secondary'
-              className='bg-blue-500/10 text-blue-700 dark:text-blue-300'
+              className='bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
             >
-              {t('Intermediate result')}
+              {t('Passed')}
             </Badge>
           )}
           {detail.data && (

@@ -80,13 +80,10 @@ function TemporaryProbeHistory(props: {
   const attempts = history.data?.pages.flatMap((page) => page.attempts) ?? []
   const stats = head?.stats ?? []
   const passed = stats
-    .filter((s) => s.verdict === 'passed')
+    .filter((s) => ['passed', 'intermediate'].includes(s.verdict))
     .reduce((sum, s) => sum + s.count, 0)
   const mismatch = stats
     .filter((s) => s.verdict === 'mismatch')
-    .reduce((sum, s) => sum + s.count, 0)
-  const intermediate = stats
-    .filter((s) => s.verdict === 'intermediate')
     .reduce((sum, s) => sum + s.count, 0)
   const errors = stats
     .filter((s) => s.verdict === 'error')
@@ -105,16 +102,8 @@ function TemporaryProbeHistory(props: {
             variant='secondary'
           >
             {t('Passed')}: {formatNumber(passed)}/
-            {formatNumber(passed + mismatch + intermediate)}
+            {formatNumber(passed + mismatch)}
           </Badge>
-          {props.kind === 'text' && (
-            <Badge
-              variant='secondary'
-              className='bg-blue-500/10 text-blue-700 dark:text-blue-300'
-            >
-              {t('Intermediate result')}: {formatNumber(intermediate)}
-            </Badge>
-          )}
           <Badge variant='outline'>
             {t('Exceptions')}: {formatNumber(errors)}
           </Badge>
