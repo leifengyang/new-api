@@ -291,8 +291,24 @@ func performDegradationProbe(ctx context.Context, job degradationProbeJob, userI
 			record.ErrorDetails = model.LongText(redactDegradationWatchError(fmt.Sprint(value), job.channel))
 		}
 	}()
+	prompt := job.probe.Prompt
+	if job.probe.Kind == "drawing" {
+		var err error
+		prompt, err = prepareDegradationDrawing(ctx, record, prompt, progress)
+		if err != nil {
+			record.Success, record.Verdict, record.FailureReason = false, "error", "upstream_error"
+			if ctx.Err() == context.DeadlineExceeded {
+				record.FailureReason = "timeout"
+			}
+			record.ErrorDetails = model.LongText(err.Error())
+			return
+		}
+		// Drawing token rates measure only the drawing request, not preparation.
+		started = time.Now()
+		progress(&model.DegradationWatchRecord{TokensEstimated: true})
+	}
 	channel := *job.channel
-	output, _, err := requestDegradationProbe(ctx, &channel, userID, job.target.Model, job.target.ReasoningEffort, job.probe.Prompt, job.target.Group, func(snapshot *model.DegradationWatchRecord) {
+	output, _, err := requestDegradationProbe(ctx, &channel, userID, job.target.Model, job.target.ReasoningEffort, prompt, job.target.Group, func(snapshot *model.DegradationWatchRecord) {
 		record.PromptTokens, record.CompletionTokens, record.ReasoningTokens, record.TokensEstimated = snapshot.PromptTokens, snapshot.CompletionTokens, snapshot.ReasoningTokens, snapshot.TokensEstimated
 		progress(snapshot)
 	})

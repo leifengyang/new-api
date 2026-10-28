@@ -2,26 +2,29 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
-	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/service"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
 
@@ -218,6 +221,7 @@ func TestDegradationWatchRunAllPublishesIndependentLiveJobs(t *testing.T) {
 	release := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	wallRewriterFixture(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Model string `json:"model"`
@@ -583,8 +587,9 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 		constant.StreamingTimeout = streamingTimeout
 		_ = sqlDB.Close()
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.DegradationWatchRecord{}, &model.SystemTask{}, &model.SystemTaskLock{}))
 	require.NoError(t, db.Create(&model.User{Username: "probe-test", Role: common.RoleRootUser, Group: "default", Quota: 10000, Status: 1}).Error)
+	wallRewriterFixture(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Model           string `json:"model"`
@@ -606,10 +611,13 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 			output = "石破茂"
 		}
 		if len(request.Messages) > 0 {
-			expectedEffort := map[string]string{"who": "low", "draw": "high", "another": ""}[request.Messages[0].Content]
+			expectedEffort := map[string]string{"who": "low", "another": ""}[request.Messages[0].Content]
+			if strings.HasPrefix(request.Messages[0].Content, "Draw ") {
+				expectedEffort = "high"
+			}
 			assert.Equal(t, expectedEffort, request.ReasoningEffort, "probe override reaches the actual upstream request")
 		}
-		if len(request.Messages) > 0 && request.Messages[0].Content == "draw" {
+		if len(request.Messages) > 0 && strings.HasPrefix(request.Messages[0].Content, "Draw ") {
 			output = "<html><svg/></html>"
 		}
 		delta, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]string{"content": output}, "finish_reason": "stop"}}})
@@ -674,6 +682,7 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	assert.Equal(t, "passed", rows[3].Verdict)
 	assert.Equal(t, "<html><svg/></html>", string(rows[3].Html))
 	assert.Equal(t, "high", rows[3].ReasoningEffort)
+	assert.True(t, strings.HasPrefix(string(rows[3].PromptSnapshot), "Draw "))
 	_, activity, err := model.GetDegradationWatchActivity()
 	require.NoError(t, err)
 	assert.Len(t, activity, 4)
@@ -702,6 +711,7 @@ func TestDegradationProbeExecutionPersistsPromptVerdictUsageAndErrors(t *testing
 	require.NoError(t, db.First(&child, child.Id).Error)
 	assert.Equal(t, "succeeded", child.Status)
 	assert.Equal(t, model.LongText("<html><svg/></html>"), child.Html)
+	assert.True(t, strings.HasPrefix(string(child.PromptSnapshot), "Draw "))
 	assert.Equal(t, 12, child.PromptTokens)
 	assert.Equal(t, 4, child.CompletionTokens)
 	require.NoError(t, executeBlueProbeDrawings(ctx, &followup))
@@ -996,5 +1006,127 @@ func TestDegradationProbeGradingDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, int64(1), stats.Errors)
 			})
 		}
+	}
+}
+
+// A local rewriter keeps all wall tests offline while exercising the real
+// rewrite request builder and result validation.
+func wallRewriterFixture(t *testing.T) {
+	t.Helper()
+	t.Setenv("SELF_TEST_ENCRYPTION_KEY", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("r", 32))))
+	temporaryRewriterFixture(t)
+	oldClient := selfTestClient
+	t.Cleanup(func() { selfTestClient = oldClient })
+	selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "Bearer rewrite-private-key", req.Header.Get("Authorization"))
+		assert.Equal(t, "rewriter-model", gjson.GetBytes(body, "model").String())
+		instruction := gjson.GetBytes(body, "messages.0.content").String()
+		_, after, found := strings.Cut(instruction, "\u300c")
+		require.True(t, found)
+		subject, _, found := strings.Cut(after, "\u300d")
+		require.True(t, found)
+		encoded, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "Draw " + subject + " riding a bicycle in SVG"}, "finish_reason": "stop"}}, "usage": map[string]int{"prompt_tokens": 99, "completion_tokens": 88}})
+		require.NoError(t, err)
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(encoded)))}, nil
+	})}
+}
+
+func TestDegradationDrawingRewriteDatabaseMatrix(t *testing.T) {
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+
+	previousRedis, previousCache := common.RedisEnabled, common.MemoryCacheEnabled
+	common.RedisEnabled, common.MemoryCacheEnabled = false, false
+	t.Cleanup(func() { common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousCache })
+
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := selfTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.DegradationWatchRecord{}))
+			wallRewriterFixture(t)
+			rewritingClient := selfTestClient
+			var draws atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				body, err := io.ReadAll(req.Body)
+				if !assert.NoError(t, err) {
+					w.WriteHeader(500)
+					return
+				}
+				prompt := gjson.GetBytes(body, "messages.0.content").String()
+				assert.True(t, strings.HasPrefix(prompt, "Draw "))
+				assert.NotContains(t, prompt, "\u9e48\u9e55")
+				var persisted model.DegradationWatchRecord
+				if assert.NoError(t, db.Where("status = ?", "running").Order("id desc").First(&persisted).Error) {
+					assert.Equal(t, prompt, string(persisted.PromptSnapshot), "actual input is durable before drawing")
+				}
+				draws.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"<html><svg/></html>\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16}}\n\ndata: [DONE]\n\n")
+			}))
+			defer upstream.Close()
+			service.InitHttpClient()
+			base := upstream.URL
+			channel := &model.Channel{Type: constant.ChannelTypeOpenAI, BaseURL: &base, Key: "drawing-private-key", Group: "default", Status: common.ChannelStatusEnabled}
+			for _, scenario := range []string{"valid", "missing config", "upstream failure", "empty", "unchanged", "html", "incomplete", "cancelled", "finished record"} {
+				t.Run(scenario, func(t *testing.T) {
+					temporaryRewriterFixture(t)
+					selfTestClient = rewritingClient
+					before := draws.Load()
+					if scenario == "missing config" {
+						require.NoError(t, db.Where(&model.Option{Key: model.TemporaryMonitorRewriterOption}).Delete(&model.Option{}).Error)
+					} else if scenario == "upstream failure" || scenario == "empty" || scenario == "unchanged" || scenario == "html" || scenario == "incomplete" {
+						selfTestClient = &http.Client{Transport: selfTestTransport(func(req *http.Request) (*http.Response, error) {
+							if scenario == "upstream failure" {
+								return &http.Response{StatusCode: 502, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("rewrite-private-key rejected"))}, nil
+							}
+							output := map[string]string{"empty": "", "unchanged": "\u9e48\u9e55", "html": "<html><svg/></html>", "incomplete": "unfinished"}[scenario]
+							finish := "stop"
+							if scenario == "incomplete" {
+								finish = "length"
+							}
+							body, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": output}, "finish_reason": finish}}})
+							require.NoError(t, err)
+							return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+						})}
+					}
+					record := &model.DegradationWatchRecord{ModelName: "drawing-model", ProbeID: "drawing", ProbeKind: "drawing", PromptSnapshot: "draw \u9e48\u9e55", Status: "running"}
+					require.NoError(t, model.CreateDegradationWatchRecord(record))
+					if scenario == "finished record" {
+						require.NoError(t, db.Model(record).Update("status", "failed").Error)
+					}
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					if scenario == "cancelled" {
+						cancel()
+					}
+					performDegradationProbe(ctx, degradationProbeJob{channel: channel, target: operation_setting.DegradationProbeTarget{Model: "drawing-model"}, probe: operation_setting.DegradationProbe{Kind: "drawing", Prompt: "draw \u9e48\u9e55"}}, 1, record, func(snapshot *model.DegradationWatchRecord) {
+						snapshot.Id, snapshot.Status = record.Id, "running"
+						require.NoError(t, model.UpdateDegradationWatchProgress(snapshot))
+					})
+					require.NoError(t, model.FinishDegradationWatchRecord(record))
+					var saved model.DegradationWatchRecord
+					require.NoError(t, db.First(&saved, record.Id).Error)
+					assert.NotContains(t, string(saved.ErrorDetails), "rewrite-private-key")
+					if scenario == "valid" {
+						assert.Equal(t, before+1, draws.Load())
+						require.Equal(t, "succeeded", saved.Status, string(saved.ErrorDetails))
+						assert.Equal(t, 12, saved.PromptTokens, "rewrite usage is not drawing usage")
+						assert.Equal(t, 4, saved.CompletionTokens)
+						assert.Equal(t, record.PromptSnapshot, saved.PromptSnapshot)
+						assert.Equal(t, model.LongText("<html><svg/></html>"), saved.Html)
+					} else {
+						assert.Equal(t, before, draws.Load(), "no drawing request after failed preparation")
+						assert.Equal(t, "failed", saved.Status)
+						assert.Equal(t, model.LongText("draw \u9e48\u9e55"), saved.PromptSnapshot)
+						if scenario != "finished record" {
+							assert.NotEmpty(t, saved.ErrorDetails)
+						}
+					}
+				})
+			}
+		})
 	}
 }

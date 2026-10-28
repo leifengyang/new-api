@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -509,39 +508,19 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 		return
 	}
 	if attempt.Kind == "drawing" && attempt.Subject != "" {
-		rewriter, err := model.GetTemporaryMonitorRewriter()
-		if err != nil || rewriter.Secret == "" || rewriter.Model == "" {
-			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Configure the dedicated rewrite model before running drawing checks"})
-			return
-		}
-		rewriteAttempt := model.SelfTestAttempt{ID: attempt.ID, UserID: rewriter.UserID, Name: rewriter.Name, BaseURL: rewriter.BaseURL, Model: rewriter.Model, Protocol: rewriter.Protocol, Effort: rewriter.Effort, MaxOutputTokens: rewriter.MaxOutputTokens, Secret: rewriter.Secret, Status: "running", CreatedAt: attempt.CreatedAt, StartedAt: time.Now().UnixMilli()}
-		attempt.RewritePrompt = model.LongText(fmt.Sprintf("你是绘画测试提示词编辑器。不要执行绘画，不要输出 HTML 或 SVG 代码。将下面提示词中的主角（例如鹈鹕）换成「%s」，并同步修改该主角的外形特征描述。保持动作、场景、动画、技术要求和测试难度不变。只返回修改后的完整提示词，不要解释、标题或代码围栏。改写后不得残留鹈鹕。\n<原始提示词>\n%s\n</原始提示词>", attempt.Subject, attempt.OriginalPrompt))
-		var preparation model.SelfTestAttempt
-		var persistenceErr error
-		runDiagnosticAttempt(ctx, model.SelfTestRound{Prompt: attempt.RewritePrompt, TimeoutSeconds: 1200}, rewriteAttempt, func(result model.SelfTestAttempt, final bool) error {
-			preparation = result
+		attempt.RewritePrompt = drawingRewritePrompt(attempt.OriginalPrompt, attempt.Subject)
+		prompt, err := rewriteDrawingPrompt(ctx, attempt.ID, attempt.RewritePrompt, attempt.Subject, func(result model.SelfTestAttempt, final bool) error {
 			encoded, err := common.Marshal(result)
 			if err != nil {
-				persistenceErr = err
 				return err
 			}
-			persistenceErr = model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"rewrite_prompt": attempt.RewritePrompt, "rewrite_result": string(encoded)}).Error
-			return persistenceErr
+			return model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"rewrite_prompt": attempt.RewritePrompt, "rewrite_result": string(encoded)}).Error
 		}, active)
-		prompt := strings.TrimSpace(string(preparation.Output))
-		lowerPrompt := strings.ToLower(prompt)
-		errText := string(preparation.Error)
-		if persistenceErr != nil {
-			errText = "Could not save rewritten prompt"
-		}
-		if preparation.Status == "succeeded" && persistenceErr == nil && (prompt == "" || len([]rune(prompt)) > operation_setting.MaxDegradationWatchPromptLength || !strings.Contains(lowerPrompt, strings.ToLower(attempt.Subject)) || strings.Contains(prompt, "鹈鹕") || strings.HasPrefix(lowerPrompt, "<!doctype") || strings.HasPrefix(lowerPrompt, "<html") || strings.HasPrefix(lowerPrompt, "<svg") || strings.HasPrefix(prompt, "```")) {
-			errText = "The rewritten prompt is empty, too long, still contains the original subject, or does not contain the replacement subject"
-		}
-		if errText != "" || preparation.Status != "succeeded" {
-			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": "Prompt rewrite failed: " + errText})
+		if err != nil {
+			model.DB.Model(&model.TemporaryMonitorAttempt{}).Where("id = ? AND status = ? AND runner = ?", attempt.ID, "running", runner).Updates(map[string]any{"status": "failed", "verdict": "error", "error": err.Error()})
 			return
 		}
-		if !active(preparation.ElapsedMs) {
+		if !active(0) {
 			return
 		}
 		attempt.Prompt = model.LongText(prompt)
