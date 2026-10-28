@@ -239,10 +239,12 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 				}
 			}
 			progress(&model.DegradationWatchRecord{TokensEstimated: true})
-			// Adaptors receive an isolated request context and channel value for each model.
-			channel := *job.channel
-			record := drawDegradationWatch(requestCtx, &channel, testUserID, job.target.Model, job.target.ReasoningEffort, prompt, progress)
-			record.Id, record.RunId, record.CreatedAt = queued.Id, runId, queued.CreatedAt
+			record := queued
+			performDegradationProbe(requestCtx, degradationProbeJob{
+				channel: job.channel,
+				target:  operation_setting.DegradationProbeTarget{Model: job.target.Model, ReasoningEffort: job.target.ReasoningEffort},
+				probe:   operation_setting.DegradationProbe{Kind: "drawing", Prompt: prompt},
+			}, testUserID, record, progress)
 			if ctx.Err() != nil {
 				record.Success = false
 				record.FailureReason = "interrupted"
@@ -289,57 +291,8 @@ func runDegradationWatchTask(ctx context.Context, runId string, payload degradat
 	return summary, nil
 }
 
-// drawDegradationWatch 直连渠道发一次绘图请求。流程照抄 testChannel 的合成上下文，
-// 但刻意不做 settleTestQuota / RecordConsumeLog：检测不扣任何人的额度，也不进
-// 使用日志。一律走流式，长时间推理时非流式请求容易被中间代理掐断。
-func drawDegradationWatch(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, progress ...func(*model.DegradationWatchRecord)) (record *model.DegradationWatchRecord) {
-	record = &model.DegradationWatchRecord{
-		ChannelId:       channel.Id,
-		ModelName:       modelName,
-		ReasoningEffort: effort,
-	}
-	tik := time.Now()
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			record.Success = false
-			record.FailureReason = "upstream_error"
-			record.ErrorDetails = model.LongText(redactDegradationWatchError(fmt.Sprintf("Detection panic: %v", recovered), channel))
-			record.ElapsedMs = time.Since(tik).Milliseconds()
-		}
-	}()
-	record.TokensEstimated = true
-	text, _, err := requestDegradationWatchDrawing(ctx, channel, testUserID, modelName, effort, prompt, func(snapshot *model.DegradationWatchRecord) {
-		record.PromptTokens, record.CompletionTokens, record.ReasoningTokens = snapshot.PromptTokens, snapshot.CompletionTokens, snapshot.ReasoningTokens
-		record.TokensEstimated = snapshot.TokensEstimated
-		if len(progress) > 0 {
-			progress[0](snapshot)
-		}
-	})
-	record.ElapsedMs = time.Since(tik).Milliseconds()
-	record.OutputText = model.LongText(text)
-	if err != nil {
-		record.ErrorDetails = model.LongText(redactDegradationWatchError(err.Error(), channel))
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			record.FailureReason = degradationWatchReasonTimeout
-		} else {
-			record.FailureReason = redactDegradationWatchError(err.Error(), channel)
-		}
-		return record
-	}
-	html, reason := extractDegradationWatchHtml(text)
-	if reason != "" {
-		record.FailureReason = reason
-		return record
-	}
-	record.Success = true
-	record.Html = model.LongText(html)
-	return record
-}
-
-func requestDegradationWatchDrawing(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, progress ...func(*model.DegradationWatchRecord)) (string, *dto.Usage, error) {
-	return requestDegradationProbe(ctx, channel, testUserID, modelName, effort, prompt, "", progress...)
-}
-
+// Diagnostic requests stream directly to the selected channel. They never
+// settle user quota or write consume logs, including after prompt preparation.
 func requestDegradationProbe(ctx context.Context, channel *model.Channel, testUserID int, modelName string, effort string, prompt string, group string, progress ...func(*model.DegradationWatchRecord)) (string, *dto.Usage, error) {
 	useResponses := normalizeChannelTestEndpoint(channel, "") == string(constant.EndpointTypeOpenAIResponse)
 	requestPath := "/v1/chat/completions"
