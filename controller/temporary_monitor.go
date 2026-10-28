@@ -17,14 +17,29 @@ import (
 
 const temporaryMonitorTaskType = "temporary_upstream_monitor"
 
-func GetTemporaryMonitorRewriter(c *gin.Context) {
-	profile, err := model.GetTemporaryMonitorRewriter()
+type drawingRewriterSettings struct {
+	load func() (model.SelfTestProfile, error)
+	save func(model.SelfTestProfile) error
+}
+
+var temporaryRewriterSettings = drawingRewriterSettings{model.GetTemporaryMonitorRewriter, model.SaveTemporaryMonitorRewriter}
+var wallRewriterSettings = drawingRewriterSettings{model.GetDegradationWatchRewriter, model.SaveDegradationWatchRewriter}
+
+func GetTemporaryMonitorRewriter(c *gin.Context)         { temporaryRewriterSettings.Get(c) }
+func UpdateTemporaryMonitorRewriter(c *gin.Context)      { temporaryRewriterSettings.Update(c) }
+func FetchTemporaryMonitorRewriterModels(c *gin.Context) { temporaryRewriterSettings.Models(c) }
+func GetDegradationWatchRewriter(c *gin.Context)         { wallRewriterSettings.Get(c) }
+func UpdateDegradationWatchRewriter(c *gin.Context)      { wallRewriterSettings.Update(c) }
+func FetchDegradationWatchRewriterModels(c *gin.Context) { wallRewriterSettings.Models(c) }
+
+func (settings drawingRewriterSettings) Get(c *gin.Context) {
+	profile, err := settings.load()
 	selfTestResponse(c, profile, err)
 }
 
 // Never forward a stored key to a newly entered destination. A different root
 // administrator can retain it at its original endpoint, sealed under the new owner.
-func prepareTemporaryMonitorRewriterInput(input selfTestGroupInput) (selfTestGroupInput, error) {
+func (settings drawingRewriterSettings) prepareInput(input selfTestGroupInput) (selfTestGroupInput, error) {
 	input.ID, input.RememberKey = 0, true
 	if input.Name == "" {
 		input.Name = "Drawing prompt rewriter"
@@ -37,7 +52,7 @@ func prepareTemporaryMonitorRewriterInput(input selfTestGroupInput) (selfTestGro
 	if strings.TrimSpace(input.APIKey) != "" {
 		return input, nil
 	}
-	saved, err := model.GetTemporaryMonitorRewriter()
+	saved, err := settings.load()
 	if err != nil {
 		return input, err
 	}
@@ -48,33 +63,33 @@ func prepareTemporaryMonitorRewriterInput(input selfTestGroupInput) (selfTestGro
 	return input, err
 }
 
-func UpdateTemporaryMonitorRewriter(c *gin.Context) {
+func (settings drawingRewriterSettings) Update(c *gin.Context) {
 	var input selfTestGroupInput
 	if !bindSelfTest(c, &input) {
 		return
 	}
-	input, err := prepareTemporaryMonitorRewriterInput(input)
+	input, err := settings.prepareInput(input)
 	if err != nil {
 		selfTestResponse(c, nil, err)
 		return
 	}
 	profiles, _, err := prepareSelfTestGroups(c.GetInt("id"), []selfTestGroupInput{input}, true)
 	if err == nil {
-		err = model.SaveTemporaryMonitorRewriter(profiles[0])
+		err = settings.save(profiles[0])
 	}
 	if err != nil {
 		selfTestResponse(c, nil, err)
 		return
 	}
-	GetTemporaryMonitorRewriter(c)
+	settings.Get(c)
 }
 
-func FetchTemporaryMonitorRewriterModels(c *gin.Context) {
+func (settings drawingRewriterSettings) Models(c *gin.Context) {
 	var input selfTestGroupInput
 	if !bindSelfTest(c, &input) {
 		return
 	}
-	input, err := prepareTemporaryMonitorRewriterInput(input)
+	input, err := settings.prepareInput(input)
 	if err != nil {
 		selfTestResponse(c, nil, err)
 		return
@@ -509,7 +524,7 @@ func runTemporaryMonitorAttempt(parent context.Context, monitor model.TemporaryM
 	}
 	if attempt.Kind == "drawing" && attempt.Subject != "" {
 		attempt.RewritePrompt = drawingRewritePrompt(attempt.OriginalPrompt, attempt.Subject)
-		prompt, err := rewriteDrawingPrompt(ctx, attempt.ID, attempt.RewritePrompt, attempt.Subject, func(result model.SelfTestAttempt, final bool) error {
+		prompt, err := rewriteDrawingPrompt(ctx, model.GetTemporaryMonitorRewriter, attempt.ID, attempt.RewritePrompt, attempt.Subject, func(result model.SelfTestAttempt, final bool) error {
 			encoded, err := common.Marshal(result)
 			if err != nil {
 				return err

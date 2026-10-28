@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { createServerError } from '@/lib/server-error-message'
 
 import type {
   ApiResponse,
@@ -122,4 +123,25 @@ export async function runDegradationWatch(
     { validateStatus: (status) => status < 300 || status === 409 }
   )
   return res.data
+}
+
+export type DrawingRewriterScope = 'temporary' | 'wall'
+
+export async function drawingRewriterRequest<T>(
+  scope: DrawingRewriterScope,
+  path = '',
+  method: 'get' | 'post' = 'get',
+  data?: unknown
+): Promise<T> {
+  const base =
+    scope === 'wall'
+      ? '/api/degradation_watch'
+      : '/api/degradation_watch/temporary-monitors'
+  const res = await api.request<{
+    success: boolean
+    message?: string
+    data: T
+  }>({ url: `${base}/rewriter${path}`, method, data })
+  if (!res.data.success) throw createServerError(res.data)
+  return res.data.data
 }

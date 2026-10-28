@@ -31,6 +31,7 @@ import { api } from '@/lib/api'
 
 import { TemporaryMonitorPanel } from '../components/temporary-monitor-panel'
 import { TemporaryMonitorResult } from '../components/temporary-monitor-result'
+import { TemporaryRewriterEditor } from '../components/temporary-rewriter-editor'
 import { newTestGroup, type TestGroup } from '../lib/comparison'
 import type { MonitorAttempt, TemporaryMonitor } from '../lib/temporary-monitor'
 
@@ -82,7 +83,9 @@ let failCreate: boolean
 let failProbeSave: boolean
 let queuedKinds: Set<string>
 let rewriter: TestGroup
+let textIntermediate = false
 beforeEach(() => {
+  textIntermediate = false
   rewriter = {
     ...newTestGroup(),
     name: 'Dedicated rewrite model',
@@ -201,7 +204,9 @@ beforeEach(() => {
     if (url.includes('/temporary-monitors/1?')) {
       const drawing = url.includes('kind=drawing')
       const older = url.includes('before=20')
-      let attempts = [attempt]
+      let attempts = [
+        textIntermediate ? { ...attempt, verdict: 'intermediate' } : attempt,
+      ]
       if (drawing) {
         const ids = older ? [19] : [25, 24, 23, 22, 21]
         attempts = ids.map((id) => ({
@@ -217,6 +222,13 @@ beforeEach(() => {
         attempts,
         stats: [
           { verdict: 'passed', status: 'succeeded', count: drawing ? 6 : 1 },
+          ...(!drawing && textIntermediate
+            ? [
+                { verdict: 'intermediate', status: 'succeeded', count: 1 },
+                { verdict: 'mismatch', status: 'succeeded', count: 1 },
+                { verdict: 'error', status: 'failed', count: 1 },
+              ]
+            : []),
           {
             verdict: '',
             status: 'queued',
@@ -270,7 +282,7 @@ test('a blue temporary probe shows the error from its own linked drawing', async
     </QueryClientProvider>
   )
   expect(
-    await screen.findByText('Drawing triggered by this blue probe')
+    await screen.findByText('Drawing triggered by this probe')
   ).toBeInTheDocument()
   expect(
     await screen.findByText('Linked drawing upstream unavailable')
@@ -710,9 +722,12 @@ test('running monitors save text and drawing prompts independently and preserve 
       target: { value: `Updated ${kind}` },
     })
     if (kind === 'Text probes') {
-      fireEvent.change(dialog.getByLabelText('Blue answer (intermediate)'), {
-        target: { value: 'Secondary answer' },
-      })
+      fireEvent.change(
+        dialog.getByLabelText('Passed answer (triggers drawing)'),
+        {
+          target: { value: 'Secondary answer' },
+        }
+      )
       fireEvent.change(dialog.getByLabelText('Expected answer'), {
         target: { value: 'Updated answer' },
       })
@@ -732,9 +747,9 @@ test('running monitors save text and drawing prompts independently and preserve 
         expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled()
       )
       expect(dialog.getByLabelText('Prompt')).toHaveValue('Updated Text probes')
-      expect(dialog.getByLabelText('Blue answer (intermediate)')).toHaveValue(
-        'Secondary answer'
-      )
+      expect(
+        dialog.getByLabelText('Passed answer (triggers drawing)')
+      ).toHaveValue('Secondary answer')
       expect(monitors[0].text_prompt).toBe(monitor.text_prompt)
       failProbeSave = false
     }
@@ -806,6 +821,74 @@ test('dedicated rewrite model retains its saved key and discovers models through
   )
   expect(rewriter.model).toBe('replacement-model')
   expect(monitors[0].model).toBe('trial-model')
+  view.unmount()
+  client.clear()
+})
+
+test('wall rewrite editor uses its own configuration and model endpoint', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  client.setQueryData(['drawing-rewriter', undefined, 'temporary'], {
+    ...rewriter,
+    model: 'cached-temporary-model',
+  })
+  const onClose = vi.fn()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <TemporaryRewriterEditor scope='wall' onClose={onClose} />
+    </QueryClientProvider>
+  )
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'Configure wall rewrite model' })
+  )
+  expect(await dialog.findByLabelText('Model')).toHaveValue('rewrite-model')
+  expect(api.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/degradation_watch/rewriter',
+      method: 'get',
+    })
+  )
+  fireEvent.click(dialog.getByRole('button', { name: 'Fetch models' }))
+  await waitFor(() =>
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/api/degradation_watch/rewriter/models',
+        method: 'post',
+      })
+    )
+  )
+  fireEvent.change(dialog.getByLabelText('Model'), {
+    target: { value: 'wall-rewrite-model' },
+  })
+  fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  expect(api.request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      url: '/api/degradation_watch/rewriter',
+      method: 'post',
+      data: expect.objectContaining({ model: 'wall-rewrite-model' }),
+    })
+  )
+  expect(
+    client.getQueryData(['drawing-rewriter', undefined, 'temporary'])
+  ).toEqual(expect.objectContaining({ model: 'cached-temporary-model' }))
+  view.unmount()
+  client.clear()
+})
+
+test('temporary monitor counts former blue probes as green passed results', async () => {
+  textIntermediate = true
+  const { view, client } = setup()
+  const text = within(
+    await screen.findByRole('region', { name: 'Text probes' })
+  )
+  expect(await text.findByText('Passed: 2/3')).toBeInTheDocument()
+  expect(text.getByText('Exceptions: 1')).toBeInTheDocument()
+  expect(text.getByRole('button', { name: /Passed$/ })).toHaveClass(
+    'bg-emerald-500'
+  )
+  expect(text.queryByText(/Intermediate result/)).not.toBeInTheDocument()
   view.unmount()
   client.clear()
 })

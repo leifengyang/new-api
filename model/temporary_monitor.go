@@ -12,6 +12,7 @@ import (
 
 // Keep the entire connection envelope out of the generic options response.
 const TemporaryMonitorRewriterOption = "TemporaryMonitorRewriterSecret"
+const DegradationWatchRewriterOption = "DegradationWatchRewriterSecret"
 
 type temporaryMonitorRewriterEnvelope struct {
 	Profile SelfTestProfile `json:"profile"`
@@ -20,8 +21,16 @@ type temporaryMonitorRewriterEnvelope struct {
 }
 
 func GetTemporaryMonitorRewriter() (SelfTestProfile, error) {
+	return getDrawingRewriter(TemporaryMonitorRewriterOption)
+}
+
+func GetDegradationWatchRewriter() (SelfTestProfile, error) {
+	return getDrawingRewriter(DegradationWatchRewriterOption)
+}
+
+func getDrawingRewriter(key string) (SelfTestProfile, error) {
 	var option Option
-	err := DB.Where(&Option{Key: TemporaryMonitorRewriterOption}).First(&option).Error
+	err := DB.Where(&Option{Key: key}).First(&option).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return SelfTestProfile{}, nil
 	}
@@ -38,11 +47,19 @@ func GetTemporaryMonitorRewriter() (SelfTestProfile, error) {
 }
 
 func SaveTemporaryMonitorRewriter(profile SelfTestProfile) error {
+	return saveDrawingRewriter(TemporaryMonitorRewriterOption, profile)
+}
+
+func SaveDegradationWatchRewriter(profile SelfTestProfile) error {
+	return saveDrawingRewriter(DegradationWatchRewriterOption, profile)
+}
+
+func saveDrawingRewriter(key string, profile SelfTestProfile) error {
 	encoded, err := common.Marshal(temporaryMonitorRewriterEnvelope{Profile: profile, UserID: profile.UserID, Secret: profile.Secret})
 	if err != nil {
 		return err
 	}
-	return DB.Save(&Option{Key: TemporaryMonitorRewriterOption, Value: string(encoded)}).Error
+	return DB.Save(&Option{Key: key, Value: string(encoded)}).Error
 }
 
 // Temporary monitors never create routable channels or public wall records.

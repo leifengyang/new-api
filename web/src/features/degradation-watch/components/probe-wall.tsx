@@ -45,7 +45,7 @@ import { ProbeRecordDialog } from './probe-record-dialog'
 
 const verdictClasses = {
   passed: 'bg-emerald-500 hover:bg-emerald-400',
-  intermediate: 'bg-blue-500 hover:bg-blue-400',
+  intermediate: 'bg-emerald-500 hover:bg-emerald-400',
   mismatch: 'bg-rose-500 hover:bg-rose-400',
   error: 'bg-amber-400 hover:bg-amber-300',
   running: 'bg-violet-500 motion-safe:animate-pulse',
@@ -60,7 +60,7 @@ export function StatusBlocks(props: {
   const { t } = useTranslation()
   const labels = {
     passed: t('Passed'),
-    intermediate: t('Intermediate result'),
+    intermediate: t('Passed'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -161,15 +161,15 @@ function ProbeStrip(props: {
     ),
   }
   const stats = row.stats
-  const denominator =
-    stats.passed + stats.mismatched + (stats.intermediate ?? 0)
+  const passed = stats.passed + (stats.intermediate ?? 0)
+  const denominator = passed + stats.mismatched
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const rate =
     denominator > 0
       ? new Intl.NumberFormat(locale, {
           style: 'percent',
           maximumFractionDigits: 1,
-        }).format(stats.passed / denominator)
+        }).format(passed / denominator)
       : '—'
   const latest = row.records[0]
   const live = latest && ['running', 'queued'].includes(latest.status ?? '')
@@ -182,7 +182,7 @@ function ProbeStrip(props: {
   }, [latest?.id, frozen])
   const latestLabels = {
     passed: row.kind === 'drawing' ? t('Drawing generated') : t('Passed'),
-    intermediate: t('Intermediate result'),
+    intermediate: t('Passed'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -215,18 +215,12 @@ function ProbeStrip(props: {
             {t('Every {{count}} minutes', { count: row.interval_minutes })}
           </span>
           <span>
-            {formatNumber(stats.passed, locale)}/
-            {formatNumber(denominator, locale)} {t('Passed')}
+            {formatNumber(passed, locale)}/{formatNumber(denominator, locale)}{' '}
+            {t('Passed')}
           </span>
           {stats.errors > 0 && (
             <span className='text-amber-700 dark:text-amber-400'>
               {t('Exceptions')}: {formatNumber(stats.errors, locale)}
-            </span>
-          )}
-          {(stats.intermediate ?? 0) > 0 && (
-            <span className='text-blue-700 dark:text-blue-300'>
-              {t('Intermediate result')}:{' '}
-              {formatNumber(stats.intermediate, locale)}
             </span>
           )}
         </div>
@@ -457,7 +451,6 @@ export function ProbeWall() {
               <div className='text-muted-foreground flex flex-wrap gap-3 text-xs'>
                 {[
                   [verdictClasses.passed, t('Passed')],
-                  [verdictClasses.intermediate, t('Intermediate result')],
                   [verdictClasses.mismatch, t('Answer or drawing mismatch')],
                   [verdictClasses.error, t('Request error')],
                   [verdictClasses.running, t('Running')],

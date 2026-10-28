@@ -59,7 +59,7 @@ export function ProbeRecordDialog(props: {
   const inputId = useId()
   const labels = {
     passed: drawing ? t('Drawing generated') : t('Passed'),
-    intermediate: t('Intermediate result'),
+    intermediate: t('Passed'),
     mismatch: t('Answer or drawing mismatch'),
     error: t('Request error'),
     running: t('Running'),
@@ -128,9 +128,9 @@ export function ProbeRecordDialog(props: {
       >
         <div className='space-y-4'>
           {!drawing && record.verdict === 'intermediate' && (
-            <section className='space-y-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3'>
-              <h3 className='text-sm font-medium text-blue-700 dark:text-blue-300'>
-                {t('Drawing triggered by this blue probe')}
+            <section className='space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3'>
+              <h3 className='text-sm font-medium text-emerald-700 dark:text-emerald-300'>
+                {t('Drawing triggered by this probe')}
               </h3>
               {detail.data?.linked_drawing ? (
                 <RecordCard
@@ -159,7 +159,7 @@ export function ProbeRecordDialog(props: {
                 probeVerdict(record) === 'passed' &&
                   'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
                 probeVerdict(record) === 'intermediate' &&
-                  'border-blue-500/20 bg-blue-500/10 text-blue-700 dark:text-blue-300'
+                  'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
               )}
             >
               {labels[probeVerdict(record)]}

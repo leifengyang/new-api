@@ -77,8 +77,8 @@ export function ProbeTemplateFields({
             {t('Expected answer')}
             <Input {...form.register(`probes.${index}.expected`)} />
           </Label>
-          <Label className='grid gap-2 text-blue-700 dark:text-blue-300'>
-            {t('Blue answer (intermediate)')}
+          <Label className='grid gap-2 text-emerald-700 dark:text-emerald-300'>
+            {t('Passed answer (triggers drawing)')}
             <Controller
               control={form.control}
               name={`probes.${index}.intermediate_expected`}

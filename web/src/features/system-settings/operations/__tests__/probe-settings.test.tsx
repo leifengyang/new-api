@@ -603,7 +603,7 @@ test('template and runtime dialogs validate edits before staging and saving', as
   expect(screen.getByRole('alert')).toBeInTheDocument()
   await user.type(prompt, 'Updated prompt')
   const blue = screen.getByRole('textbox', {
-    name: 'Blue answer (intermediate)',
+    name: 'Passed answer (triggers drawing)',
   })
   await user.clear(blue)
   await user.type(blue, plan.probes[0].expected)

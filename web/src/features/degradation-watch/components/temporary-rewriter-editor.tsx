@@ -27,21 +27,25 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { drawingRewriterRequest, type DrawingRewriterScope } from '../api'
 import {
   comparisonSchema,
   newTestGroup,
   type ComparisonInput,
   type TestGroup,
 } from '../lib/comparison'
-import { monitorRequest } from '../lib/temporary-monitor'
 import { ComparisonGroupEditor } from './comparison-group-editor'
 
-export function TemporaryRewriterEditor(props: { onClose: () => void }) {
+export function TemporaryRewriterEditor(props: {
+  onClose: () => void
+  scope?: DrawingRewriterScope
+}) {
   const { t } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
+  const scope = props.scope ?? 'temporary'
   const config = useQuery({
-    queryKey: ['temporary-monitor', userID, 'rewriter'],
-    queryFn: () => monitorRequest<TestGroup>('/rewriter'),
+    queryKey: ['drawing-rewriter', userID, scope],
+    queryFn: () => drawingRewriterRequest<TestGroup>(scope),
     staleTime: 0,
   })
   return (
@@ -50,16 +54,28 @@ export function TemporaryRewriterEditor(props: { onClose: () => void }) {
       onOpenChange={(open) => {
         if (!open) props.onClose()
       }}
-      title={t('Configure rewrite model')}
-      description={t(
-        'Shared by all temporary monitors. Saved keys are encrypted and never displayed. Changes apply to subsequent drawing checks.'
-      )}
+      title={
+        scope === 'wall'
+          ? t('Configure wall rewrite model')
+          : t('Configure rewrite model')
+      }
+      description={
+        scope === 'wall'
+          ? t(
+              'Used only by detection wall drawings. Temporary monitors use their own rewrite model.'
+            )
+          : t(
+              'Shared by all temporary monitors. Saved keys are encrypted and never displayed. Changes apply to subsequent drawing checks.'
+            )
+      }
       contentClassName='sm:max-w-3xl'
     >
       {config.isPending && <LoadingState />}
       {config.isError && <ErrorState onRetry={() => void config.refetch()} />}
       {config.data && (
         <RewriterForm
+          key={scope}
+          scope={scope}
           initial={
             config.data.has_saved_key
               ? { ...newTestGroup(), ...config.data, api_key: '' }
@@ -76,7 +92,11 @@ export function TemporaryRewriterEditor(props: { onClose: () => void }) {
   )
 }
 
-function RewriterForm(props: { initial: TestGroup; onClose: () => void }) {
+function RewriterForm(props: {
+  initial: TestGroup
+  onClose: () => void
+  scope: DrawingRewriterScope
+}) {
   const { t } = useTranslation()
   const client = useQueryClient()
   const userID = useAuthStore((state) => state.auth.user?.id)
@@ -91,10 +111,10 @@ function RewriterForm(props: { initial: TestGroup; onClose: () => void }) {
   })
   const save = useMutation({
     mutationFn: (value: ComparisonInput) =>
-      monitorRequest('/rewriter', 'post', value.groups[0]),
+      drawingRewriterRequest(props.scope, '', 'post', value.groups[0]),
     onSuccess: async () => {
       await client.invalidateQueries({
-        queryKey: ['temporary-monitor', userID, 'rewriter'],
+        queryKey: ['drawing-rewriter', userID, props.scope],
       })
       props.onClose()
     },
@@ -112,7 +132,12 @@ function RewriterForm(props: { initial: TestGroup; onClose: () => void }) {
           onRemove={() => {}}
           rewriter
           loadModels={(group) =>
-            monitorRequest<string[]>('/rewriter/models', 'post', group)
+            drawingRewriterRequest<string[]>(
+              props.scope,
+              '/models',
+              'post',
+              group
+            )
           }
         />
       </fieldset>
