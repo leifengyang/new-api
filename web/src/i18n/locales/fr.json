@@ -7285,6 +7285,7 @@
     "Too many items in batch request, maximum is {{max}}": "Trop d'éléments dans la requête groupée, le maximum est {{max}}",
     "Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.": "Trop de sessions de connexion ont été créées récemment. Attendez la fin de la fenêtre glissante, puis réessayez.",
     "Too many requests": "Trop de requêtes",
+    "Too many requests. Please try again in up to {{seconds}} seconds.": "Trop de requêtes. Réessayez dans {{seconds}} secondes au maximum.",
     "Tool / function declarations the model may call": "Déclarations d'outils / fonctions que le modèle peut appeler",
     "Tool identifier": "Identifiant d’outil",
     "Tool price \"{{name}}\" must be a finite non-negative number": "Le prix de l'outil « {{name}} » doit être un nombre fini positif ou nul",

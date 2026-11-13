@@ -7285,6 +7285,7 @@
     "Too many items in batch request, maximum is {{max}}": "Yêu cầu hàng loạt có quá nhiều mục, tối đa là {{max}}",
     "Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.": "Gần đây đã tạo quá nhiều phiên đăng nhập. Vui lòng chờ cửa sổ thời gian trượt kết thúc rồi thử lại.",
     "Too many requests": "Quá nhiều yêu cầu",
+    "Too many requests. Please try again in up to {{seconds}} seconds.": "Quá nhiều yêu cầu. Vui lòng đợi tối đa {{seconds}} giây rồi thử lại.",
     "Tool / function declarations the model may call": "Khai báo công cụ / hàm mà model có thể gọi",
     "Tool identifier": "Định danh công cụ",
     "Tool price \"{{name}}\" must be a finite non-negative number": "Giá công cụ \"{{name}}\" phải là số hữu hạn không âm",

@@ -138,10 +138,13 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 // The in-memory limiter cannot report the remaining window, so callers
 // without a TTL pass the full window duration as a conservative upper bound.
 func writeRateLimited(c *gin.Context, retryAfterSeconds int64) {
+	c.Header("Cache-Control", "no-store")
+	message := common.NewMessage("Too many requests")
 	if retryAfterSeconds > 0 {
 		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
+		message = common.NewMessage("Too many requests. Please try again in up to {{seconds}} seconds.", map[string]any{"seconds": retryAfterSeconds})
 	}
-	c.Status(http.StatusTooManyRequests)
+	common.ApiErrorStatus(c, http.StatusTooManyRequests, message)
 	c.Abort()
 }
 
@@ -188,10 +191,37 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 }
 
 func CriticalRateLimit() func(c *gin.Context) {
+	return ScopedCriticalRateLimit("")
+}
+
+// ScopedCriticalRateLimit keeps unrelated operations out of the login budget.
+// All password, second-factor and passkey login routes must share one scope.
+func ScopedCriticalRateLimit(scope string) func(c *gin.Context) {
 	if common.CriticalRateLimitEnable {
-		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, "CT")
+		mark := "CT"
+		if scope != "" {
+			mark += ":" + scope + ":"
+		}
+		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark)
 	}
 	return defNext
+}
+
+// SessionRateLimit allows routine browser session traffic without spending
+// credential-attempt budgets. Refresh and logout have separate scopes.
+func SessionRateLimit(scope string) func(c *gin.Context) {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	limit := common.GetEnvOrDefault("AUTH_SESSION_RATE_LIMIT", 120)
+	duration := common.GetEnvOrDefault("AUTH_SESSION_RATE_LIMIT_DURATION", 60)
+	if limit <= 0 {
+		limit = 120
+	}
+	if duration <= 0 {
+		duration = 60
+	}
+	return rateLimitFactory(limit, int64(duration), "AS:"+scope+":")
 }
 
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
