@@ -7285,6 +7285,7 @@
     "Too many items in batch request, maximum is {{max}}": "批量请求数量过多，最多 {{max}} 条",
     "Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.": "近期创建的登录会话过多。请等待滚动时间窗口结束后再试。",
     "Too many requests": "请求过于频繁",
+    "Too many requests. Please try again in up to {{seconds}} seconds.": "请求过于频繁，请等待最多 {{seconds}} 秒后重试。",
     "Tool / function declarations the model may call": "模型可调用的工具 / 函数声明",
     "Tool identifier": "工具标识",
     "Tool price \"{{name}}\" must be a finite non-negative number": "工具价格 \"{{name}}\" 必须是有限的非负数字",

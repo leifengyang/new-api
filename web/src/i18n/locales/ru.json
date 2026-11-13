@@ -7285,6 +7285,7 @@
     "Too many items in batch request, maximum is {{max}}": "Слишком много элементов в пакетном запросе, максимум {{max}}",
     "Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.": "За последнее время создано слишком много сеансов входа. Дождитесь окончания скользящего временного окна и повторите попытку.",
     "Too many requests": "Слишком много запросов",
+    "Too many requests. Please try again in up to {{seconds}} seconds.": "Слишком много запросов. Подождите до {{seconds}} секунд и повторите попытку.",
     "Tool / function declarations the model may call": "Объявления инструментов и функций, которые модель может вызывать",
     "Tool identifier": "Идентификатор инструмента",
     "Tool price \"{{name}}\" must be a finite non-negative number": "Цена инструмента «{{name}}» должна быть конечным неотрицательным числом",
