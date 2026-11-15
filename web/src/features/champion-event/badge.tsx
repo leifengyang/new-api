@@ -20,6 +20,7 @@ import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import badgeAtlas from '@/assets/champion/badges.png'
+import blgLogo from '@/assets/champion/blg-logo.png'
 import { cn } from '@/lib/utils'
 
 import { championTitle } from './badge-titles'
@@ -65,11 +66,17 @@ export function ChampionBadge(props: {
           fill={`url(#${id})`}
         />
         <path d='M6 10 16 12 26 10 24 24 16 30 8 24Z' fill='#142c4b' />
-        <path
-          d={motifs[index]}
-          transform='translate(0 6) scale(1 .9)'
-          fill={`url(#${id})`}
-        />
+        {silver ? (
+          <svg x='6' y='13' width='20' height='11' viewBox='33 70 134 65'>
+            <image href={blgLogo} width='200' height='200' />
+          </svg>
+        ) : (
+          <path
+            d={motifs[index]}
+            transform='translate(0 6) scale(1 .9)'
+            fill={`url(#${id})`}
+          />
+        )}
       </svg>
     )
   }
