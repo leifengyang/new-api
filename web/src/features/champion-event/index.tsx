@@ -114,7 +114,6 @@ export function Championship() {
                       <p className='text-muted-foreground text-sm'>
                         {winner?.name ?? t('Awaiting award list')}
                       </p>
-                      <Badge variant='outline'>NO.0{position}</Badge>
                     </article>
                   )
                 })}

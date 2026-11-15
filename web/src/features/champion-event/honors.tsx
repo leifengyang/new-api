@@ -75,7 +75,6 @@ export function ChampionHonors() {
                   <p className='text-muted-foreground text-xs'>
                     {t('S16 2026 · Owned permanently')}
                   </p>
-                  {badge < 8 && <Badge variant='outline'>NO.0{badge}</Badge>}
                   <div>
                     <Button
                       size='sm'
