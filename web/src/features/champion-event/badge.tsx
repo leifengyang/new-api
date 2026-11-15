@@ -25,8 +25,8 @@ import { cn } from '@/lib/utils'
 
 import { championTitle } from './badge-titles'
 
-// The miniature mark drops inscriptions and bevel detail, retaining each
-// role's silhouette. The large enamel atlas follows the approved artwork.
+// The miniature mark retains each role's silhouette above the BLG logo.
+// The large enamel atlas follows the approved artwork.
 const motifs = [
   'M8 17 13 9 16 13 20 7 19 17Z',
   'M8 9 12 7 10 16 8 18ZM14 8 18 6 15 16 12 18ZM20 9 23 7 20 16 17 18Z',
@@ -35,7 +35,6 @@ const motifs = [
   'M15 12 6 8 8 14 14 17 16 21 18 17 24 14 26 8 17 12Z',
   'M10 7 13 7 13 10 15 10 15 7 18 7 18 10 20 10 20 7 23 7 22 13 19 13 20 19 23 21 9 21 12 19 13 13 10 13Z',
   'M16 5Q23 10 19 14L18 21H14L13 14Q8 10 16 5Z',
-  'M16 6 19 11 25 13 19 16 16 22 13 16 7 13 13 11Z',
 ]
 
 export function ChampionBadge(props: {
@@ -66,17 +65,22 @@ export function ChampionBadge(props: {
           fill={`url(#${id})`}
         />
         <path d='M6 10 16 12 26 10 24 24 16 30 8 24Z' fill='#142c4b' />
-        {silver ? (
-          <svg x='6' y='13' width='20' height='11' viewBox='33 70 134 65'>
-            <image href={blgLogo} width='200' height='200' />
-          </svg>
-        ) : (
+        {!silver && (
           <path
             d={motifs[index]}
-            transform='translate(0 6) scale(1 .9)'
+            transform='translate(4 6) scale(.75 .65)'
             fill={`url(#${id})`}
           />
         )}
+        <svg
+          x='6'
+          y={silver ? 13 : 21}
+          width='20'
+          height={silver ? 11 : 9}
+          viewBox='33 70 134 65'
+        >
+          <image href={blgLogo} width='200' height='200' />
+        </svg>
       </svg>
     )
   }
