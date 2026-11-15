@@ -44,6 +44,7 @@ func SetApiRouter(router *gin.Engine) {
 			perfMetricsRoute.GET("/summary", controller.GetPerfMetricsSummary)
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)
 		}
+		apiRouter.GET("/champion-event", middleware.DisableCache(), controller.GetChampionPublic)
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
@@ -125,6 +126,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/topup/guide", middleware.DisableCache(), controller.GetPaymentGuide)
 				selfRoute.POST("/topup/guide", middleware.DisableCache(), controller.RecordPaymentGuide)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
+				selfRoute.GET("/champion-event", middleware.DisableCache(), controller.GetChampionSelf)
+				selfRoute.PUT("/champion-event", controller.UpdateChampionSelf)
 				selfRoute.GET("/stream-compensation", controller.GetStreamCompensations)
 				selfRoute.GET("/stream-compensation/messages", controller.GetStreamCompensationMessages)
 				selfRoute.POST("/stream-compensation/messages/:id/read", controller.ReadStreamCompensationMessage)
@@ -161,6 +164,10 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute.Use(middleware.AdminAuth())
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
+				adminRoute.GET("/champion-event/admin", middleware.DisableCache(), controller.GetChampionAdmin)
+				adminRoute.PUT("/champion-event/admin", controller.UpdateChampionAdmin)
+				adminRoute.POST("/champion-event/admin/preview", middleware.CriticalRateLimit(), controller.PreviewChampionAdmin)
+				adminRoute.POST("/champion-event/admin/confirm", middleware.CriticalRateLimit(), controller.ConfirmChampionAdmin)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				compensationRoute := adminRoute.Group("/stream-compensation/admin", middleware.DisableCache())

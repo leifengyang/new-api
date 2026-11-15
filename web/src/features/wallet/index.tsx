@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { ChampionHonors } from '@/features/champion-event/honors'
 import { SelfRebateCard } from '@/features/invite-rebates/components/self-rebate-card'
 import { WalletCompensation } from '@/features/stream-compensation/wallet'
 import { useStatus } from '@/hooks/use-status'
@@ -324,6 +325,7 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
+            <ChampionHonors />
             <WalletCompensation />
             <SelfRebateCard
               affiliateLink={affiliateLink}

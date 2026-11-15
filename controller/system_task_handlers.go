@@ -27,6 +27,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(selfTestHandler{})
 	service.RegisterSystemTaskHandler(temporaryMonitorHandler{})
 	service.RegisterSystemTaskHandler(streamCompensationHandler{})
+	service.RegisterSystemTaskHandler(championAwardsHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
