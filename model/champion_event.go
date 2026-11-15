@@ -337,46 +337,58 @@ func ConfirmChampionEvent(ctx context.Context, revision int64, adminID int, now 
 				return errors.New("Eligibility changed. Generate a new award preview.")
 			}
 		}
-		if err := tx.Model(&ChampionAward{}).Where("event_id = ? AND position > 0", 1).Update("status", "pending").Error; err != nil {
+		if err := tx.Model(&ChampionAward{}).Where("event_id = ? AND position > 0", 1).Updates(map[string]any{"status": "claimable", "equipped": gorm.Expr("CASE WHEN position <= 7 THEN position ELSE 8 END")}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&event).Updates(map[string]any{"status": "awarding", "confirmed_by": adminID, "confirmed_at": now.Unix(), "revision": event.Revision + 1}).Error
+		return tx.Model(&event).Updates(map[string]any{"status": "claiming", "published": true, "confirmed_by": adminID, "confirmed_at": now.Unix(), "revision": event.Revision + 1}).Error
 	})
 }
 
-func CreditChampionAward(ctx context.Context, id int64) error {
-	var userID, quota int
+// ResolveChampionAward only resolves the authenticated user's own reward. The
+// terminal transition and wallet credit share a transaction, so concurrent claims
+// or a claim racing a decline cannot pay twice or undo the user's decision.
+func ResolveChampionAward(ctx context.Context, userID int, decision string) error {
+	if decision != "claim" && decision != "decline" {
+		return errors.New("Invalid reward decision")
+	}
+	var quota int
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var award ChampionAward
-		if err := lockForUpdate(tx).First(&award, id).Error; err != nil {
+		if err := lockForUpdate(tx).Where("event_id = ? AND user_id = ?", 1, userID).First(&award).Error; err != nil {
 			return err
 		}
-		if award.Status == "credited" || award.Status == "skipped" {
+		status := "credited"
+		if decision == "decline" {
+			status = "declined"
+		}
+		if award.Status == status {
 			return nil
 		}
-		if award.Status != "pending" {
-			return errors.New("The award has not been confirmed")
+		if award.Status != "claimable" {
+			return errors.New("This reward is no longer available to claim")
 		}
 		var user User
-		if err := lockForUpdate(tx).First(&user, award.UserID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return tx.Model(&award).Updates(map[string]any{"status": "skipped", "reason": "deleted"}).Error
-			}
+		if err := lockForUpdate(tx).First(&user, userID).Error; err != nil {
 			return err
 		}
 		if user.Status != common.UserStatusEnabled || user.Role >= common.RoleAdminUser {
-			return tx.Model(&award).Updates(map[string]any{"status": "skipped", "reason": "ineligible"}).Error
+			return errors.New("This account is not eligible for the reward")
 		}
-		if award.Quota <= 0 || common.ValidateWalletQuota(award.Quota) != nil {
-			return errors.New("Invalid reward amount")
+		updates := map[string]any{"status": status}
+		if decision == "claim" {
+			if award.Quota <= 0 || common.ValidateWalletQuota(award.Quota) != nil {
+				return errors.New("Invalid reward amount")
+			}
+			updates["credited_at"] = time.Now().Unix()
 		}
-		// The conditional transition also protects SQLite, where FOR UPDATE is not
-		// available. Any failure rolls back the transition and the wallet together.
-		result := tx.Model(&award).Where("status = ?", "pending").Updates(map[string]any{"status": "credited", "credited_at": time.Now().Unix(), "equipped": min(award.Position, 8)})
+		result := tx.Model(&award).Where("status = ?", "claimable").Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
+			return errors.New("This reward is no longer available to claim")
+		}
+		if decision == "decline" {
 			return nil
 		}
 		result = tx.Model(&User{}).Where("id = ? AND quota + enterprise_frozen_quota <= ?", user.Id, common.MaxWalletQuota-award.Quota).Update("quota", gorm.Expr("quota + ?", award.Quota))
@@ -386,7 +398,7 @@ func CreditChampionAward(ctx context.Context, id int64) error {
 		if result.RowsAffected != 1 {
 			return ErrWalletQuotaLimitExceeded
 		}
-		userID, quota = user.Id, award.Quota
+		quota = award.Quota
 		return nil
 	})
 	if err == nil && quota > 0 {
@@ -395,19 +407,42 @@ func CreditChampionAward(ctx context.Context, id int64) error {
 	return err
 }
 
-func RunChampionAwards(ctx context.Context) error {
-	var awards []ChampionAward
-	if err := DB.WithContext(ctx).Where("event_id = ? AND status = ?", 1, "pending").Order("id").Find(&awards).Error; err != nil {
+// The scheduler only freezes entitlements. It must never credit a wallet: the
+// recipient explicitly claims the reward through the authenticated self API.
+func RunChampionCampaign(ctx context.Context, now time.Time) error {
+	_, end := ChampionWindow()
+	if now.Unix() < end {
+		return nil
+	}
+	event, err := GetChampionEvent(ctx)
+	if err != nil {
 		return err
 	}
-	var failures []error
-	for _, award := range awards {
-		if err := CreditChampionAward(ctx, award.ID); err != nil {
-			failures = append(failures, fmt.Errorf("award %d: %w", award.ID, err))
+	if event.Status == "completed" || event.Status == "claiming" {
+		return nil
+	}
+	if event.Status == "draft" {
+		if err := PreviewChampionEvent(ctx, now, event.Revision); err != nil {
+			return err
 		}
+		// 0 records automatic confirmation, not an administrator's identity.
+		return ConfirmChampionEvent(ctx, event.Revision+1, 0, now)
 	}
-	if len(failures) > 0 {
-		return errors.Join(failures...)
+	if event.Status == "awarding" {
+		// Preserve issued awards when upgrading an earlier preview deployment;
+		// undelivered rewards now require the recipient's explicit claim.
+		return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := lockForUpdate(tx).First(&event, 1).Error; err != nil {
+				return err
+			}
+			if event.Status != "awarding" {
+				return nil
+			}
+			if err := tx.Model(&ChampionAward{}).Where("event_id = ? AND status = ?", 1, "pending").Updates(map[string]any{"status": "claimable", "equipped": gorm.Expr("CASE WHEN position <= 7 THEN position ELSE 8 END")}).Error; err != nil {
+				return err
+			}
+			return tx.Model(&event).Updates(map[string]any{"status": "claiming", "published": true}).Error
+		})
 	}
-	return DB.WithContext(ctx).Model(&ChampionEvent{}).Where("id = ? AND status = ?", 1, "awarding").Update("status", "completed").Error
+	return fmt.Errorf("unexpected championship status: %s", event.Status)
 }

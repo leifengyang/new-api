@@ -111,7 +111,7 @@ func TestChampionAwardsAcrossDatabases(t *testing.T) {
 			assert.Equal(t, 2, award1.Position)
 			assert.Equal(t, int64(1000), award1.Spend)
 			assert.Equal(t, int64(500), mixed.Spend)
-			require.Error(t, CreditChampionAward(ctx, award1.ID))
+			require.Error(t, ResolveChampionAward(ctx, award1.UserID, "claim"))
 			require.Error(t, ConfirmChampionEvent(ctx, event.Revision, 10, time.Unix(end-1, 0)))
 			require.Error(t, ConfirmChampionEvent(ctx, event.Revision-1, 10, time.Unix(end, 0)))
 			require.NoError(t, ConfirmChampionEvent(ctx, event.Revision, 10, time.Unix(end, 0)))
@@ -135,15 +135,18 @@ func TestChampionAwardsAcrossDatabases(t *testing.T) {
 			var wg sync.WaitGroup
 			errors := make(chan error, 2)
 			for range 2 {
-				wg.Go(func() { errors <- CreditChampionAward(ctx, award1.ID) })
+				wg.Go(func() { errors <- ResolveChampionAward(ctx, award1.UserID, "claim") })
 			}
 			wg.Wait()
 			close(errors)
 			for err := range errors {
 				require.NoError(t, err)
 			}
-			require.NoError(t, RunChampionAwards(ctx))
-			require.NoError(t, RunChampionAwards(ctx))
+			require.NoError(t, RunChampionCampaign(ctx, time.Unix(end+1, 0)))
+			var unclaimed User
+			require.NoError(t, db.First(&unclaimed, 13).Error)
+			assert.Equal(t, 100, unclaimed.Quota, "scheduled finalization must not credit users")
+			require.NoError(t, ResolveChampionAward(ctx, 13, "claim"))
 			var user User
 			require.NoError(t, db.First(&user, 1).Error)
 			assert.Equal(t, 33300100, user.Quota)
@@ -152,7 +155,7 @@ func TestChampionAwardsAcrossDatabases(t *testing.T) {
 			assert.Equal(t, 8, mixed.Equipped)
 			event, err = GetChampionEvent(ctx)
 			require.NoError(t, err)
-			assert.Equal(t, "completed", event.Status)
+			assert.Equal(t, "claiming", event.Status)
 			// Restart migrations preserve the issued ledger and uniqueness.
 			for range 2 {
 				require.NoError(t, db.AutoMigrate(&ChampionEvent{}, &ChampionAward{}))
@@ -169,15 +172,15 @@ func TestChampionRewardFailureRollsBackAndCanRetry(t *testing.T) {
 	db := championTestDB(t, "sqlite")
 	ctx := context.Background()
 	user := createEnterpriseUser(t, 1, "full-wallet", common.RoleCommonUser, common.MaxWalletQuota)
-	award := ChampionAward{EventID: 1, UserID: user.Id, Position: 1, Quota: 33300000, Status: "pending"}
+	award := ChampionAward{EventID: 1, UserID: user.Id, Position: 1, Quota: 33300000, Status: "claimable"}
 	require.NoError(t, db.Create(&award).Error)
-	require.ErrorIs(t, CreditChampionAward(ctx, award.ID), ErrWalletQuotaLimitExceeded)
+	require.ErrorIs(t, ResolveChampionAward(ctx, award.UserID, "claim"), ErrWalletQuotaLimitExceeded)
 	var saved ChampionAward
 	require.NoError(t, db.First(&saved, award.ID).Error)
-	assert.Equal(t, "pending", saved.Status)
+	assert.Equal(t, "claimable", saved.Status)
 	assert.Zero(t, saved.CreditedAt)
 	require.NoError(t, db.Model(user).Update("quota", 0).Error)
-	require.NoError(t, CreditChampionAward(ctx, award.ID))
+	require.NoError(t, ResolveChampionAward(ctx, award.UserID, "claim"))
 	require.NoError(t, db.First(user, user.Id).Error)
 	assert.Equal(t, 33300000, user.Quota)
 }
@@ -260,14 +263,14 @@ func TestChampionDatabaseMigration(t *testing.T) {
 			require.NoError(t, db.First(user, user.Id).Error)
 			assert.Equal(t, 7654321, user.Quota)
 			assert.True(t, db.Migrator().HasIndex(&ChampionAward{}, "idx_champion_award"))
-			award := ChampionAward{EventID: 1, UserID: user.Id, Quota: 500000, Position: 8, Status: "pending"}
+			award := ChampionAward{EventID: 1, UserID: user.Id, Quota: 500000, Position: 8, Status: "claimable"}
 			require.NoError(t, db.Create(&award).Error)
-			require.NoError(t, CreditChampionAward(context.Background(), award.ID))
+			require.NoError(t, ResolveChampionAward(context.Background(), award.UserID, "claim"))
 			for range 2 {
 				require.NoError(t, migrateDB())
 				require.NoError(t, migrateLOGDB())
 			}
-			require.NoError(t, CreditChampionAward(context.Background(), award.ID))
+			require.NoError(t, ResolveChampionAward(context.Background(), award.UserID, "claim"))
 			require.NoError(t, db.First(user, user.Id).Error)
 			assert.Equal(t, 8154321, user.Quota)
 		})
@@ -303,6 +306,116 @@ func TestChampionRanksTaskConsumptionFromDurableFunding(t *testing.T) {
 			event, err = GetChampionEvent(context.Background())
 			require.NoError(t, err)
 			assert.Equal(t, 2, event.UnknownLogs)
+		})
+	}
+}
+
+func TestChampionAutomaticEntitlementsAndUserDecisions(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := championTestDB(t, dialect)
+			ctx := context.Background()
+			start, end := ChampionWindow()
+			for id := 1; id <= 3; id++ {
+				createEnterpriseUser(t, id, fmt.Sprintf("claim-user-%d", id), common.RoleCommonUser, 100)
+				require.NoError(t, db.Create(&Log{UserId: id, CreatedAt: start, Type: LogTypeConsume, Quota: 1000, Other: `{"billing_source":"wallet"}`}).Error)
+			}
+			require.NoError(t, RunChampionCampaign(ctx, time.Unix(end-1, 0)))
+			var count int64
+			require.NoError(t, db.Model(&ChampionAward{}).Count(&count).Error)
+			assert.Zero(t, count)
+			require.NoError(t, RunChampionCampaign(ctx, time.Unix(end, 0)))
+			require.NoError(t, RunChampionCampaign(ctx, time.Unix(end+60, 0)))
+			var user User
+			require.NoError(t, db.First(&user, 1).Error)
+			assert.Equal(t, 100, user.Quota)
+			event, err := GetChampionEvent(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "claiming", event.Status)
+			assert.True(t, event.Published)
+			assert.Zero(t, event.ConfirmedBy)
+			var award ChampionAward
+			require.NoError(t, db.Where("user_id = ?", 1).First(&award).Error)
+			assert.Equal(t, "claimable", award.Status)
+			assert.Equal(t, 1, award.Equipped)
+			require.NoError(t, ResolveChampionAward(ctx, 1, "decline"))
+			require.NoError(t, ResolveChampionAward(ctx, 1, "decline"))
+			require.Error(t, ResolveChampionAward(ctx, 1, "claim"))
+			require.NoError(t, db.First(&user, 1).Error)
+			assert.Equal(t, 100, user.Quota)
+			require.NoError(t, db.First(&award, award.ID).Error)
+			assert.Equal(t, "declined", award.Status)
+			assert.Equal(t, 1, award.Equipped, "declining money must preserve the honor")
+			require.NoError(t, ResolveChampionAward(ctx, 2, "claim"))
+			require.NoError(t, ResolveChampionAward(ctx, 2, "claim"))
+			require.Error(t, ResolveChampionAward(ctx, 2, "decline"))
+			user = User{}
+			require.NoError(t, db.First(&user, 2).Error)
+			assert.Equal(t, 33300100, user.Quota)
+			require.Error(t, ResolveChampionAward(ctx, 99, "claim"))
+			require.Error(t, ResolveChampionAward(ctx, 3, "invalid"))
+			// Both terminal choices race on one entitlement. Whichever commits
+			// wins; the other cannot change its status or the wallet afterward.
+			var wg sync.WaitGroup
+			results := make(chan error, 2)
+			for _, decision := range []string{"claim", "decline"} {
+				wg.Go(func() { results <- ResolveChampionAward(ctx, 3, decision) })
+			}
+			wg.Wait()
+			close(results)
+			successes := 0
+			for err := range results {
+				if err == nil {
+					successes++
+				}
+			}
+			assert.Equal(t, 1, successes)
+			award = ChampionAward{}
+			require.NoError(t, db.Where("user_id = ?", 3).First(&award).Error)
+			user = User{}
+			require.NoError(t, db.First(&user, 3).Error)
+			if award.Status == "credited" {
+				assert.Equal(t, 33300100, user.Quota)
+			} else {
+				assert.Equal(t, "declined", award.Status)
+				assert.Equal(t, 100, user.Quota)
+			}
+			// Retrying the scheduler after decisions must not recreate entitlements.
+			require.NoError(t, RunChampionCampaign(ctx, time.Unix(end+120, 0)))
+			require.NoError(t, db.Model(&ChampionAward{}).Count(&count).Error)
+			assert.Equal(t, int64(3), count)
+		})
+	}
+}
+
+func TestChampionExistingPendingRewardsBecomeClaimableWithoutAutomaticCredit(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := championTestDB(t, dialect)
+			ctx := context.Background()
+			_, end := ChampionWindow()
+			createEnterpriseUser(t, 1, "already-credited", common.RoleCommonUser, 500100)
+			createEnterpriseUser(t, 2, "not-yet-credited", common.RoleCommonUser, 100)
+			require.NoError(t, db.Create(&ChampionEvent{ID: 1, Status: "awarding", Revision: 4}).Error)
+			require.NoError(t, db.Create(&[]ChampionAward{
+				{EventID: 1, UserID: 1, Status: "credited", Position: 8, Equipped: 8, Quota: 500000},
+				{EventID: 1, UserID: 2, Status: "pending", Position: 9, Quota: 500000},
+			}).Error)
+			for range 2 {
+				require.NoError(t, RunChampionCampaign(ctx, time.Unix(end, 0)))
+			}
+			var first, second User
+			require.NoError(t, db.First(&first, 1).Error)
+			require.NoError(t, db.First(&second, 2).Error)
+			assert.Equal(t, 500100, first.Quota)
+			assert.Equal(t, 100, second.Quota)
+			var award ChampionAward
+			require.NoError(t, db.Where("user_id = ?", 2).First(&award).Error)
+			assert.Equal(t, "claimable", award.Status)
+			assert.Equal(t, 8, award.Equipped)
+			require.NoError(t, ResolveChampionAward(ctx, 2, "claim"))
+			require.NoError(t, db.First(&second, 2).Error)
+			assert.Equal(t, 500100, second.Quota)
 		})
 	}
 }

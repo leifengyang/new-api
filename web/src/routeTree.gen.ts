@@ -35,7 +35,6 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
-import { Route as AuthenticatedChampionAdminIndexRouteImport } from './routes/_authenticated/champion-admin/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedCompensationIndexRouteImport } from './routes/_authenticated/compensation/index'
@@ -210,12 +209,6 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
-const AuthenticatedChampionAdminIndexRoute =
-  AuthenticatedChampionAdminIndexRouteImport.update({
-    id: '/champion-admin/',
-    path: '/champion-admin/',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -510,7 +503,6 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
-  '/champion-admin/': typeof AuthenticatedChampionAdminIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/compensation/': typeof AuthenticatedCompensationIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -580,7 +572,6 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
-  '/champion-admin': typeof AuthenticatedChampionAdminIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/compensation': typeof AuthenticatedCompensationIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -654,7 +645,6 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
-  '/_authenticated/champion-admin/': typeof AuthenticatedChampionAdminIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/compensation/': typeof AuthenticatedCompensationIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -727,7 +717,6 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
-    | '/champion-admin/'
     | '/channels/'
     | '/compensation/'
     | '/dashboard/'
@@ -797,7 +786,6 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
-    | '/champion-admin'
     | '/channels'
     | '/compensation'
     | '/dashboard'
@@ -870,7 +858,6 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
-    | '/_authenticated/champion-admin/'
     | '/_authenticated/channels/'
     | '/_authenticated/compensation/'
     | '/_authenticated/dashboard/'
@@ -1112,13 +1099,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/user/reset'
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
-    }
-    '/_authenticated/champion-admin/': {
-      id: '/_authenticated/champion-admin/'
-      path: '/champion-admin'
-      fullPath: '/champion-admin/'
-      preLoaderRoute: typeof AuthenticatedChampionAdminIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
@@ -1531,7 +1511,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
-  AuthenticatedChampionAdminIndexRoute: typeof AuthenticatedChampionAdminIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedCompensationIndexRoute: typeof AuthenticatedCompensationIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
@@ -1564,7 +1543,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
-  AuthenticatedChampionAdminIndexRoute: AuthenticatedChampionAdminIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedCompensationIndexRoute: AuthenticatedCompensationIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,

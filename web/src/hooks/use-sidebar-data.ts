@@ -110,11 +110,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             icon: ListTodo,
           },
           {
-            title: t('Championship activity'),
-            url: '/championship',
-            icon: HandCoins,
-          },
-          {
             title: t('Degradation Watch'),
             url: '/degradation-watch',
             icon: Bird,
@@ -193,11 +188,6 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
           {
             title: t('Invite Rebates'),
             url: '/invite-rebates',
-            icon: HandCoins,
-          },
-          {
-            title: t('Championship activity management'),
-            url: '/champion-admin',
             icon: HandCoins,
           },
           {

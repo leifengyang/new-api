@@ -19,11 +19,16 @@ func (championAwardsHandler) Type() string            { return model.ChampionEve
 func (championAwardsHandler) Interval() time.Duration { return time.Minute }
 func (championAwardsHandler) NewPayload() any         { return nil }
 func (championAwardsHandler) Enabled() bool {
+	_, end := model.ChampionWindow()
+	if time.Now().Unix() < end {
+		return false
+	}
 	var event model.ChampionEvent
-	return model.DB.First(&event, 1).Error == nil && event.Status == "awarding"
+	err := model.DB.First(&event, 1).Error
+	return errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && (event.Status == "draft" || event.Status == "awarding"))
 }
 func (championAwardsHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	err := model.RunChampionAwards(ctx)
+	err := model.RunChampionCampaign(ctx, time.Now())
 	status := model.SystemTaskStatusSucceeded
 	if err != nil {
 		status = model.SystemTaskStatusFailed
@@ -165,7 +170,7 @@ func GetChampionSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if award.Status != "credited" {
+	if award.Status == "preview" {
 		var event model.ChampionEvent
 		if err := model.DB.First(&event, 1).Error; err != nil {
 			common.ApiError(c, err)
@@ -181,16 +186,30 @@ func GetChampionSelf(c *gin.Context) {
 
 func UpdateChampionSelf(c *gin.Context) {
 	var req struct {
-		Equipped *int `json:"equipped"`
-		Read     bool `json:"read"`
-		Seen     bool `json:"seen"`
+		Equipped       *int   `json:"equipped"`
+		Read           bool   `json:"read"`
+		Seen           bool   `json:"seen"`
+		Decision       string `json:"decision"`
+		ConfirmDecline bool   `json:"confirm_decline"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		common.ApiErrorMsg(c, "Invalid parameters")
 		return
 	}
+	if req.Decision != "" {
+		if req.Equipped != nil || req.Read || req.Seen || (req.Decision == "decline" && !req.ConfirmDecline) {
+			common.ApiErrorMsg(c, "Confirm your decision before giving up the reward")
+			return
+		}
+		if err := model.ResolveChampionAward(c.Request.Context(), c.GetInt("id"), req.Decision); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, nil)
+		return
+	}
 	var award model.ChampionAward
-	query := model.DB.WithContext(c.Request.Context()).Where("event_id = ? AND user_id = ? AND status = ?", 1, c.GetInt("id"), "credited")
+	query := model.DB.WithContext(c.Request.Context()).Where("event_id = ? AND user_id = ? AND status IN ?", 1, c.GetInt("id"), []string{"claimable", "credited", "declined"})
 	if err := query.First(&award).Error; err != nil {
 		common.ApiErrorMsg(c, "No championship reward yet")
 		return

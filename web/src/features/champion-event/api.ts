@@ -36,34 +36,21 @@ export type ChampionAward = {
   notice_seen_at: number
   equipped: number
 }
-export type ChampionEvent = {
-  status: string
-  published: boolean
-  excluded_ids: string
-  revision: number
-  snapshot_at: number
-  snapshot_end: number
-  participants: number
-  total_quota: number
-  unknown_logs: number
-}
-export type ChampionAdminData = {
-  event: ChampionEvent
-  items: ChampionAward[]
-  total: number
-  start_at: number
-  end_at: number
-  server_time: number
-  credited: number
-  pending: number
-  skipped: number
-}
 export type ChampionPublicData = {
   status: string
   start_at: number
   end_at: number
   snapshot_at: number
   winners: { name: string; position: number; status: string }[]
+}
+export function hasChampionHonor(
+  award: ChampionAward | null | undefined
+): award is ChampionAward {
+  return (
+    !!award &&
+    award.position > 0 &&
+    ['claimable', 'credited', 'declined'].includes(award.status)
+  )
 }
 export async function getChampionData<T>(
   path: string,

@@ -961,4 +961,8 @@ export const STATIC_I18N_KEYS = [
   'Channel priorities changed. Refresh and try again.',
   'Invalid channel priority move',
   'Channel priority is outside the sortable range',
+  'Invalid reward decision',
+  'This reward is no longer available to claim',
+  'This account is not eligible for the reward',
+  'Confirm your decision before giving up the reward',
 ] as const

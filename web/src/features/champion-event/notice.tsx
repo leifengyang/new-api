@@ -17,29 +17,36 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Dialog } from '@/components/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { CompensationNotice } from '@/features/stream-compensation/messages'
-import { formatQuotaWithCurrency } from '@/lib/currency'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { useChampionMutation, useChampionSelf } from './api'
+import { hasChampionHonor, useChampionMutation, useChampionSelf } from './api'
 import { ChampionBadge } from './badge'
 import { championTitle } from './badge-titles'
+import { ChampionHonorDialog } from './honor-dialog'
 
-export function ChampionNotice() {
-  const { t } = useTranslation()
+export function ChampionNotice(props: { children?: ReactNode }) {
+  const signedIn = useAuthStore((state) => !!state.auth.user)
   const query = useChampionSelf()
   const mutation = useChampionMutation()
   const [dismissed, setDismissed] = useState<number | null>(null)
   const award = query.data
   const open =
-    award?.status === 'credited' &&
+    signedIn &&
+    hasChampionHonor(award) &&
     award.notice_seen_at === 0 &&
     dismissed !== award.id
+  const ready = !signedIn || query.isSuccess || query.isError
   const close = () => {
     if (!award) return
     setDismissed(award.id)
@@ -47,47 +54,11 @@ export function ChampionNotice() {
   }
   return (
     <>
-      <CompensationNotice
-        enabled={(query.isSuccess || query.isError) && !open}
-      />
-      <Dialog
-        open={!!open}
-        onOpenChange={(value) => {
-          if (!value) close()
-        }}
-        title={t('Glory belongs to you')}
-        contentClassName='sm:max-w-md'
-        titleClassName='text-center font-serif text-2xl'
-        footer={
-          <Button
-            className='w-full'
-            render={<Link to='/wallet' />}
-            onClick={close}
-          >
-            {t('View my honors')}
-          </Button>
-        }
-      >
-        {award && (
-          <div className='flex flex-col items-center gap-3 py-3 text-center'>
-            <ChampionBadge
-              badge={Math.min(award.position, 8)}
-              className='size-48'
-            />
-            <h3 className='text-xl font-semibold'>
-              {t(championTitle(Math.min(award.position, 8)))}
-            </h3>
-            <p className='text-3xl font-semibold text-emerald-700 dark:text-emerald-400'>
-              +{formatQuotaWithCurrency(award.quota)}
-            </p>
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Your activity reward has been credited to your personal balance. Your badges are yours permanently.'
-              )}
-            </p>
-          </div>
-        )}
-      </Dialog>
+      {signedIn && <CompensationNotice enabled={ready && !open} />}
+      {ready && !open && props.children}
+      {hasChampionHonor(award) && (
+        <ChampionHonorDialog award={award} open={!!open} onClose={close} />
+      )}
     </>
   )
 }
@@ -95,32 +66,52 @@ export function ChampionNotice() {
 export function ChampionInboxLink() {
   const { t } = useTranslation()
   const { data } = useChampionSelf()
-  if (data?.status !== 'credited') return null
+  if (!hasChampionHonor(data)) return null
   return (
     <Button
       className='w-full justify-between'
       variant='outline'
       render={<Link to='/wallet' />}
     >
-      {t('Championship reward received')}
+      {data.status === 'credited'
+        ? t('Championship reward received')
+        : t('Championship activity reward')}
       {data.read_at === 0 && <Badge>{t('Unread')}</Badge>}
     </Button>
   )
 }
 
-export function EquippedChampionBadge() {
+export function ProfileChampionBadges() {
   const { t } = useTranslation()
   const { data } = useChampionSelf()
-  if (data?.status !== 'credited' || !data.equipped) return null
+  if (!hasChampionHonor(data)) return null
+  const badges = data.position <= 7 ? [data.position, 8] : [8]
   return (
-    <Button
-      size='icon'
-      variant='ghost'
-      className='size-8'
-      render={<Link to='/profile' />}
-      aria-label={t('View my honors')}
+    <div
+      className='flex shrink-0 items-center gap-1'
+      aria-label={t('My championship honors')}
     >
-      <ChampionBadge badge={data.equipped} small />
-    </Button>
+      {badges.map((badge) => (
+        <Tooltip key={badge}>
+          <TooltipTrigger
+            role='link'
+            render={
+              <Button
+                variant='ghost'
+                size='icon'
+                className='size-11 rounded-xl bg-amber-100/30 hover:bg-amber-100/60 dark:bg-white/5'
+                render={<Link to='/championship' />}
+                aria-label={t(championTitle(badge))}
+              >
+                <ChampionBadge badge={badge} small className='size-9' />
+              </Button>
+            }
+          />
+          <TooltipContent>
+            {t(championTitle(badge))} · {t('Seven seats of honor')}
+          </TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
   )
 }

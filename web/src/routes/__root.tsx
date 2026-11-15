@@ -31,6 +31,7 @@ import { NavigationProgress } from '@/components/navigation-progress'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
 import { saveAffiliateCode } from '@/features/auth/lib/storage'
+import { ChampionNotice } from '@/features/champion-event/notice'
 import { AnnouncementDelivery } from '@/features/dashboard/components/overview/announcement-popup'
 import { GeneralError } from '@/features/errors/general-error'
 import { NotFoundError } from '@/features/errors/not-found-error'
@@ -97,7 +98,9 @@ function RootComponent() {
     <ThemeCustomizationProvider>
       <NavigationProgress />
       <Outlet />
-      <AnnouncementDelivery />
+      <ChampionNotice>
+        <AnnouncementDelivery />
+      </ChampionNotice>
       <Toaster closeButton duration={5000} position='top-center' richColors />
       {import.meta.env.MODE === 'development' && (
         <>

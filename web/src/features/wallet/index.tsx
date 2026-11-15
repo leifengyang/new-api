@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { useChampionSelf } from '@/features/champion-event/api'
 import { ChampionHonors } from '@/features/champion-event/honors'
 import { SelfRebateCard } from '@/features/invite-rebates/components/self-rebate-card'
 import { WalletCompensation } from '@/features/stream-compensation/wallet'
@@ -104,7 +105,10 @@ export function Wallet(props: WalletProps) {
   const { processing: pancakeProcessing, processWaffoPancakePayment } =
     useWaffoPancakePayment()
 
-  // Fetch and refresh user data
+  const { data: champion } = useChampionSelf()
+  const rewardCreditedAt = champion?.credited_at ?? 0
+
+  // Fetch and refresh user data, including an explicitly claimed event reward.
   const fetchUser = useCallback(async () => {
     try {
       setUserLoading(true)
@@ -122,7 +126,7 @@ export function Wallet(props: WalletProps) {
 
   useEffect(() => {
     fetchUser()
-  }, [fetchUser])
+  }, [fetchUser, rewardCreditedAt])
 
   useEffect(() => {
     if (props.initialShowHistory) {

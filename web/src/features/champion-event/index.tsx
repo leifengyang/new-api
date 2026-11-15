@@ -18,31 +18,33 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import dayjs from 'dayjs'
+import { ArrowLeft, Sparkles } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import blgLogo from '@/assets/champion/blg-logo.png'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { PublicLayout } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
-import { useAuthStore } from '@/stores/auth-store'
 
 import {
   getChampionData,
+  hasChampionHonor,
   useChampionSelf,
   type ChampionPublicData,
 } from './api'
 import { ChampionBadge } from './badge'
 import { championTitle } from './badge-titles'
+import { ChampionHonorDialog } from './honor-dialog'
 
 export function Championship() {
   const { t } = useTranslation()
   const self = useChampionSelf()
-  const signedIn = useAuthStore((state) => !!state.auth.user)
+  const [replay, setReplay] = useState(false)
   const query = useQuery({
     queryKey: ['champion-event', 'public'],
     queryFn: () =>
@@ -51,145 +53,118 @@ export function Championship() {
   })
   return (
     <PublicLayout>
-      <div className='mx-auto w-full max-w-6xl space-y-6 overflow-auto p-4 sm:p-8'>
+      <div className='mx-auto w-full max-w-3xl space-y-5 overflow-auto p-4 sm:p-8'>
+        <Button variant='ghost' size='sm' render={<Link to='/profile' />}>
+          <ArrowLeft className='size-4' />
+          {t('Profile')}
+        </Button>
         {query.isPending && <LoadingState />}
         {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
         {query.isSuccess && !query.data && (
           <EmptyState
-            title={t('The championship activity is not published yet')}
+            title={t('Awaiting award list')}
+            description={t(
+              'The award list will be finalized after the activity ends. Sign in to claim your reward.'
+            )}
           />
         )}
         {query.data && (
           <>
-            <header className='relative overflow-hidden rounded-2xl bg-[#101f39] p-6 text-white sm:p-10'>
-              <div className='flex flex-col items-center gap-6 sm:flex-row sm:justify-between'>
-                <div className='max-w-xl space-y-4'>
-                  <Badge className='border border-amber-200/50 bg-transparent text-amber-100'>
-                    S16 · 2026
-                  </Badge>
-                  <h1 className='font-serif text-3xl font-semibold sm:text-4xl'>
-                    {t('Celebrate BLG. Share the glory.')}
-                  </h1>
-                  <p className='text-sm leading-7 text-slate-200'>
-                    {t(
-                      'The top seven receive $66.60 each and a unique champion badge. All other eligible participants receive $1.00 and a permanent commemorative badge.'
-                    )}
-                  </p>
-                  <p className='text-xs text-slate-300'>
-                    {t('Activity period: November 14–15, 2026 (Beijing time)')}
-                  </p>
-                </div>
-                <ChampionBadge badge={3} className='size-48 sm:size-56' />
-              </div>
+            <header className='relative overflow-hidden rounded-2xl border border-amber-200/20 bg-[#101f39] px-6 py-8 text-white sm:px-8'>
+              <svg
+                role='img'
+                aria-label='BLG'
+                viewBox='33 70 134 65'
+                className='mb-5 h-10 w-24'
+              >
+                <image href={blgLogo} width='200' height='200' />
+              </svg>
+              <p className='text-xs tracking-[0.3em] text-amber-200'>
+                S16 · 2026
+              </p>
+              <h1 className='mt-3 font-serif text-3xl font-semibold text-amber-100 sm:text-4xl'>
+                {t('Seven seats of honor')}
+              </h1>
+              <p className='mt-3 text-sm leading-6 text-slate-300'>
+                {t('Seven unique titles. One shared glory.')}
+              </p>
+              <p className='mt-5 text-xs text-slate-400'>
+                {t('Activity period: November 14–15, 2026 (Beijing time)')}
+              </p>
             </header>
-            <section className='space-y-4'>
-              <div className='flex flex-wrap items-center justify-between gap-2'>
-                <h2 className='text-xl font-semibold'>
-                  {t('Seven seats of honor')}
-                </h2>
+            <section className='bg-card overflow-hidden rounded-2xl border'>
+              <div className='flex items-center justify-between gap-3 border-b px-4 py-4 sm:px-6'>
+                <h2 className='font-semibold'>{t('Championship activity')}</h2>
                 <Badge variant='outline'>
                   {query.data.status === 'draft'
                     ? t('Provisional ranking')
                     : t('Final ranking')}
                 </Badge>
               </div>
-              <div className='grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4'>
+              <ol className='divide-y'>
                 {Array.from({ length: 7 }, (_, index) => {
                   const position = index + 1
                   const winner = query.data?.winners.find(
                     (item) => item.position === position
                   )
                   return (
-                    <article
+                    <li
                       key={position}
-                      className='bg-card flex flex-col items-center gap-2 rounded-xl border p-4 text-center'
+                      className='flex items-center gap-3 px-4 py-3 sm:gap-5 sm:px-6'
                     >
+                      <span
+                        className='text-muted-foreground w-5 shrink-0 text-center text-sm tabular-nums'
+                        aria-label={`${t('Rank')} ${formatNumber(position)}`}
+                      >
+                        {formatNumber(position)}
+                      </span>
                       <ChampionBadge
                         badge={position}
-                        className='size-32 sm:size-40'
+                        className='size-16 sm:size-20'
                       />
-                      <h3 className='font-semibold'>
-                        {t(championTitle(position))}
-                      </h3>
-                      <p className='text-muted-foreground text-sm'>
-                        {winner?.name ?? t('Awaiting award list')}
-                      </p>
-                    </article>
+                      <div className='min-w-0 flex-1'>
+                        <h3 className='truncate font-semibold'>
+                          {winner?.name ?? t('Awaiting award list')}
+                        </h3>
+                        <p className='text-muted-foreground mt-1 text-xs sm:text-sm'>
+                          {t(championTitle(position))}
+                        </p>
+                      </div>
+                      {winner?.status === 'credited' && (
+                        <Badge
+                          variant='outline'
+                          className='shrink-0 border-amber-300/50 text-amber-800 dark:text-amber-200'
+                        >
+                          {t('Reward credited')}
+                        </Badge>
+                      )}
+                    </li>
                   )
                 })}
-              </div>
+              </ol>
             </section>
-            <section className='bg-card grid gap-5 rounded-xl border p-5 sm:grid-cols-[1fr_auto]'>
-              <div className='space-y-3'>
-                <h2 className='font-semibold'>{t('My activity progress')}</h2>
-                {!signedIn && (
-                  <Button
-                    render={
-                      <Link
-                        to='/sign-in'
-                        search={{ redirect: '/championship' }}
-                      />
-                    }
-                  >
-                    {t('Sign in')}
-                  </Button>
-                )}
-                {signedIn && self.isPending && <LoadingState />}
-                {signedIn && self.isError && (
-                  <ErrorState onRetry={() => void self.refetch()} />
-                )}
-                {self.isSuccess && !self.data && (
-                  <p className='text-muted-foreground text-sm'>
-                    {t(
-                      'No eligible activity consumption in the current snapshot.'
-                    )}
-                  </p>
-                )}
-                {self.data && (
-                  <>
-                    <p>
-                      {t('Activity consumption')}:{' '}
-                      {formatQuotaWithCurrency(self.data.spend)}
-                    </p>
-                    <p>
-                      {t('Rank')}:{' '}
-                      {self.data.position > 0
-                        ? formatNumber(self.data.position)
-                        : t('Not eligible')}
-                    </p>
-                  </>
-                )}
-                {!!query.data.snapshot_at && (
-                  <p className='text-muted-foreground text-xs'>
-                    {t('Ranking snapshot')}:{' '}
-                    {dayjs
-                      .unix(query.data.snapshot_at)
-                      .format('YYYY-MM-DD HH:mm:ss')}
-                  </p>
-                )}
-              </div>
-              <div className='flex items-center gap-3'>
-                <ChampionBadge badge={8} className='size-24' />
-                <span className='text-sm'>
-                  {t('Championship commemorative badge')}
-                </span>
-              </div>
-            </section>
-            <section className='text-muted-foreground space-y-3 text-sm leading-6'>
-              <h2 className='text-foreground font-semibold'>
-                {t('Activity rules')}
-              </h2>
-              <p>
-                {t(
-                  'Ranking uses original personal-wallet consumption, without subtracting refunds or stream compensation. Enterprise-funded and subscription usage is excluded. Administrators, test accounts and disabled accounts are not eligible.'
-                )}
-              </p>
-              <p>
-                {t(
-                  'Ties are decided by who reached the final consumption first, then by user ID. The administrator reviews the final list after the deadline. Rewards are site balance, not cash.'
-                )}
-              </p>
-            </section>
+            <p className='text-muted-foreground px-1 text-xs leading-6'>
+              {t(
+                'Rankings reflect activity consumption only. All seven champion badges share the same honor level.'
+              )}
+            </p>
+          </>
+        )}
+        {hasChampionHonor(self.data) && (
+          <>
+            <Button
+              variant='outline'
+              className='w-full'
+              onClick={() => setReplay(true)}
+            >
+              <Sparkles className='size-4' />
+              {t('Replay my honor moment')}
+            </Button>
+            <ChampionHonorDialog
+              award={self.data}
+              open={replay}
+              onClose={() => setReplay(false)}
+            />
           </>
         )}
       </div>

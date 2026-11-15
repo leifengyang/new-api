@@ -56,7 +56,13 @@ beforeEach(() => {
       return {
         data: {
           success: true,
-          data: { position: 9, spend: 500000, status: 'preview' },
+          data: {
+            id: 5,
+            position: 9,
+            quota: 500000,
+            notice_seen_at: 1,
+            status: 'declined',
+          },
         },
       }
     }
@@ -98,41 +104,43 @@ function setup() {
 test('unpublished activity shows its empty state without disclosing a winner', async () => {
   board = null
   setup()
-  await screen.findByText('The championship activity is not published yet')
+  await screen.findByText('Awaiting award list')
   expect(screen.queryByText('A***')).not.toBeInTheDocument()
 })
-test('guest sees seven masked seats and can sign in from their activity progress', async () => {
-  const { user, router } = setup()
+test('guest sees seven equally styled honors with masked identities and no spending details', async () => {
+  setup()
   await screen.findByText('Provisional ranking')
   expect(screen.getByText('A***')).toBeVisible()
-  const cards = screen.getAllByRole('article')
-  expect(cards).toHaveLength(7)
-  expect(cards[0].parentElement).toHaveClass('grid-cols-2', 'lg:grid-cols-4')
-  const progress = screen.getByRole('heading', {
-    name: 'My activity progress',
-  }).parentElement
-  if (!progress) throw new Error('Missing progress section')
-  const signIn = within(progress).getByRole('button', { name: 'Sign in' })
-  await user.click(signIn)
-  await screen.findByRole('heading', { name: 'Sign in destination' })
-  expect(router.state.location.search).toEqual({ redirect: '/championship' })
+  const list = screen.getByRole('list')
+  expect(within(list).getAllByRole('listitem')).toHaveLength(7)
+  expect(screen.queryByText('My activity progress')).not.toBeInTheDocument()
   expect(
     vi
       .mocked(api.get)
       .mock.calls.some(([url]) => url === '/api/user/champion-event')
   ).toBe(false)
 })
-test('signed-in participant sees final rank and own consumption', async () => {
+
+test('recipient can replay the honor moment from the ranking without claiming again', async () => {
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'participant', role: 1 })
-  if (!board) throw new Error('Missing board')
-  board = { ...board, status: 'completed' }
-  setup()
+  if (!board) throw new Error('Missing board fixture')
+  board = { ...board, status: 'claiming' }
+  const { user } = setup()
   await screen.findByText('Final ranking')
-  await screen.findByText('Rank: 9')
-  expect(screen.getByText('Activity consumption: $1')).toBeVisible()
+  await user.click(
+    await screen.findByRole('button', { name: 'Replay my honor moment' })
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Glory belongs to you',
+  })
+  expect(within(dialog).getByText('Reward declined')).toBeVisible()
+  expect(
+    within(dialog).queryByRole('button', { name: 'Claim reward' })
+  ).not.toBeInTheDocument()
 })
+
 test('failed public request offers retry and recovers the board', async () => {
   fail = true
   const { user } = setup()
