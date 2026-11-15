@@ -21,6 +21,11 @@ import { LanguageSwitcher } from '@/components/language-switcher'
 import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
+import {
+  hasChampionHonor,
+  useChampionSelf,
+} from '@/features/champion-event/api'
+import { ChampionInboxLink } from '@/features/champion-event/notice'
 import { useCompensationMessages } from '@/features/stream-compensation/api'
 import { CompensationInboxLink } from '@/features/stream-compensation/messages'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
@@ -113,6 +118,9 @@ export function AppHeader({
   // Notifications hook
   const notifications = useNotifications()
   const compensationMessages = useCompensationMessages(true)
+  const champion = useChampionSelf()
+  const championUnread =
+    hasChampionHonor(champion.data) && champion.data.read_at === 0 ? 1 : 0
 
   return (
     <Header>
@@ -141,9 +149,15 @@ export function AppHeader({
               onOpenChange={notifications.setPopoverOpen}
               unreadCount={
                 notifications.unreadCount +
+                championUnread +
                 (compensationMessages.data?.total ?? 0)
               }
-              personalContent={<CompensationInboxLink />}
+              personalContent={
+                <div className='space-y-2'>
+                  <ChampionInboxLink />
+                  <CompensationInboxLink />
+                </div>
+              }
               activeTab={notifications.activeTab}
               onTabChange={notifications.setActiveTab}
               notice={notifications.notice}

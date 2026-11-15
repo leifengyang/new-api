@@ -22,6 +22,7 @@ import (
 // authentication, so a personal access token has no rule to satisfy there.
 var accessTokenExemptRoutes = []string{
 	// Anonymous pages and setup.
+	"GET /api/champion-event",
 	"GET /api/captcha",
 	"GET /api/announcements",
 	"GET /api/setup",

@@ -383,6 +383,8 @@ func migrateDB() error {
 		&SelfTestProfile{},
 		&TemporaryMonitor{},
 		&TemporaryMonitorAttempt{},
+		&ChampionEvent{},
+		&ChampionAward{},
 		&StreamCompensationConfig{},
 		&RequestPrompt{},
 		&StreamCompensationBatch{},

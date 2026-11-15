@@ -19,6 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Champion coach',
+  'Champion jungler',
+  'Champion marksman',
+  'Champion mid laner',
+  'Champion substitute',
+  'Champion support',
+  'Champion top laner',
+  'Championship commemorative badge',
+  'Deleted user',
+  'Administrator',
+  'Excluded test account',
+  'Not eligible',
+  'Awarding',
+
   'Content is required',
   'Content must be less than 500 characters',
   'Publish date is required',
@@ -947,4 +961,8 @@ export const STATIC_I18N_KEYS = [
   'Channel priorities changed. Refresh and try again.',
   'Invalid channel priority move',
   'Channel priority is outside the sortable range',
+  'Invalid reward decision',
+  'This reward is no longer available to claim',
+  'This account is not eligible for the reward',
+  'Confirm your decision before giving up the reward',
 ] as const

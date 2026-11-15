@@ -20,6 +20,7 @@ import i18next from 'i18next'
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 
+import { useChampionSelf } from '@/features/champion-event/api'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { getUserProfile, updateUserProfile, updateUserSettings } from '../api'
@@ -34,6 +35,8 @@ import type {
 // ============================================================================
 
 export function useProfile() {
+  const { data: champion } = useChampionSelf()
+  const rewardCreditedAt = champion?.credited_at ?? 0
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
@@ -120,7 +123,7 @@ export function useProfile() {
   // Initial fetch
   useEffect(() => {
     fetchProfile()
-  }, [fetchProfile])
+  }, [fetchProfile, rewardCreditedAt])
 
   return {
     profile,

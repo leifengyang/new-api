@@ -43,6 +43,12 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// Custom dashboard workflows are browser-session-only. Their existing role
 	// and enterprise checks remain authoritative; no implicit PAT grants.
+	"GET /api/user/champion-event":                                           accessTokenSessionRule,
+	"PUT /api/user/champion-event":                                           accessTokenSessionRule,
+	"GET /api/user/champion-event/admin":                                     accessTokenSessionRule,
+	"PUT /api/user/champion-event/admin":                                     accessTokenSessionRule,
+	"POST /api/user/champion-event/admin/preview":                            accessTokenSessionRule,
+	"POST /api/user/champion-event/admin/confirm":                            accessTokenSessionRule,
 	"DELETE /api/degradation_watch/temporary-monitors/:id":                   accessTokenSessionRule,
 	"DELETE /api/enterprise/members/:id":                                     accessTokenSessionRule,
 	"DELETE /api/user/:id/enterprise":                                        accessTokenSessionRule,

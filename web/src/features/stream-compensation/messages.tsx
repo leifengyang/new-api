@@ -64,7 +64,7 @@ function MessageContent(props: { message: CompensationMessage }) {
   )
 }
 
-export function CompensationNotice() {
+export function CompensationNotice({ enabled = true }: { enabled?: boolean }) {
   const { t } = useTranslation()
   const query = useCompensationMessages(true)
   const mutation = useCompensationMutation()
@@ -75,7 +75,7 @@ export function CompensationNotice() {
   // the next console visit until explicitly acknowledged on the server.
   return (
     <Dialog
-      open={!!message && key !== dismissed}
+      open={enabled && !!message && key !== dismissed}
       onOpenChange={(open) => {
         if (!open) setDismissed(key)
       }}
