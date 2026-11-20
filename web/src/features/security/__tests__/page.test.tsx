@@ -61,7 +61,10 @@ const profile: UserProfile = {
   }),
 }
 
+let failNextProfileLoad = false
+
 beforeEach(() => {
+  failNextProfileLoad = false
   vi.stubGlobal('localStorage', {
     getItem: () => null,
     setItem: () => undefined,
@@ -84,7 +87,14 @@ beforeEach(() => {
       }
     }
     if (url === '/api/user/self') {
+      if (failNextProfileLoad) {
+        failNextProfileLoad = false
+        return { data: { success: false } }
+      }
       return { data: { success: true, data: profile } }
+    }
+    if (url === '/api/user/champion-event') {
+      return { data: { success: true, data: null } }
     }
     if (url === '/api/user/passkey') {
       return { data: { success: true, data: { enabled: false } } }
@@ -263,7 +273,7 @@ describe('security page migration', () => {
   })
 
   it('a failed profile load offers retry before exposing account actions', async () => {
-    vi.mocked(api.get).mockResolvedValueOnce({ data: { success: false } })
+    failNextProfileLoad = true
     const user = userEvent.setup()
     await renderPage()
     expect(await screen.findByText('Failed to load profile')).toBeVisible()

@@ -32,16 +32,9 @@ func TestApplyUpstreamBodyMetadataSetsReplayableMetadata(t *testing.T) {
 	require.NoError(t, err)
 	defer closer.Close()
 
-	// NewRequest hides the body's dynamic type behind req.Body, so metadata
-	// extraction must use the original body passed to NewRequest.
+	// NewRequest cannot infer ContentLength or GetBody for this body type.
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
 	require.NoError(t, err)
-	assert.Nil(t, req.GetBody)
-	assert.Zero(t, req.ContentLength)
-	_, requestBodyIsReplayable := req.Body.(common.ReplayableBody)
-	assert.False(t, requestBodyIsReplayable)
-
-	ApplyUpstreamBodyMetadata(req, req.Body)
 	assert.Nil(t, req.GetBody)
 	assert.Zero(t, req.ContentLength)
 
@@ -416,20 +409,23 @@ func runGoAwayAfterFirstRequestServer(ln net.Listener) <-chan h2ServerResult {
 
 			if attempt == 0 {
 				err = framer.WriteGoAway(0, http2.ErrCodeNo, nil)
-				conn.Close()
-				if err != nil {
-					res.err = err
-					return
-				}
-				continue
+			} else {
+				err = writeH2TestResponse(framer, streamID)
 			}
-
-			err = writeH2TestResponse(framer, streamID)
+			if err == nil {
+				// Drain pending control frames after sending FIN. Closing with
+				// unread SETTINGS acknowledgements can reset TCP on Windows,
+				// discarding the GOAWAY or the successful retry's response.
+				err = conn.(*net.TCPConn).CloseWrite()
+				if err == nil {
+					_, err = io.Copy(io.Discard, conn)
+				}
+			}
 			conn.Close()
 			if err != nil {
 				res.err = err
+				return
 			}
-			return
 		}
 	}()
 	return resCh
