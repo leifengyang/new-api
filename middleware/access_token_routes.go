@@ -41,6 +41,13 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // Casbin-guarded routes declare themselves through
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
+	"POST /api/canvas/bootstrap":                  accessTokenSessionRule,
+	"POST /api/canvas/reset-token":                accessTokenSessionRule,
+	"GET /api/canvas/storage/:collection":         accessTokenSessionRule,
+	"DELETE /api/canvas/storage/:collection":      accessTokenSessionRule,
+	"GET /api/canvas/storage/:collection/*key":    accessTokenSessionRule,
+	"PUT /api/canvas/storage/:collection/*key":    accessTokenSessionRule,
+	"DELETE /api/canvas/storage/:collection/*key": accessTokenSessionRule,
 	// Custom dashboard workflows are browser-session-only. Their existing role
 	// and enterprise checks remain authoritative; no implicit PAT grants.
 	"GET /api/user/champion-event":                                           accessTokenSessionRule,

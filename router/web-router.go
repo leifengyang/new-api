@@ -38,6 +38,29 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 		}
 	}
 	compress := gzip.Gzip(gzip.DefaultCompression)
+	canvasEntry := func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		file, err := frontendFS.Open("/canvas-app/index.html")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		// FileServer canonicalizes index.html and directories, conflicting with Gin's redirects.
+		http.ServeContent(c.Writer, c.Request, "index.html", info.ModTime(), file)
+	}
+	for _, path := range []string{"/canvas-app", "/canvas-app/", "/canvas-app/index.html"} {
+		router.Match([]string{http.MethodGet, http.MethodHead}, path,
+			middleware.RouteTag("web"), gzip.Gzip(gzip.DefaultCompression),
+			middleware.AccessTokenAudit(), middleware.GlobalWebRateLimit(frontendFS), canvasEntry)
+	}
 
 	router.NoRoute(
 		pluginDispatcher,
@@ -73,7 +96,7 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 					}
 				}
 			}
-			if strings.HasPrefix(urlPath, "/v1") || strings.HasPrefix(urlPath, "/api") || strings.HasPrefix(urlPath, "/assets") || strings.HasPrefix(urlPath, "/static/") || isWebAssetExtension(path.Ext(urlPath)) {
+			if strings.HasPrefix(urlPath, "/v1") || strings.HasPrefix(urlPath, "/api") || strings.HasPrefix(urlPath, "/assets") || strings.HasPrefix(urlPath, "/static/") || strings.HasPrefix(urlPath, "/canvas-app/") || isWebAssetExtension(path.Ext(urlPath)) {
 				c.Header("CDN-Cache-Control", "no-store")
 				c.Header("Cloudflare-CDN-Cache-Control", "no-store")
 				c.Header("X-Content-Type-Options", "nosniff")

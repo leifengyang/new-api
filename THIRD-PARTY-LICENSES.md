@@ -6,6 +6,14 @@ It is an engineering compliance artifact and should be kept with Docker images, 
 Scope: direct dependencies from `go.mod` (including the in-repo `relaykit` and `tokenkit` modules), `web/package.json`, and `electron/package.json`.
 Transitive dependencies should be audited before a final external release.
 
+## Infinite Canvas
+
+The canvas workbench is built from [basketikun/infinite-canvas](https://github.com/basketikun/infinite-canvas),
+commit `4c67f1ece4f4edaef81e58e964eb78abb1e9809d`, under the MIT license (Copyright 2026 basketikun).
+Its source archive checksum is recorded in `canvas/upstream.json`; browser dependencies are locked in
+`canvas/bun.lock`. The workbench is built separately and its original license is distributed at
+`/canvas-app/LICENSE.infinite-canvas.txt`. Integration adapters are maintained in `canvas/overlay/`.
+
 ## Dependency Inventory
 
 | Area     | Scope       | Ecosystem | Dependency                                              | Version                              | License                 |

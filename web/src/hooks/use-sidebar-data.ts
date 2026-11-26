@@ -29,6 +29,7 @@ import {
   HandCoins,
   Key,
   LayoutDashboard,
+  LayoutTemplate,
   ListTodo,
   MessageSquare,
   PlugZap,
@@ -66,6 +67,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+          },
+          {
+            title: t('Infinite Canvas'),
+            url: '/canvas',
+            icon: LayoutTemplate,
           },
           {
             title: t('Chat'),

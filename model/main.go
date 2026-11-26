@@ -345,6 +345,8 @@ func migrateDB() error {
 	err := DB.AutoMigrate(
 		&Channel{},
 		&Token{},
+		&CanvasAccount{},
+		&CanvasObject{},
 		&User{},
 		&EnterpriseWalletCharge{},
 		&UserSession{},

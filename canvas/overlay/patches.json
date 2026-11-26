@@ -1,0 +1,142 @@
+[
+  {
+    "path": "packages/workbench/src/lib/plugins/runtime.ts",
+    "find": "import { initializeCallScripts } from \"./call-scripts\";",
+    "replace": "// Plugin call-script synchronization is disabled in the integrated workspace."
+  },
+  {
+    "path": "packages/workbench/src/lib/plugins/runtime.ts",
+    "find": "initializeCallScripts();",
+    "replace": "// Only the gateway-approved built-in model scripts are loaded."
+  },
+  {
+    "path": "packages/workbench/src/components/layout/client-root-init.tsx",
+    "find": "    usePromptSourceScheduler();",
+    "replace": "    // The integrated workspace does not fetch external prompt catalogs automatically."
+  },
+  {
+    "path": "packages/workbench/src/stores/use-config-store.ts",
+    "find": "import { StorageError } from \"@infinite-canvas/shared/storage-data\";",
+    "replace": "import { canvasPreferences } from \"@/newapi/preferences\";\nimport { StorageError } from \"@infinite-canvas/shared/storage-data\";"
+  },
+  {
+    "path": "packages/workbench/src/stores/use-config-store.ts",
+    "find": "storage: createJSONStorage(() => localStorage),",
+    "replace": "storage: createJSONStorage(() => canvasPreferences),\n        skipHydration: true,"
+  },
+  {
+    "path": "packages/workbench/src/stores/use-config-store.ts",
+    "find": "    void importChannelFromUrl();",
+    "replace": "    // The new-api host owns the connection; URL credentials are never imported."
+  },
+  {
+    "path": "packages/workbench/src/components/canvas/nodes/builtin-nodes.tsx",
+    "find": "registerNodeDefinitions(BUILTIN_DEFINITIONS);",
+    "replace": "registerNodeDefinitions(BUILTIN_DEFINITIONS.filter((node) => [CanvasNodeType.Text, CanvasNodeType.Image, CanvasNodeType.Group].includes(node.type as CanvasNodeType)));"
+  },
+  {
+    "path": "packages/workbench/src/components/layout/user-status-actions.tsx",
+    "find": "showConfig = true",
+    "replace": "showConfig = false"
+  },
+  {
+    "path": "packages/workbench/src/components/agent/agent-panel.tsx",
+    "find": ", { value: \"mcp\", label: \"MCP\", icon: <Plug className=\"size-4\" /> }",
+    "replace": ""
+  },
+  {
+    "path": "packages/workbench/src/services/api/model-plugin.ts",
+    "find": "import { network } from \"@workbench/services/network/runtime\";",
+    "replace": "import { assertCanvasScript } from \"@/newapi/policy\";\nimport { network } from \"@workbench/services/network/runtime\";"
+  },
+  {
+    "path": "packages/workbench/src/services/api/model-plugin.ts",
+    "find": "export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {",
+    "replace": "export async function runModelPlugin<T = unknown>(args: RunPluginArgs): Promise<T> {\n    assertCanvasScript(args.config, args.capability, args.script);"
+  },
+  {
+    "path": "packages/workbench/src/components/canvas/canvas-prompt-chip-input.tsx",
+    "find": "const wrapper = document.createElement(reference.kind === \"image\" ? \"button\" : \"span\");",
+    "replace": "const wrapper: HTMLElement = document.createElement(reference.kind === \"image\" ? \"button\" : \"span\");"
+  },
+  {
+    "path": "packages/plugin-sdk/src/types.ts",
+    "find": "{ location: \"canvas.selectionToolbar\"; nodeIds: string[] }",
+    "replace": "{ location: \"canvas.selectionToolbar\"; nodeIds: readonly string[] }"
+  },
+  {
+    "path": "packages/workbench/src/hooks/use-project-export.ts",
+    "find": "await exportCanvasProjects(projects, fileName, signal);",
+    "replace": "await exportCanvasProjects(projects as unknown as Parameters<typeof exportCanvasProjects>[0], fileName, signal);"
+  },
+  {
+    "path": "packages/workbench/src/lib/agent/agent-site-tools.ts",
+    "find": "metadata: { content: item.content, status: \"success\" }",
+    "replace": "metadata: { content: item.content, status: \"success\" as const }"
+  },
+  {
+    "path": "packages/workbench/src/lib/agent/agent-site-tools.ts",
+    "find": "source: \"canvas\" | \"image\" | \"video\";",
+    "replace": "source: \"canvas\" | \"image\" | \"video\" | \"audio\";"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/canvas-session.ts",
+    "find": "    private history = readonlySnapshot({ past: [], future: [] }) as History;",
+    "replace": "    private history = readonlySnapshot({ past: [], future: [] }) as unknown as History;"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/canvas-session.ts",
+    "find": "        this.document = readonlySnapshot(applyOps({ nodes: [], connections: [] }, [{ type: \"replace_graph\", graph: { nodes: options.project.nodes, connections: options.project.connections } }])) as CanvasGraph;",
+    "replace": "        this.document = readonlySnapshot(applyOps({ nodes: [], connections: [] }, [{ type: \"replace_graph\", graph: { nodes: options.project.nodes, connections: options.project.connections } }])) as unknown as CanvasGraph;"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/canvas-session.ts",
+    "find": "        this.snapshot = readonlySnapshot({ ...this.document, projectId: this.projectId, revision: 0, selection: { nodeIds: [], connectionId: null }, viewport: viewportSchema.parse(options.project.viewport), canUndo: false, canRedo: false }) as CanvasSessionSnapshot;",
+    "replace": "        this.snapshot = readonlySnapshot({ ...this.document, projectId: this.projectId, revision: 0, selection: { nodeIds: [], connectionId: null }, viewport: viewportSchema.parse(options.project.viewport), canUndo: false, canRedo: false }) as unknown as CanvasSessionSnapshot;"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/canvas-session.ts",
+    "find": "        this.snapshot = readonlySnapshot({ ...before, ...target, revision: before.revision + 1, selection: { nodeIds: [], connectionId: null }, canUndo: next.past.length > 0, canRedo: next.future.length > 0 }) as CanvasSessionSnapshot;",
+    "replace": "        this.snapshot = readonlySnapshot({ ...before, ...target, revision: before.revision + 1, selection: { nodeIds: [], connectionId: null }, canUndo: next.past.length > 0, canRedo: next.future.length > 0 }) as unknown as CanvasSessionSnapshot;"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/clipboard.ts",
+    "find": "const value = metadata[field];",
+    "replace": "const value: string | undefined = metadata[field];"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/clipboard.ts",
+    "find": "const content = parseComposerTokens(value).map((token) => {",
+    "replace": "const content: string = parseComposerTokens(value).map((token) => {"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/node-registry.ts",
+    "find": "(result as Promise<unknown>).then",
+    "replace": "(result as unknown as { then?: unknown }).then"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/project-actions.ts",
+    "find": "const deletion = (async () => {",
+    "replace": "const deletion: Promise<void> = Promise.resolve().then(async () => {"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/project-actions.ts",
+    "find": "    })();\n    deletions.set(projectId, deletion);",
+    "replace": "    });\n    deletions.set(projectId, deletion);"
+  },
+  {
+    "path": "packages/workbench/src/lib/plugins/sync-transport.ts",
+    "find": "&& url.origin === location.origin",
+    "replace": "&& new URL(base).origin === location.origin"
+  },
+  {
+    "path": "packages/workbench/src/stores/use-call-script-store.ts",
+    "find": "(current: ScriptDirectory) => ScriptDirectory",
+    "replace": "(current: ScriptDirectory) => Omit<ScriptDirectory, \"pluginScripts\"> & Partial<Pick<ScriptDirectory, \"pluginScripts\">>"
+  },
+  {
+    "path": "packages/workbench/src/lib/canvas/project-export.ts",
+    "find": "await exportCanvasProjects([{ ...project, nodes: snapshot.nodes, connections: snapshot.connections, viewport: snapshot.viewport }],",
+    "replace": "await exportCanvasProjects([{ ...project, nodes: snapshot.nodes, connections: snapshot.connections, viewport: snapshot.viewport }] as unknown as Parameters<typeof exportCanvasProjects>[0],"
+  }
+]

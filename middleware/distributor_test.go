@@ -12,11 +12,15 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -276,6 +280,104 @@ func TestTokenModelLimitAllowsExemptAtNameByFullName(t *testing.T) {
 
 	baseOnly := map[string]bool{"opaque": true}
 	assert.False(t, TokenModelLimitAllows(baseOnly, "opaque@sha256:deadbeef"))
+}
+
+func TestDistributeEnterpriseAutoGroups(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, i18n.Init())
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}, &model.Channel{}, &model.Ability{}))
+	previousMaster, previousLogType := common.IsMasterNode, common.LogDatabaseType()
+	common.IsMasterNode = false
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	previousCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	previousAutoGroups := setting.AutoGroups2JsonString()
+	previousUsableGroups := setting.UserUsableGroups2JSONString()
+	previousGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		common.IsMasterNode = previousMaster
+		common.SetLogDatabaseType(previousLogType)
+		common.MemoryCacheEnabled = previousCacheEnabled
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAutoGroups))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroupRatios))
+	})
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["default","AI生图特惠"]`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","AI生图特惠":"Images","auto":"Auto"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"AI生图特惠":1}`))
+	for index, group := range []string{"default", "AI生图特惠"} {
+		priority, weight := int64(0), uint(100)
+		channel := model.Channel{
+			Id: index + 1, Type: constant.ChannelTypeOpenAI, Key: "test-channel-key",
+			Status: common.ChannelStatusEnabled, Name: group, Group: group,
+			Models: "gpt-image-1", Priority: &priority, Weight: &weight,
+		}
+		require.NoError(t, model.DB.Create(&channel).Error)
+		require.NoError(t, model.DB.Create(&model.Ability{
+			Group: group, Model: "gpt-image-1", ChannelId: channel.Id,
+			Enabled: true, Priority: &priority, Weight: weight,
+		}).Error)
+	}
+
+	for index, tc := range []struct {
+		name, group, autoGroups, groupLimits, modelLimits, model string
+		pinChannel                                               bool
+		wantStatus                                               int
+	}{
+		{"auto expands allowed real group", "auto", "", `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusNoContent},
+		{"token auto filters excluded group", "auto", `["default","AI生图特惠"]`, `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusNoContent},
+		{"auto model denied", "auto", "", `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-4.1", false, http.StatusForbidden},
+		{"auto group denied", "auto", `["default"]`, `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusForbidden},
+		{"empty enterprise groups deny", "auto", "", `[]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusForbidden},
+		{"virtual group alone denies", "auto", "", `["auto"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusForbidden},
+		{"empty enterprise models deny", "auto", "", `["AI生图特惠"]`, `[]`, "gpt-image-1", false, http.StatusForbidden},
+		{"explicit allowed group unchanged", "AI生图特惠", "", `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusNoContent},
+		{"explicit denied group unchanged", "default", "", `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", false, http.StatusForbidden},
+		{"pin cannot bypass real group authorization", "auto", "", `["AI生图特惠"]`, `["gpt-image-1"]`, "gpt-image-1", true, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := createMiddlewarePATUser(t, fmt.Sprintf("enterprise-auto-%d", index), fmt.Sprintf("unused-pat-%d", index))
+			require.NoError(t, model.DB.Model(user).Updates(map[string]any{
+				"enterprise_owner_id":     100,
+				"enterprise_group_limits": tc.groupLimits,
+				"enterprise_model_limits": tc.modelLimits,
+			}).Error)
+			token := model.Token{
+				UserId: user.Id, Key: fmt.Sprintf("enterpriseautotoken%030d", index),
+				Status: common.TokenStatusEnabled, UnlimitedQuota: true, ExpiredTime: -1,
+				Group: tc.group, AutoGroups: tc.autoGroups,
+			}
+			require.NoError(t, model.DB.Create(&token).Error)
+			reachedRelay := false
+			router := gin.New()
+			router.POST("/v1/images/generations", TokenAuth(), func(c *gin.Context) {
+				if tc.pinChannel {
+					// A stale earlier Auto choice must not authorize a new pin.
+					common.SetContextKey(c, constant.ContextKeyAutoGroup, "AI生图特惠")
+					service.GetChannelConstraints(c).AddPin(hostdto.ChannelPin{
+						ChannelId: 1, Source: hostdto.PinSourceToken,
+						Rank: hostdto.PinRankToken, RetryMode: hostdto.PinRetrySingleAttempt,
+					})
+				}
+			}, Distribute(), func(c *gin.Context) {
+				reachedRelay = true
+				assert.Equal(t, 2, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
+				assert.Equal(t, tc.group, common.GetContextKeyString(c, constant.ContextKeyUsingGroup))
+				if tc.group == "auto" {
+					assert.Equal(t, "AI生图特惠", common.GetContextKeyString(c, constant.ContextKeyAutoGroup))
+				}
+				c.Status(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(fmt.Sprintf(`{"model":%q}`, tc.model)))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+token.Key)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			assert.Equal(t, tc.wantStatus == http.StatusNoContent, reachedRelay)
+		})
+	}
 }
 
 func TestDistributeHidesTaskPluginDetailsButLogsDiagnostics(t *testing.T) {
