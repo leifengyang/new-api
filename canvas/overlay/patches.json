@@ -1,5 +1,10 @@
 [
   {
+    "path": "packages/workbench/src/components/generation-workspace-controls.css",
+    "find": ".generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant]) {\n    color: var(--workbench-elevated-text);\n",
+    "replace": "/* Preserve each semantic button variant's foreground, regardless of stylesheet order. */\n.generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant=\"outline\"], :where(button)[data-variant=\"ghost\"]) {\n    color: var(--workbench-elevated-text);\n}\n.generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant]) {\n"
+  },
+  {
     "path": "packages/workbench/src/lib/plugins/runtime.ts",
     "find": "import { initializeCallScripts } from \"./call-scripts\";",
     "replace": "// Plugin call-script synchronization is disabled in the integrated workspace."
