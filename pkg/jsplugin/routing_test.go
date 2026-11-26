@@ -830,6 +830,16 @@ func TestDeclarativeRouteValidationProtectsNamespacesAndCanonicalSyntax(t *testi
 			expectedError: "reserved namespace /enterprise",
 		},
 		{
+			name:          "canvas page",
+			route:         Route{Method: "GET", Path: "/canvas", Type: RouteTypeQuery, Render: "native"},
+			expectedError: "reserved namespace /canvas",
+		},
+		{
+			name:          "canvas assets",
+			route:         Route{Method: "GET", Path: "/canvas-app/assets/:name", Type: RouteTypeQuery, Render: "native"},
+			expectedError: "reserved namespace /canvas-app",
+		},
+		{
 			name:          "degradation wall",
 			route:         Route{Method: "GET", Path: "/degradation-watch", Type: RouteTypeQuery, Render: "native"},
 			expectedError: "reserved namespace /degradation-watch",
@@ -1099,7 +1109,7 @@ func TestReservedNamespaceChecksUseSegmentBoundaries(t *testing.T) {
 // TypeSafe 1.2.0 declares /v1/systemone and /typesafe/v1/systemone; the
 // declaration serves it and the copy is not added again.
 func TestPluginKeyAndKeyAddressesAreValidated(t *testing.T) {
-	for _, key := range []string{"api", "v1", "assets", "console", "champion-admin", "championship", "compensation", "degradation-watch", "enterprise", "invite-rebates"} {
+	for _, key := range []string{"api", "v1", "assets", "canvas", "canvas-app", "console", "champion-admin", "championship", "compensation", "degradation-watch", "enterprise", "invite-rebates"} {
 		meta := Meta{APIVersion: 1, Key: key, Name: "Key", Version: "1.0.0", Author: AuthorMeta{Name: "Test"}, Models: []string{"model"}, FetchMode: "per_task"}
 		require.ErrorContains(t, ValidateV1Meta(meta), "is a reserved path segment", key)
 	}

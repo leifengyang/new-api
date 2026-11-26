@@ -348,6 +348,17 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		registerChannelRoutes(apiRouter)
 		registerAuthzRoutes(apiRouter)
+		canvasRoute := apiRouter.Group("/canvas")
+		canvasRoute.Use(middleware.DisableCache(), middleware.UserAuth(), controller.CanvasSessionAuth)
+		{
+			canvasRoute.POST("/bootstrap", middleware.CriticalRateLimit(), controller.BootstrapCanvas)
+			canvasRoute.POST("/reset-token", middleware.CriticalRateLimit(), controller.ResetCanvasToken)
+			canvasRoute.GET("/storage/:collection", controller.CanvasStorage)
+			canvasRoute.DELETE("/storage/:collection", controller.CanvasStorage)
+			canvasRoute.GET("/storage/:collection/*key", controller.CanvasStorage)
+			canvasRoute.PUT("/storage/:collection/*key", controller.CanvasStorage)
+			canvasRoute.DELETE("/storage/:collection/*key", controller.CanvasStorage)
+		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		tokenRoute.Use(middleware.TokenOperationAudit())

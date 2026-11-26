@@ -118,25 +118,34 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		var enterpriseAutoGroups []string
 		if limits := service.EnterpriseGroupLimitsFromContext(c); limits != nil {
-			group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-			if !slices.Contains(limits, group) {
+			allowed := slices.Contains(limits, usingGroup)
+			if usingGroup == "auto" {
+				// Auto is virtual; authorize its current real groups, including
+				// enterprise limits and any explicit token group snapshot.
+				enterpriseAutoGroups = service.GetRequestAutoGroups(c, common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+				allowed = len(enterpriseAutoGroups) > 0
+			}
+			if !allowed {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 				return
 			}
 		}
 		if pinned || shouldSelectChannel {
-			usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+			var selectedGroup string
 			var selectErr *service.ChannelSelectError
 			if value, exists := c.Get(contextKeyTaskPluginEndpointSelection); exists && !pinned {
 				if selected, ok := value.(taskPluginEndpointSelection); ok && selected.Model == modelRequest.Model && selected.Channel != nil && selected.Channel.Status == common.ChannelStatusEnabled {
 					if matches, _ := model.ChannelSatisfiesFilters(selected.Channel, modelRequest.Model, constraints.Filters); matches {
 						channel = selected.Channel
+						selectedGroup = common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
 					}
 				}
 			}
 			if channel == nil {
-				channel, _, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
+				channel, selectedGroup, selectErr = service.SelectChannelForRequest(c, modelRequest.Model, &service.RetryParam{
 					Ctx:         c,
 					ModelName:   modelRequest.Model,
 					TokenGroup:  usingGroup,
@@ -155,6 +164,11 @@ func Distribute() func(c *gin.Context) {
 					message = i18n.T(c, selectErr.MessageID, selectErr.Params)
 				}
 				abortWithOpenAiMessage(c, selectErr.StatusCode, message, selectErr.Code)
+				return
+			}
+			if enterpriseAutoGroups != nil && (channel == nil || !slices.Contains(enterpriseAutoGroups, selectedGroup) ||
+				!model.IsChannelEnabledForGroupModel(selectedGroup, modelRequest.Model, channel.Id)) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 				return
 			}
 		}

@@ -14,10 +14,17 @@ import (
 )
 
 var versionedWebAssetName = regexp.MustCompile(`\.[a-fA-F0-9]{8,64}\.[a-zA-Z0-9]+$`)
+var versionedCanvasAssetName = regexp.MustCompile(`-[A-Za-z0-9_-]{8}\.(?:js|mjs|css|wasm|woff2?|ttf|otf|png|jpe?g|gif|svg|webp|ico)$`)
 
 func isVersionedWebAsset(name string) bool {
-	return fs.ValidPath(name) && !strings.Contains(name, `\`) && strings.HasPrefix(name, "static/") &&
-		versionedWebAssetName.MatchString(path.Base(name)) && isWebAssetExtension(path.Ext(name)) && path.Ext(name) != ".map"
+	if !fs.ValidPath(name) || strings.Contains(name, `\`) {
+		return false
+	}
+	if strings.HasPrefix(name, "canvas-app/assets/") {
+		return versionedCanvasAssetName.MatchString(path.Base(name))
+	}
+	return strings.HasPrefix(name, "static/") && versionedWebAssetName.MatchString(path.Base(name)) &&
+		isWebAssetExtension(path.Ext(name)) && path.Ext(name) != ".map"
 }
 
 // Persist only public, content-hashed build assets in a dedicated directory on
@@ -50,35 +57,40 @@ func archiveWebAssets(build fs.FS, directory string, now time.Time) error {
 		}
 	}
 	var current []string
-	err = fs.WalkDir(build, "static", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !entry.Type().IsRegular() || !isVersionedWebAsset(name) {
-			return nil
-		}
-		if _, err := root.Stat(name); errors.Is(err, fs.ErrNotExist) {
-			content, err := fs.ReadFile(build, name)
+	for _, assetDirectory := range []string{"static", "canvas-app/assets"} {
+		err = fs.WalkDir(build, assetDirectory, func(name string, entry fs.DirEntry, err error) error {
+			if name == assetDirectory && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}
-			if err := root.MkdirAll(path.Dir(name), 0o755); err != nil {
+			if !entry.Type().IsRegular() || !isVersionedWebAsset(name) {
+				return nil
+			}
+			if _, err := root.Stat(name); errors.Is(err, fs.ErrNotExist) {
+				content, err := fs.ReadFile(build, name)
+				if err != nil {
+					return err
+				}
+				if err := root.MkdirAll(path.Dir(name), 0o755); err != nil {
+					return err
+				}
+				if err := writeArchivedWebAsset(root, name, content); err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
 			}
-			if err := writeArchivedWebAsset(root, name, content); err != nil {
+			if err := root.Chtimes(name, now, now); err != nil {
 				return err
 			}
-		} else if err != nil {
+			current = append(current, name)
+			return nil
+		})
+		if err != nil {
 			return err
 		}
-		if err := root.Chtimes(name, now, now); err != nil {
-			return err
-		}
-		current = append(current, name)
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 	manifest, err = common.Marshal(current)
 	if err != nil {
@@ -87,7 +99,7 @@ func archiveWebAssets(build fs.FS, directory string, now time.Time) error {
 	if err := writeArchivedWebAsset(root, "active.json", manifest); err != nil {
 		return err
 	}
-	return fs.WalkDir(root.FS(), "static", func(name string, entry fs.DirEntry, err error) error {
+	return fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

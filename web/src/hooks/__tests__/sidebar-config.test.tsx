@@ -320,3 +320,25 @@ describe('model pricing badge', () => {
     expect(badgedEntries()).toHaveLength(0)
   })
 })
+
+describe('canvas sidebar entry', () => {
+  it('shows the canvas to an ordinary user with legacy chat configuration', () => {
+    const { result } = sidebarFor({
+      chat: { enabled: true, playground: true, chat: true },
+    })
+    expect(
+      result.current
+        .find((group) => group.id === 'chat')
+        ?.items.some((item) => 'url' in item && item.url === '/canvas')
+    ).toBe(true)
+  })
+
+  it('respects an administrator hiding the canvas module', () => {
+    const { result } = sidebarFor({ chat: { enabled: true, canvas: false } })
+    expect(
+      result.current
+        .find((group) => group.id === 'chat')
+        ?.items.some((item) => 'url' in item && item.url === '/canvas')
+    ).toBe(false)
+  })
+})

@@ -1121,7 +1121,7 @@ func TestWebFallbackDoesNotCacheMissingAPIOrAssets(t *testing.T) {
 	t.Setenv("WEB_ASSET_ARCHIVE_DIR", "")
 	outer := gin.New()
 	SetWebRouter(outer, WebAssets{IndexPage: []byte("dashboard")}, func(c *gin.Context) { c.Next() })
-	for _, path := range []string{"/api/user/token/status", "/api/audit/self?p=1", "/v1/missing", "/assets/missing.js", "/static/js/async/68669.27b5bc9fe3.js", "/static/css/missing.css?v=1", "/missing.js", "/missing.woff2"} {
+	for _, path := range []string{"/api/user/token/status", "/api/audit/self?p=1", "/v1/missing", "/assets/missing.js", "/static/js/async/68669.27b5bc9fe3.js", "/static/css/missing.css?v=1", "/missing.js", "/missing.woff2", "/canvas-app/assets/missing.js"} {
 		t.Run(path, func(t *testing.T) {
 			response := performPluginRequest(outer, http.MethodGet, path)
 			assert.Equal(t, http.StatusNotFound, response.Code)
@@ -1141,15 +1141,17 @@ func TestWebAssetsSurviveReleaseAndKeepHTMLUncached(t *testing.T) {
 	t.Setenv("WEB_ASSET_ARCHIVE_DIR", directory)
 	previous := gin.New()
 	SetWebRouter(previous, WebAssets{BuildFS: fstest.MapFS{
-		"web/dist/static/js/async/old.12345678.js": {Data: []byte("window.oldChunk = true;")},
-		"web/dist/static/css/old.12345678.css":     {Data: []byte("body {color: green}")},
+		"web/dist/static/js/async/old.12345678.js":    {Data: []byte("window.oldChunk = true;")},
+		"web/dist/static/css/old.12345678.css":        {Data: []byte("body {color: green}")},
+		"web/dist/canvas-app/assets/old-Qa8_-bCd.js":  {Data: []byte("window.canvasChunk = true;")},
+		"web/dist/canvas-app/assets/old-Qa8_-bCd.css": {Data: []byte("body {color: green}")},
 	}, IndexPage: []byte("old index")}, func(c *gin.Context) { c.Next() })
 	current := gin.New()
 	SetWebRouter(current, WebAssets{BuildFS: fstest.MapFS{
 		"web/dist/index.html":                {Data: []byte("unprocessed index")},
 		"web/dist/static/js/new.abcdef12.js": {Data: []byte("window.newChunk = true;")},
 	}, IndexPage: []byte("current index with analytics")}, func(c *gin.Context) { c.Next() })
-	for _, name := range []string{"/static/js/async/old.12345678.js?v=1", "/static/js/new.abcdef12.js"} {
+	for _, name := range []string{"/static/js/async/old.12345678.js?v=1", "/static/js/new.abcdef12.js", "/canvas-app/assets/old-Qa8_-bCd.js"} {
 		response := performPluginRequest(current, http.MethodGet, name)
 		assert.Equal(t, http.StatusOK, response.Code)
 		assert.Contains(t, response.Header().Get("Content-Type"), "javascript")
@@ -1162,6 +1164,9 @@ func TestWebAssetsSurviveReleaseAndKeepHTMLUncached(t *testing.T) {
 	css := performPluginRequest(current, http.MethodGet, "/static/css/old.12345678.css")
 	assert.Equal(t, http.StatusOK, css.Code)
 	assert.Contains(t, css.Header().Get("Content-Type"), "text/css")
+	canvasCSS := performPluginRequest(current, http.MethodGet, "/canvas-app/assets/old-Qa8_-bCd.css")
+	assert.Equal(t, http.StatusOK, canvasCSS.Code)
+	assert.Contains(t, canvasCSS.Header().Get("Content-Type"), "text/css")
 	for _, name := range []string{"/", "/index.html?v=1", "/console/wallet"} {
 		response := performPluginRequest(current, http.MethodGet, name)
 		assert.Equal(t, "current index with analytics", response.Body.String())
@@ -1171,7 +1176,10 @@ func TestWebAssetsSurviveReleaseAndKeepHTMLUncached(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, missing.Code)
 	assert.Equal(t, "no-store", missing.Header().Get("Cloudflare-CDN-Cache-Control"))
 	assert.Equal(t, "no-store", missing.Header().Get("CDN-Cache-Control"))
-	for _, name := range []string{"/static/../active.json", "/static/js/%2e%2e/%2e%2e/active.json"} {
+	missingCanvas := performPluginRequest(current, http.MethodGet, "/canvas-app/assets/missing-Qa8_-bCd.js")
+	assert.Equal(t, http.StatusNotFound, missingCanvas.Code)
+	assert.Contains(t, missingCanvas.Header().Get("Cache-Control"), "no-store")
+	for _, name := range []string{"/static/../active.json", "/static/js/%2e%2e/%2e%2e/active.json", "/canvas-app/assets/../../../active.json", "/canvas-app/assets/%2e%2e/%2e%2e/active.json"} {
 		response := performPluginRequest(current, http.MethodGet, name)
 		assert.Equal(t, http.StatusNotFound, response.Code)
 		assert.NotContains(t, response.Body.String(), "old.12345678")
@@ -1185,10 +1193,16 @@ func TestWebAssetRetentionStartsWhenBuildIsRetired(t *testing.T) {
 	directory := t.TempDir()
 	now := time.Now()
 	old := fstest.MapFS{
-		"static/js/old.12345678.js":     {Data: []byte("old")},
-		"static/js/unversioned.js":      {Data: []byte("never archive")},
-		"static/js/source.12345678.map": {Data: []byte("never archive")},
-		"index.html":                    {Data: []byte("never archive")},
+		"static/js/old.12345678.js":                {Data: []byte("old")},
+		"static/js/unversioned.js":                 {Data: []byte("never archive")},
+		"static/js/source.12345678.map":            {Data: []byte("never archive")},
+		"index.html":                               {Data: []byte("never archive")},
+		"canvas-app/assets/font-Qa8_-bCd.woff2":    {Data: []byte("old font")},
+		"canvas-app/index.html":                    {Data: []byte("never archive")},
+		"canvas-app/assets/source-Qa8_-bCd.js.map": {Data: []byte("never archive")},
+		"canvas-app/assets/unversioned.js":         {Data: []byte("never archive")},
+		"canvas-app/assets/unsafe-Qa8_-bCd.html":   {Data: []byte("never archive")},
+		"canvas-app/assets/short-abc123.js":        {Data: []byte("never archive")},
 	}
 	current := fstest.MapFS{"static/js/new.abcdef12.js": {Data: []byte("new")}}
 	require.NoError(t, archiveWebAssets(old, directory, now))
@@ -1196,12 +1210,17 @@ func TestWebAssetRetentionStartsWhenBuildIsRetired(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(directory, "static/js/old.12345678.js"))
 	require.NoError(t, err)
 	assert.Equal(t, "old", string(content), "long-running previous release still gets seven days after upgrade")
-	for _, name := range []string{"index.html", "static/js/unversioned.js", "static/js/source.12345678.map"} {
+	canvasFont, err := os.ReadFile(filepath.Join(directory, "canvas-app/assets/font-Qa8_-bCd.woff2"))
+	require.NoError(t, err)
+	assert.Equal(t, "old font", string(canvasFont))
+	for _, name := range []string{"index.html", "static/js/unversioned.js", "static/js/source.12345678.map", "canvas-app/index.html", "canvas-app/assets/source-Qa8_-bCd.js.map", "canvas-app/assets/unversioned.js", "canvas-app/assets/unsafe-Qa8_-bCd.html", "canvas-app/assets/short-abc123.js"} {
 		_, err := os.Stat(filepath.Join(directory, name))
 		assert.ErrorIs(t, err, fs.ErrNotExist)
 	}
 	require.NoError(t, archiveWebAssets(current, directory, now.Add(38*24*time.Hour)))
 	_, err = os.Stat(filepath.Join(directory, "static/js/old.12345678.js"))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = os.Stat(filepath.Join(directory, "canvas-app/assets/font-Qa8_-bCd.woff2"))
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	content, err = os.ReadFile(filepath.Join(directory, "static/js/new.abcdef12.js"))
 	require.NoError(t, err)
@@ -1220,6 +1239,24 @@ func TestWebAssetArchiveFailureDoesNotBreakCurrentDashboard(t *testing.T) {
 	asset := performPluginRequest(engine, http.MethodGet, "/static/js/new.abcdef12.js")
 	assert.Equal(t, http.StatusOK, asset.Code)
 	assert.Equal(t, "current code", asset.Body.String())
+}
+
+func TestCanvasEntryLoadsWithoutStaticDirectoryRedirect(t *testing.T) {
+	t.Setenv("WEB_ASSET_ARCHIVE_DIR", "")
+	outer := gin.New()
+	assets := fstest.MapFS{
+		"web/dist/canvas-app/index.html": {Data: []byte("<html>canvas workbench</html>")},
+	}
+	SetWebRouter(outer, WebAssets{BuildFS: assets, IndexPage: []byte("dashboard")}, func(c *gin.Context) { c.Next() })
+	for _, path := range []string{"/canvas-app", "/canvas-app/", "/canvas-app/index.html"} {
+		t.Run(path, func(t *testing.T) {
+			response := performPluginRequest(outer, http.MethodGet, path)
+			assert.Equal(t, http.StatusOK, response.Code)
+			assert.Empty(t, response.Header().Get("Location"))
+			assert.Equal(t, "<html>canvas workbench</html>", response.Body.String())
+			assert.Equal(t, "no-cache", response.Header().Get("Cache-Control"))
+		})
+	}
 }
 
 func TestSecurityRoutesDisableCachingBeforeAuthentication(t *testing.T) {

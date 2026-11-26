@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "rsbuild dev",
-    "build": "rsbuild build",
-    "build:check": "bun check -b && rsbuild build",
+    "build": "rsbuild build && bun ../canvas/build.mjs",
+    "build:check": "bun check -b && rsbuild build && bun ../canvas/build.mjs",
+    "build:canvas": "bun ../canvas/build.mjs",
     "typecheck": "bun check -b",
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint -c .oxlintrc.json . --fix",

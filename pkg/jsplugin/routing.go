@@ -452,6 +452,8 @@ var (
 // decided at admission.
 var reservedRouteNamespaces = []string{
 	"/assets",
+	"/canvas",
+	"/canvas-app",
 	"/setup",
 	"/v1/tasks",
 	"/console",
