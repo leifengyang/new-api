@@ -11,6 +11,7 @@ import { createCanvasBridge } from "./bridge";
 import { createCanvasStorage } from "./storage";
 import { createCanvasChannels } from "./channels";
 import { canvasUnsupported } from "./policy";
+import { initializeCanvasTranslations } from "./i18n";
 
 async function startCanvas() {
   const bridge = createCanvasBridge(window);
@@ -43,6 +44,7 @@ async function startCanvas() {
   await callScriptsReady;
   const { createCanvasModels } = await import("./models");
   initializeModels(createCanvasModels());
+  await initializeCanvasTranslations();
   await import("./bootstrap");
 }
 

@@ -56,15 +56,74 @@ manifest.workspaces = [
 delete manifest.packageManager
 // Only the browser workspace is shipped. CLI, Electron and documentation dependencies are excluded.
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+const browserManifestPath = path.join(sourceDir, 'apps/web/package.json')
+const browserManifest = JSON.parse(await readFile(browserManifestPath, 'utf8'))
+Object.assign(browserManifest.dependencies, {
+  i18next: '27.2.9',
+  'react-i18next': '18.0.3',
+  'file-saver': '2.0.5',
+  mime: '4.1.2',
+})
+browserManifest.devDependencies['@types/file-saver'] = '2.0.7'
+await writeFile(
+  browserManifestPath,
+  `${JSON.stringify(browserManifest, null, 2)}\n`
+)
 await rm(path.join(sourceDir, 'pnpm-workspace.yaml'))
 await rm(path.join(sourceDir, 'pnpm-lock.yaml'))
-if (!updateLock) await cp(lockPath, path.join(sourceDir, 'bun.lock'))
+await cp(lockPath, path.join(sourceDir, 'bun.lock'))
 const bun = process.versions.bun ? process.execPath : 'bun'
 run(bun, ['install', '--ignore-scripts', ...(updateLock ? [] : ['--frozen-lockfile'])], sourceDir)
 if (updateLock) await cp(path.join(sourceDir, 'bun.lock'), lockPath)
 if (prepareOnly) process.exit(0)
 
 await cp(path.join(canvasDir, 'overlay'), path.join(sourceDir, 'apps/web/src/newapi'), { recursive: true })
+// Reuse the host's language mapping and only ship strings used by the integration.
+await cp(
+  path.join(repositoryDir, 'web/src/i18n/languages.ts'),
+  path.join(sourceDir, 'apps/web/src/newapi/host-languages.ts')
+)
+const translationKeys = new Set()
+for (const filename of await readdir(path.join(canvasDir, 'overlay'), {
+  recursive: true,
+})) {
+  if (!/\.(ts|tsx)$/.test(filename) || filename.includes('__tests__')) continue
+  const source = await readFile(
+    path.join(canvasDir, 'overlay', filename),
+    'utf8'
+  )
+  for (const match of source.matchAll(/\bt\(\s*["']([^"'\n]+)["']/g)) {
+    translationKeys.add(match[1])
+  }
+}
+const resources = {}
+for (const [language, locale] of Object.entries({
+  en: 'en',
+  zhCN: 'zh',
+  zhTW: 'zh-TW',
+  fr: 'fr',
+  ja: 'ja',
+  ru: 'ru',
+  vi: 'vi',
+})) {
+  const { translation } = JSON.parse(
+    await readFile(
+      path.join(repositoryDir, `web/src/i18n/locales/${locale}.json`),
+      'utf8'
+    )
+  )
+  resources[language] = { translation: {} }
+  for (const key of translationKeys) {
+    if (!translation[key]) {
+      throw new Error(`Missing canvas translation: ${locale}: ${key}`)
+    }
+    resources[language].translation[key] = translation[key]
+  }
+}
+await writeFile(
+  path.join(sourceDir, 'apps/web/src/newapi/translations.json'),
+  JSON.stringify(resources)
+)
 const patches = JSON.parse(await readFile(path.join(canvasDir, 'overlay/patches.json'), 'utf8'))
 for (const patch of patches) {
   const filename = path.resolve(sourceDir, patch.path)

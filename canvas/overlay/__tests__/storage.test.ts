@@ -6,6 +6,12 @@ import { createCanvasStorage } from "../storage";
 import { StorageError, storedChatSyncRecord } from "@infinite-canvas/shared/storage-data";
 import type { ArchiveThread } from "@infinite-canvas/shared/chat";
 
+import { buildImageLog, serializeLog, type ImageLog } from "@workbench/services/create/logs";
+import type { AiConfig } from "@workbench/stores/use-config-store";
+import { initializeStorage } from "@workbench/services/storage/runtime";
+import { readGenerationRecords, updateGenerationRecord } from "@workbench/services/generation-records";
+import { subscribeCreateSessionsChanged } from "@workbench/lib/create-sessions-events";
+
 function remoteFixture() {
   const values = new Map<string, { body: ArrayBuffer; contentType: string }>();
   const encoder = new TextEncoder();
@@ -64,6 +70,113 @@ test("cloud image and preferences collections restore the original bytes and JSO
   assert.deepEqual(new Uint8Array(await restored.arrayBuffer()), new Uint8Array([1, 7, 8]));
   assert.deepEqual(await remote.storage.preferences.getItem("view"), { x: 5, y: 9 });
 });
+
+test('image history restores generation settings and durable references without copying connection credentials', async () => {
+  const remote = remoteFixture()
+  const config = {
+    model: 'newapi::auto::gpt-image-1',
+    imageModel: 'newapi::auto::gpt-image-1',
+    quality: 'high',
+    size: '1536x1024',
+    count: '2',
+    background: 'transparent',
+    apiKey: 'fixture-secret',
+    baseUrl: 'https://fixture.invalid',
+  } as AiConfig
+  const log = buildImageLog(
+    'Poster\nwith transparent background',
+    config.imageModel,
+    config,
+    [
+      {
+        id: 'reference',
+        name: 'photo.png',
+        type: 'image/png',
+        storageKey: 'reference',
+        url: 'blob:temporary',
+      },
+    ],
+    'session',
+    2
+  )
+  await remote.storage.imageRecords.setItem(log.id, serializeLog(log))
+  const reopened = createCanvasStorage(remote.bridge)
+  const saved = await reopened.imageRecords.getItem<ImageLog>(log.id)
+  assert.ok(saved)
+  assert.equal(saved.prompt, log.prompt)
+  assert.deepEqual(saved.config, {
+    model: config.model,
+    imageModel: config.imageModel,
+    quality: 'high',
+    size: '1536x1024',
+    count: '2',
+    background: 'transparent',
+  })
+  assert.deepEqual(saved.references, [
+    {
+      id: 'reference',
+      name: 'photo.png',
+      type: 'image/png',
+      storageKey: 'reference',
+    },
+  ])
+  assert.equal(saved.slots.length, 2)
+  assert.equal(JSON.stringify(saved).includes('fixture-secret'), false)
+  await reopened.imageRecords.removeItem(log.id)
+  assert.equal(await remote.storage.imageRecords.getItem(log.id), null)
+})
+
+test('reopened image history observes confirmed result updates and marks unfinished browser requests interrupted', async () => {
+  const remote = remoteFixture()
+  initializeStorage(remote.storage)
+  const config = {
+    model: 'gpt-image-1',
+    imageModel: 'gpt-image-1',
+    quality: 'auto',
+    size: '1024x1024',
+    count: '1',
+    background: 'auto',
+  } as AiConfig
+  const log = buildImageLog('Landscape', config.model, config, [], 'session', 1)
+  await remote.storage.imageRecords.setItem(log.id, log)
+  const reopened = await readGenerationRecords<ImageLog>('image')
+  assert.equal(reopened[0].status, 'interrupted')
+  const observed: string[] = []
+  const unsubscribe = subscribeCreateSessionsChanged(() =>
+    observed.push('updated')
+  )
+  try {
+    assert.equal(
+      await updateGenerationRecord<ImageLog>(
+        'image',
+        log.id,
+        log.generationId,
+        (row) => ({ ...row, status: 'success', successCount: 1 })
+      ),
+      true
+    )
+    assert.equal(
+      (await readGenerationRecords<ImageLog>('image'))[0].status,
+      'success'
+    )
+    assert.deepEqual(observed, ['updated'])
+    const requestStorage = remote.bridge.storage
+    remote.bridge.storage = async (request) => request.method === 'PUT'
+      ? { status: 503, body: new ArrayBuffer(0), contentType: '' }
+      : requestStorage(request)
+    await assert.rejects(
+      updateGenerationRecord<ImageLog>(
+        'image',
+        log.id,
+        log.generationId,
+        (row) => ({ ...row, status: 'failed' })
+      )
+    )
+    assert.deepEqual(observed, ['updated'])
+  } finally {
+    unsubscribe()
+  }
+})
 
 test("a rejected cloud save is not acknowledged as success", async () => {
   const remote = remoteFixture();

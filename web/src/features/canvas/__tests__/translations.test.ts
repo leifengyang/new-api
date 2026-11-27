@@ -22,6 +22,38 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const keys = [
+  'My canvases',
+  'Image workbench',
+  'My assets',
+  'Loading…',
+  'Added to assets',
+  'Choose a text or image asset.',
+  'Describe the subject, style, composition, lighting, and purpose.',
+  'Drop reference images here, or upload and paste them.',
+  'Generate images',
+  'Generated image {{number}}',
+  'Generating…',
+  'Generation results',
+  'History',
+  'Image generation failed. Please retry.',
+  'Image generation history',
+  'Interrupted',
+  'Loading image history…',
+  'No image models are available for your account.',
+  'No images generated yet',
+  'Paste',
+  'Preview reference image {{name}}',
+  'Prompt library',
+  'Reference images',
+  'Remove reference image {{name}}',
+  'Reuse settings',
+  'Saving reference images…',
+  'Select an available image model before generating.',
+  'Some image records could not be deleted. Please retry.',
+  'Unable to download this image. Please retry.',
+  'Unable to load image history. Please retry.',
+  'Unable to save the image to assets. Please retry.',
+  'Upload reference images',
   'Infinite Canvas',
   'Unable to open canvas',
   'Preparing your canvas…',
@@ -63,6 +95,9 @@ describe('canvas translations', () => {
         expect(translation[key], key).toBeTruthy()
         expect(translation[key], key).not.toMatch(
           /\?{2,}|\uFFFD|[A-Za-z]\?[A-Za-z]/
+        )
+        expect(translation[key].match(/\{\{\w+\}\}/g) ?? [], key).toEqual(
+          key.match(/\{\{\w+\}\}/g) ?? []
         )
       }
       expect(translation['Infinite Canvas']).toBe(title)
