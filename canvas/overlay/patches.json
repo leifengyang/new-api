@@ -1,5 +1,20 @@
 [
   {
+    "path": "packages/workbench/src/services/generation-records.ts",
+    "find": "        await store.setItem(id, update(row));",
+    "replace": "        await store.setItem(id, update(row));\n        notifyCreateSessionsChanged();"
+  },
+  {
+    "path": "packages/workbench/src/services/create/logs.ts",
+    "find": "export type ImageLogConfig = Pick<AiConfig, \"model\" | \"imageModel\" | \"quality\" | \"size\" | \"count\">;",
+    "replace": "export type ImageLogConfig = Pick<AiConfig, \"model\" | \"imageModel\" | \"quality\" | \"size\" | \"count\"> & Partial<Pick<AiConfig, \"background\">>;"
+  },
+  {
+    "path": "packages/workbench/src/services/create/logs.ts",
+    "find": "config: { model: config.model, imageModel: config.imageModel, quality: config.quality, size: config.size, count: config.count },",
+    "replace": "config: { model: config.model, imageModel: config.imageModel, quality: config.quality, size: config.size, count: config.count, background: config.background },"
+  },
+  {
     "path": "packages/workbench/src/components/generation-workspace-controls.css",
     "find": ".generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant]) {\n    color: var(--workbench-elevated-text);\n",
     "replace": "/* Preserve each semantic button variant's foreground, regardless of stylesheet order. */\n.generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant=\"outline\"], :where(button)[data-variant=\"ghost\"]) {\n    color: var(--workbench-elevated-text);\n}\n.generation-workspace-controls :is([data-slot=\"textarea\"], :where(button)[data-variant]) {\n"
